@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ProcSentinel API Documentation</title>
+    <link rel="stylesheet" type="text/css" href="https://unpkg.com/swagger-ui-dist@5.7.2/swagger-ui.css" />
+    <style>
+        html {
+            box-sizing: border-box;
+            overflow: -moz-scrollbars-vertical;
+            overflow-y: scroll;
+        }
+        *, *:before, *:after {
+            box-sizing: inherit;
+        }
+        body {
+            margin: 0;
+            background: #fafafa;
+        }
+        .topbar {
+            background: #2d3748;
+            padding: 10px 0;
+            text-align: center;
+        }
+        .topbar h1 {
+            color: white;
+            margin: 0;
+            font-family: sans-serif;
+        }
+        #swagger-ui {
+            max-width: 1200px;
+            margin: 20px auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="topbar">
+        <h1>🛡️ ProcSentinel API Documentation</h1>
+    </div>
+    <div id="swagger-ui"></div>
+    
+    <script src="https://unpkg.com/swagger-ui-dist@5.7.2/swagger-ui-bundle.js"></script>
+    <script src="https://unpkg.com/swagger-ui-dist@5.7.2/swagger-ui-standalone-preset.js"></script>
+    <script>
+        window.onload = function() {
+            // Begin Swagger UI call region
+            const ui = SwaggerUIBundle({
+                url: './swagger.yaml',
+                dom_id: '#swagger-ui',
+                deepLinking: true,
+                presets: [
+                    SwaggerUIBundle.presets.apis,
+                    SwaggerUIStandalonePreset
+                ],
+                plugins: [
+                    SwaggerUIBundle.plugins.DownloadUrl
+                ],
+                layout: "StandaloneLayout",
+                tryItOutEnabled: true,
+                requestInterceptor: (request) => {
+                    // Ensure requests go to localhost:8080 if server is running
+                    if (request.url.startsWith('http://localhost:8080')) {
+                        console.log('Making API request to:', request.url);
+                    }
+                    return request;
+                },
+                responseInterceptor: (response) => {
+                    console.log('API Response:', response.status, response.url);
+                    return response;
+                }
+            });
+            // End Swagger UI call region
+        };
+    </script>
+</body>
+</html>
