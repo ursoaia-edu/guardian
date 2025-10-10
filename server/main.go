@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -39,6 +40,14 @@ type ApplicationsResponse struct {
 // ErrorResponse represents an error response
 type ErrorResponse struct {
 	Error string `json:"error"`
+}
+
+// ServerInfoResponse represents server information
+type ServerInfoResponse struct {
+	ServerIP    string `json:"server_ip"`
+	ServerPort  string `json:"server_port"`
+	Version     string `json:"version"`
+	Status      string `json:"status"`
 }
 
 // NewServer creates a new server instance
@@ -342,6 +351,63 @@ func (s *Server) updateStatus(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"message": fmt.Sprintf("Server %s", statusText)})
 }
 
+// getServerInfo returns server information including local IP
+func (s *Server) getServerInfo(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "Method not allowed"})
+		return
+	}
+
+	// Get local IP address
+	localIP := getLocalIP()
+	
+	// Get server status
+	s.mu.RLock()
+	serverStatus := "enabled"
+	if !s.enabledCache {
+		serverStatus = "disabled"
+	}
+	s.mu.RUnlock()
+
+	response := ServerInfoResponse{
+		ServerIP:   localIP,
+		ServerPort: "8080",
+		Version:    "1.0.0",
+		Status:     serverStatus,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+// getLocalIP returns the local IP address of the server
+func getLocalIP() string {
+	// Try to get the local IP by connecting to a remote address
+	conn, err := net.Dial("udp", "8.8.8.8:80")
+	if err != nil {
+		// Fallback: get all interfaces and find a non-loopback IP
+		addrs, err := net.InterfaceAddrs()
+		if err != nil {
+			return "127.0.0.1"
+		}
+
+		for _, addr := range addrs {
+			if ipNet, ok := addr.(*net.IPNet); ok && !ipNet.IP.IsLoopback() {
+				if ipNet.IP.To4() != nil {
+					return ipNet.IP.String()
+				}
+			}
+		}
+		return "127.0.0.1"
+	}
+	defer conn.Close()
+
+	localAddr := conn.LocalAddr().(*net.UDPAddr)
+	return localAddr.IP.String()
+}
+
 // resetApplications removes all applications from the blocked list
 func (s *Server) resetApplications(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
@@ -403,6 +469,9 @@ func (s *Server) setupRoutes() {
 	// Reset endpoint - remove all applications
 	http.HandleFunc("/reset", s.resetApplications)
 
+	// Server info endpoint
+	http.HandleFunc("/info", s.getServerInfo)
+
 	// Health check endpoint
 	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -428,6 +497,7 @@ func main() {
 	fmt.Println("  DELETE /reset            - Remove all blocked applications")
 	fmt.Println("  GET    /status          - Get server status")
 	fmt.Println("  PUT    /status          - Update server status (enable/disable)")
+	fmt.Println("  GET    /info            - Get server information (IP, version, status)")
 	fmt.Println("  GET    /health          - Health check")
 
 	log.Fatal(http.ListenAndServe(port, nil))
