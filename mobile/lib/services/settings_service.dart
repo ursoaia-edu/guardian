@@ -4,7 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 class SettingsService {
   static const String _serverAddressKey = 'server_address';
-  static const String _defaultServerAddress = 'http://localhost:8080';
+  static const String _defaultServerAddress = 'http://192.168.1.10:8080';
 
   /// Gets the server address from persistent storage
   Future<String> getServerAddress() async {
@@ -23,13 +23,13 @@ class SettingsService {
     try {
       final client = http.Client();
       final uri = Uri.parse('$serverAddress/health');
-      
+
       final response = await client
           .get(uri)
           .timeout(const Duration(seconds: 10));
-      
+
       client.close();
-      
+
       if (response.statusCode == 200) {
         // Try to parse the health check response
         try {
@@ -40,7 +40,7 @@ class SettingsService {
           return true;
         }
       }
-      
+
       return false;
     } catch (e) {
       return false;
@@ -53,19 +53,19 @@ class SettingsService {
       final serverAddress = await getServerAddress();
       final client = http.Client();
       final uri = Uri.parse('$serverAddress/applications');
-      
+
       final response = await client
           .get(uri)
           .timeout(const Duration(seconds: 10));
-      
+
       client.close();
-      
+
       if (response.statusCode == 200) {
         final body = json.decode(response.body);
         final List<dynamic> applications = body['applications'] ?? [];
         return applications.cast<String>();
       }
-      
+
       return [];
     } catch (e) {
       return [];
@@ -78,18 +78,18 @@ class SettingsService {
       final serverAddress = await getServerAddress();
       final client = http.Client();
       final uri = Uri.parse('$serverAddress/status');
-      
+
       final response = await client
           .get(uri)
           .timeout(const Duration(seconds: 10));
-      
+
       client.close();
-      
+
       if (response.statusCode == 200) {
         final body = json.decode(response.body);
         return body['enabled'] ?? false;
       }
-      
+
       return false;
     } catch (e) {
       return false;
@@ -102,15 +102,15 @@ class SettingsService {
       final serverAddress = await getServerAddress();
       final client = http.Client();
       final uri = Uri.parse('$serverAddress/applications');
-      
+
       final response = await client.post(
         uri,
         headers: {'Content-Type': 'application/json'},
         body: json.encode({'name': applicationName}),
       ).timeout(const Duration(seconds: 10));
-      
+
       client.close();
-      
+
       return response.statusCode == 201;
     } catch (e) {
       return false;
@@ -123,13 +123,13 @@ class SettingsService {
       final serverAddress = await getServerAddress();
       final client = http.Client();
       final uri = Uri.parse('$serverAddress/applications/$applicationName');
-      
+
       final response = await client
           .delete(uri)
           .timeout(const Duration(seconds: 10));
-      
+
       client.close();
-      
+
       return response.statusCode == 200;
     } catch (e) {
       return false;
@@ -142,13 +142,13 @@ class SettingsService {
       final serverAddress = await getServerAddress();
       final client = http.Client();
       final uri = Uri.parse('$serverAddress/reset');
-      
+
       final response = await client
           .delete(uri)
           .timeout(const Duration(seconds: 10));
-      
+
       client.close();
-      
+
       return response.statusCode == 200;
     } catch (e) {
       return false;
@@ -161,15 +161,15 @@ class SettingsService {
       final serverAddress = await getServerAddress();
       final client = http.Client();
       final uri = Uri.parse('$serverAddress/status');
-      
+
       final response = await client.put(
         uri,
         headers: {'Content-Type': 'application/json'},
         body: json.encode({'enabled': enabled}),
       ).timeout(const Duration(seconds: 10));
-      
+
       client.close();
-      
+
       return response.statusCode == 200;
     } catch (e) {
       return false;

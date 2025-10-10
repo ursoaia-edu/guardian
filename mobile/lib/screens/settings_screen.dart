@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+
 import '../services/settings_service.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -9,7 +10,8 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  final TextEditingController _serverAddressController = TextEditingController();
+  final TextEditingController _serverAddressController =
+      TextEditingController();
   final SettingsService _settingsService = SettingsService();
   bool _isLoading = true;
   bool _isSaving = false;
@@ -49,18 +51,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     try {
       final serverAddress = _serverAddressController.text.trim();
-      
+
       // Basic validation
       if (serverAddress.isEmpty) {
         throw Exception('Server address cannot be empty');
       }
-      
-      if (!serverAddress.startsWith('http://') && !serverAddress.startsWith('https://')) {
+
+      if (!serverAddress.startsWith('http://') &&
+          !serverAddress.startsWith('https://')) {
         throw Exception('Server address must start with http:// or https://');
       }
 
       await _settingsService.setServerAddress(serverAddress);
-      
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -89,7 +92,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _testConnection() async {
     final serverAddress = _serverAddressController.text.trim();
-    
+
     if (serverAddress.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -106,14 +109,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     try {
       final isConnected = await _settingsService.testConnection(serverAddress);
-      
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              isConnected 
-                ? 'Connection successful!' 
-                : 'Connection failed. Please check the server address.'
+              isConnected
+                  ? 'Connection successful!'
+                  : 'Connection failed. Please check the server address.',
             ),
             backgroundColor: isConnected ? Colors.green : Colors.red,
           ),
@@ -146,9 +149,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Settings'),
-      ),
+      appBar: AppBar(title: const Text('Settings')),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : Padding(
@@ -158,10 +159,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 children: [
                   const Text(
                     'Server Configuration',
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                    ),
+                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 16),
                   Card(
@@ -181,7 +179,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           TextField(
                             controller: _serverAddressController,
                             decoration: const InputDecoration(
-                              hintText: 'http://localhost:8080',
+                              hintText: 'http://192.168.1.10:8080',
                               prefixIcon: Icon(Icons.link),
                               border: OutlineInputBorder(),
                               helperText: 'Enter the ProcSentinel server URL',
@@ -195,11 +193,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               Expanded(
                                 child: ElevatedButton.icon(
                                   onPressed: _isSaving ? null : _testConnection,
-                                  icon: _isSaving 
+                                  icon: _isSaving
                                       ? const SizedBox(
                                           width: 16,
                                           height: 16,
-                                          child: CircularProgressIndicator(strokeWidth: 2),
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                          ),
                                         )
                                       : const Icon(Icons.wifi_tethering),
                                   label: const Text('Test Connection'),
@@ -213,11 +213,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               Expanded(
                                 child: ElevatedButton.icon(
                                   onPressed: _isSaving ? null : _saveSettings,
-                                  icon: _isSaving 
+                                  icon: _isSaving
                                       ? const SizedBox(
                                           width: 16,
                                           height: 16,
-                                          child: CircularProgressIndicator(strokeWidth: 2),
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                          ),
                                         )
                                       : const Icon(Icons.save),
                                   label: const Text('Save'),
@@ -236,10 +238,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   const SizedBox(height: 24),
                   const Text(
                     'About',
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                    ),
+                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 16),
                   Card(
