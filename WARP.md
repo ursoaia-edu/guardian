@@ -107,6 +107,7 @@ The agent now dynamically fetches blocked applications from the server:
 Create a `.env` file in the project root:
 ```env
 SERVER_ADDRESS=http://localhost:8080
+WEB_DIR=../bin/web
 ```
 
 #### Server Integration Features
@@ -118,8 +119,26 @@ SERVER_ADDRESS=http://localhost:8080
 
 #### Configuration Priority
 1. `.env` file settings
-2. Environment variables
-3. Default fallback (`http://localhost:8080`)
+2. Environment variables  
+3. Default fallbacks:
+   - `SERVER_ADDRESS`: `http://localhost:8080`
+   - `WEB_DIR`: `../bin/web`
+
+#### Web Directory Configuration
+The server can serve static files from any directory:
+```env
+# Serve from default Flutter web build location
+WEB_DIR=../bin/web
+
+# Serve from mobile build directory
+WEB_DIR=../mobile/build/web
+
+# Serve from custom absolute path
+WEB_DIR=/var/www/procsentinel
+
+# Serve from relative path
+WEB_DIR=./public
+```
 
 ## Server Component
 
@@ -127,24 +146,32 @@ SERVER_ADDRESS=http://localhost:8080
 
 The server provides a REST API for managing blocked applications:
 
-- **GET /applications** - Get list of blocked applications
+- **GET /applications** - Get list of blocked applications (empty when server disabled)
+- **GET /applications/all** - Get ALL blocked applications (always returns full list)
 - **POST /applications** - Add new blocked application
 - **DELETE /applications/{name}** - Remove blocked application
 - **DELETE /reset** - Remove all blocked applications
 - **GET /status** - Get server status (enabled/disabled)
 - **PUT /status** - Update server status
+- **GET /info** - Get server information (IP, version, status)
 - **GET /health** - Health check endpoint
+- **GET /** - Web interface (serves Flutter web app from `/bin/web`)
 
 ### Server Features
 
 - **Persistent Storage**: Uses SQLite database for data persistence across restarts
 - **In-Memory Caching**: Fast read operations with write-through cache synchronization
 - **Thread-safe**: Uses mutex for concurrent access to cached data
-- **Status control**: Can be enabled/disabled, returns empty list when disabled
+- **Status control**: Can be enabled/disabled, **always starts disabled on every restart**, returns empty list when disabled
 - **JSON responses**: All endpoints return proper JSON with appropriate HTTP status codes
 - **Error handling**: Comprehensive error responses for invalid requests
 - **Default port**: Runs on port 8080
 - **Database file**: Stores data in `./server/procsentinel.db` SQLite file
+- **Web Interface**: Serves Flutter web app at root path (`/`) from configurable directory
+- **Static File Serving**: Built-in static file server with fallback HTML page
+- **Configurable Web Directory**: Web directory path configurable via `WEB_DIR` environment variable
+- **Local IP Detection**: `/info` endpoint returns server's local IP address
+- **Safe Startup**: Server **status** is always reset to disabled on every restart (blocked applications list is preserved)
 
 ### API Documentation
 
@@ -157,11 +184,25 @@ Comprehensive API documentation is available in the **Swagger/OpenAPI specificat
 ### API Usage Examples
 
 ```bash
+# Access web interface
+open http://localhost:8080/
+
 # Get server status
 curl http://localhost:8080/status
 
-# Get blocked applications list
+# Get server information including local IP
+curl http://localhost:8080/info
+
+# Enable server (always starts disabled on every restart)
+curl -X PUT http://localhost:8080/status \
+  -H "Content-Type: application/json" \
+  -d '{"enabled":true}'
+
+# Get blocked applications list (respects server status)
 curl http://localhost:8080/applications
+
+# Get ALL blocked applications (always returns full list)
+curl http://localhost:8080/applications/all
 
 # Add application to blocked list
 curl -X POST http://localhost:8080/applications \
@@ -184,6 +225,23 @@ curl -X PUT http://localhost:8080/status \
   -H "Content-Type: application/json" \
   -d '{"enabled":true}'
 ```
+
+### Startup Behavior
+
+On every server restart:
+- **✅ Blocked Applications**: Preserved from database (persistent across restarts)
+- **❌ Server Status**: Always reset to disabled (must be manually re-enabled)
+- **✅ Database**: All data intact and loaded from SQLite
+- **🔒 API Security**: `/applications` returns empty list when server disabled (data is still stored)
+
+#### Endpoint Comparison
+
+| Endpoint | Server Disabled | Server Enabled | Use Case |
+|----------|-----------------|----------------|----------|
+| `/applications` | `{"applications": []}` | `{"applications": ["app1", "app2"]}` | Agent consumption (security-aware) |
+| `/applications/all` | `{"applications": ["app1", "app2"]}` | `{"applications": ["app1", "app2"]}` | Administration/debugging |
+
+This ensures safety while maintaining your application configuration.
 
 ### Storage Architecture
 
@@ -249,6 +307,9 @@ flutter build apk
 
 # Build for release (iOS)
 flutter build ios
+
+# Build web interface for server
+flutter build web --web-renderer html --base-href / --output ../bin/web
 ```
 
 #### Mobile App Structure

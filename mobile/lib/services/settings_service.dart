@@ -1,4 +1,5 @@
 import 'dart:convert';
+
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -52,7 +53,7 @@ class SettingsService {
     try {
       final serverAddress = await getServerAddress();
       final client = http.Client();
-      final uri = Uri.parse('$serverAddress/applications');
+      final uri = Uri.parse('$serverAddress/applications/all');
 
       final response = await client
           .get(uri)
@@ -103,11 +104,13 @@ class SettingsService {
       final client = http.Client();
       final uri = Uri.parse('$serverAddress/applications');
 
-      final response = await client.post(
-        uri,
-        headers: {'Content-Type': 'application/json'},
-        body: json.encode({'name': applicationName}),
-      ).timeout(const Duration(seconds: 10));
+      final response = await client
+          .post(
+            uri,
+            headers: {'Content-Type': 'application/json'},
+            body: json.encode({'name': applicationName}),
+          )
+          .timeout(const Duration(seconds: 10));
 
       client.close();
 
@@ -162,11 +165,13 @@ class SettingsService {
       final client = http.Client();
       final uri = Uri.parse('$serverAddress/status');
 
-      final response = await client.put(
-        uri,
-        headers: {'Content-Type': 'application/json'},
-        body: json.encode({'enabled': enabled}),
-      ).timeout(const Duration(seconds: 10));
+      final response = await client
+          .put(
+            uri,
+            headers: {'Content-Type': 'application/json'},
+            body: json.encode({'enabled': enabled}),
+          )
+          .timeout(const Duration(seconds: 10));
 
       client.close();
 

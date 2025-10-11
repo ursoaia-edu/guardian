@@ -1,12 +1,15 @@
 package main
 
 import (
+	"bufio"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -60,7 +63,7 @@ func NewServer() (*Server, error) {
 	server := &Server{
 		db:               db,
 		blockedAppsCache: make(map[string]bool),
-		enabledCache:     true,
+		enabledCache:     false, // Start with server disabled by default
 	}
 
 	if err := server.initDatabase(); err != nil {
@@ -69,6 +72,11 @@ func NewServer() (*Server, error) {
 
 	if err := server.loadFromDatabase(); err != nil {
 		return nil, fmt.Errorf("failed to load data from database: %v", err)
+	}
+
+	// Always start with server disabled on restart
+	if err := server.forceDisableOnStartup(); err != nil {
+		return nil, fmt.Errorf("failed to disable server on startup: %v", err)
 	}
 
 	return server, nil
@@ -90,10 +98,10 @@ func (s *Server) initDatabase() error {
 	createStatusTable := `
 	CREATE TABLE IF NOT EXISTS server_status (
 		id INTEGER PRIMARY KEY CHECK (id = 1),
-		enabled BOOLEAN NOT NULL DEFAULT 1,
+		enabled BOOLEAN NOT NULL DEFAULT 0,
 		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
-	INSERT OR IGNORE INTO server_status (id, enabled) VALUES (1, 1);
+	INSERT OR IGNORE INTO server_status (id, enabled) VALUES (1, 0);
 	`
 
 	if _, err := s.db.Exec(createBAppsTable); err != nil {
@@ -137,6 +145,23 @@ func (s *Server) loadFromDatabase() error {
 	s.enabledCache = enabled
 
 	log.Printf("Loaded %d blocked applications and status (enabled: %v) from database", len(s.blockedAppsCache), s.enabledCache)
+	return nil
+}
+
+// forceDisableOnStartup ensures server starts disabled on every restart
+func (s *Server) forceDisableOnStartup() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Set cache to disabled
+	s.enabledCache = false
+
+	// Update database to disabled
+	if err := s.saveStatusToDatabase(false); err != nil {
+		return fmt.Errorf("failed to set startup status to disabled: %v", err)
+	}
+
+	log.Printf("Server status forced to disabled on startup")
 	return nil
 }
 
@@ -201,6 +226,32 @@ func (s *Server) getApplications(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Convert cache map keys to slice
+	apps := make([]string, 0, len(s.blockedAppsCache))
+	for app := range s.blockedAppsCache {
+		apps = append(apps, app)
+	}
+
+	response := ApplicationsResponse{
+		Applications: apps,
+	}
+	json.NewEncoder(w).Encode(response)
+}
+
+// getAllApplications returns the complete list of blocked applications regardless of server status
+func (s *Server) getAllApplications(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "Method not allowed"})
+		return
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	w.Header().Set("Content-Type", "application/json")
+
+	// Always return the full list regardless of server status
 	apps := make([]string, 0, len(s.blockedAppsCache))
 	for app := range s.blockedAppsCache {
 		apps = append(apps, app)
@@ -408,6 +459,95 @@ func getLocalIP() string {
 	return localAddr.IP.String()
 }
 
+// loadEnvFile loads environment variables from .env file
+func loadEnvFile(filename string) error {
+	file, err := os.Open(filename)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		// Skip empty lines and comments
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		// Parse KEY=VALUE format
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) == 2 {
+			key := strings.TrimSpace(parts[0])
+			value := strings.TrimSpace(parts[1])
+			// Remove quotes if present
+			if len(value) >= 2 {
+				if (strings.HasPrefix(value, "\"") && strings.HasSuffix(value, "\"")) ||
+					(strings.HasPrefix(value, "'") && strings.HasSuffix(value, "'")) {
+					value = value[1 : len(value)-1]
+				}
+			}
+			// Set environment variable if not already set
+			if os.Getenv(key) == "" {
+				os.Setenv(key, value)
+			}
+		}
+	}
+	return scanner.Err()
+}
+
+// getWebDir returns the web directory path from environment or default
+func getWebDir() string {
+	// Try to get from environment variable
+	webDir := os.Getenv("WEB_DIR")
+	if webDir == "" {
+		// Default fallback
+		webDir = "../bin/web"
+	}
+	return webDir
+}
+
+// serveStaticFiles serves static files from the web directory
+func serveStaticFiles() http.Handler {
+	// Get the web directory from environment or default
+	webDir := getWebDir()
+	absWebDir, err := filepath.Abs(webDir)
+	if err != nil {
+		log.Printf("Warning: Could not resolve absolute path for web directory: %v", err)
+		absWebDir = webDir
+	}
+
+	// Check if web directory exists
+	if _, err := os.Stat(absWebDir); os.IsNotExist(err) {
+		log.Printf("Warning: Web directory does not exist at %s", absWebDir)
+		// Return a handler that serves a simple message
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(http.StatusNotFound)
+			w.Write([]byte(`
+			<!DOCTYPE html>
+			<html>
+			<head><title>ProcSentinel Web Interface</title></head>
+			<body>
+				<h1>ProcSentinel Server</h1>
+				<p>Web interface not available. Build the Flutter web app first:</p>
+				<pre>cd mobile && flutter build web --web-renderer html --base-href / --output ../bin/web</pre>
+				<h2>API Endpoints:</h2>
+				<ul>
+					<li><a href="/applications">/applications</a> - Get blocked applications</li>
+					<li><a href="/status">/status</a> - Server status</li>
+					<li><a href="/info">/info</a> - Server information</li>
+					<li><a href="/health">/health</a> - Health check</li>
+				</ul>
+			</body>
+			</html>
+			`))
+		})
+	}
+
+	log.Printf("Serving static files from: %s", absWebDir)
+	return http.FileServer(http.Dir(absWebDir))
+}
+
 // resetApplications removes all applications from the blocked list
 func (s *Server) resetApplications(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
@@ -453,6 +593,9 @@ func (s *Server) setupRoutes() {
 
 	http.HandleFunc("/applications/", s.removeApplication)
 
+	// Get all applications endpoint - always returns full list regardless of server status
+	http.HandleFunc("/applications/all", s.getAllApplications)
+
 	http.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
@@ -477,9 +620,18 @@ func (s *Server) setupRoutes() {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	})
+
+	// Serve static files from /bin/web at root path
+	// This should be the last route to catch all remaining requests
+	http.Handle("/", serveStaticFiles())
 }
 
 func main() {
+	// Load environment variables from .env file
+	if err := loadEnvFile("../.env"); err != nil {
+		log.Printf("Warning: Could not load .env file: %v", err)
+	}
+
 	server, err := NewServer()
 	if err != nil {
 		log.Fatalf("Failed to create server: %v", err)
@@ -490,8 +642,10 @@ func main() {
 
 	port := "0.0.0.0:8080"
 	fmt.Printf("ProcSentinel Server starting on port %s\n", port)
-	fmt.Println("Available endpoints:")
-	fmt.Println("  GET    /applications     - Get list of blocked applications")
+	fmt.Println("\n🌐 Web Interface: http://localhost:8080/")
+	fmt.Println("\nAPI Endpoints:")
+	fmt.Println("  GET    /applications     - Get list of blocked applications (empty when disabled)")
+	fmt.Println("  GET    /applications/all - Get ALL blocked applications (always returns full list)")
 	fmt.Println("  POST   /applications     - Add new blocked application")
 	fmt.Println("  DELETE /applications/{name} - Remove blocked application")
 	fmt.Println("  DELETE /reset            - Remove all blocked applications")
@@ -499,6 +653,7 @@ func main() {
 	fmt.Println("  PUT    /status          - Update server status (enable/disable)")
 	fmt.Println("  GET    /info            - Get server information (IP, version, status)")
 	fmt.Println("  GET    /health          - Health check")
+	fmt.Printf("\n📁 Static Files: Serving from %s at root path (/)\n", getWebDir())
 
 	log.Fatal(http.ListenAndServe(port, nil))
 }
