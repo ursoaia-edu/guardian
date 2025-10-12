@@ -50,7 +50,22 @@ func fetchBlockedApplications(serverAddress string) ([]string, error) {
 		Timeout: 10 * time.Second,
 	}
 
-	resp, err := client.Get(serverAddress + "/applications")
+	var token = os.Getenv("TOKEN")
+	if token == "" {
+		token = "mILp9n6shk3G9SGSaS2nmP6YlLHwsP1Z"
+	}
+
+	req, err := http.NewRequest("GET", serverAddress+"/applications", nil)
+	if err != nil {
+		panic(err)
+	}
+
+	req.Header.Add("Authorization", "Bearer "+token)
+
+	req.Header.Add("Accept", "application/json")
+
+	resp, err := client.Do(req)
+
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to server: %v", err)
 	}

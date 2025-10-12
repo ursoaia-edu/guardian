@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'screens/home_screen.dart';
 import 'screens/settings_screen.dart';
+import 'screens/system_screen.dart';
 
 void main() {
   runApp(const ProcSentinelApp());
@@ -43,6 +44,7 @@ class _MainNavigationState extends State<MainNavigation> {
   
   final List<Widget> _screens = [
     const HomeScreen(),
+    const SystemScreen(),
     const SettingsScreen(),
   ];
 
@@ -51,6 +53,7 @@ class _MainNavigationState extends State<MainNavigation> {
     return Scaffold(
       body: _screens[_currentIndex],
       bottomNavigationBar: BottomNavigationBar(
+        type: BottomNavigationBarType.fixed,
         currentIndex: _currentIndex,
         onTap: (index) {
           setState(() {
@@ -61,6 +64,10 @@ class _MainNavigationState extends State<MainNavigation> {
           BottomNavigationBarItem(
             icon: Icon(Icons.security),
             label: 'Dashboard',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.power_settings_new),
+            label: 'System',
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.settings),

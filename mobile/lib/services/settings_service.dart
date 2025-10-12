@@ -220,4 +220,54 @@ class SettingsService {
       return false;
     }
   }
+
+  /// Gets system data from the server
+  Future<List<Map<String, dynamic>>> getSystemData() async {
+    try {
+      final serverAddress = await getServerAddress();
+      final client = http.Client();
+      final uri = Uri.parse('$serverAddress/system');
+      final headers = await _getHeaders();
+
+      final response = await client
+          .get(uri, headers: headers)
+          .timeout(const Duration(seconds: 10));
+
+      client.close();
+
+      if (response.statusCode == 200) {
+        final body = json.decode(response.body);
+        final List<dynamic> systems = body['systems'] ?? [];
+        return systems.cast<Map<String, dynamic>>();
+      }
+
+      return [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  /// Updates system status
+  Future<bool> updateSystemStatus(String name, bool status) async {
+    try {
+      final serverAddress = await getServerAddress();
+      final client = http.Client();
+      final uri = Uri.parse('$serverAddress/system');
+      final headers = await _getHeaders(additionalHeaders: {'Content-Type': 'application/json'});
+
+      final response = await client
+          .put(
+            uri,
+            headers: headers,
+            body: json.encode({'name': name, 'status': status}),
+          )
+          .timeout(const Duration(seconds: 10));
+
+      client.close();
+
+      return response.statusCode == 200;
+    } catch (e) {
+      return false;
+    }
+  }
 }

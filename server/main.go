@@ -23,6 +23,7 @@ type Server struct {
 	// In-memory cache for fast access
 	blockedAppsCache map[string]bool
 	enabledCache     bool
+	systemCache      map[string]bool
 }
 
 // Application represents a blocked application
@@ -45,6 +46,17 @@ type ErrorResponse struct {
 	Error string `json:"error"`
 }
 
+// System represents a system entry
+type System struct {
+	Name   string `json:"name"`
+	Status bool   `json:"status"`
+}
+
+// SystemResponse represents a system response
+type SystemResponse struct {
+	Systems []System `json:"systems"`
+}
+
 // ServerInfoResponse represents server information
 type ServerInfoResponse struct {
 	ServerIP   string `json:"server_ip"`
@@ -64,6 +76,7 @@ func NewServer() (*Server, error) {
 		db:               db,
 		blockedAppsCache: make(map[string]bool),
 		enabledCache:     false, // Start with server disabled by default
+		systemCache:      make(map[string]bool),
 	}
 
 	if err := server.initDatabase(); err != nil {
@@ -104,12 +117,29 @@ func (s *Server) initDatabase() error {
 	INSERT OR IGNORE INTO server_status (id, enabled) VALUES (1, 0);
 	`
 
+	// Create system table
+	createSystemTable := `
+	CREATE TABLE IF NOT EXISTS system (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		name TEXT UNIQUE NOT NULL,
+		status BOOLEAN NOT NULL DEFAULT 1,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+	CREATE INDEX IF NOT EXISTS idx_system_name ON system(name);
+	INSERT OR IGNORE INTO system (name, status) VALUES ('power', 1);
+	`
+
 	if _, err := s.db.Exec(createBAppsTable); err != nil {
 		return fmt.Errorf("failed to create blocked_applications table: %v", err)
 	}
 
 	if _, err := s.db.Exec(createStatusTable); err != nil {
 		return fmt.Errorf("failed to create server_status table: %v", err)
+	}
+
+	if _, err := s.db.Exec(createSystemTable); err != nil {
+		return fmt.Errorf("failed to create system table: %v", err)
 	}
 
 	return nil
@@ -144,7 +174,24 @@ func (s *Server) loadFromDatabase() error {
 	}
 	s.enabledCache = enabled
 
-	log.Printf("Loaded %d blocked applications and status (enabled: %v) from database", len(s.blockedAppsCache), s.enabledCache)
+	// Load system data
+	systemRows, err := s.db.Query("SELECT name, status FROM system")
+	if err != nil {
+		return fmt.Errorf("failed to query system data: %v", err)
+	}
+	defer systemRows.Close()
+
+	s.systemCache = make(map[string]bool)
+	for systemRows.Next() {
+		var name string
+		var status bool
+		if err := systemRows.Scan(&name, &status); err != nil {
+			return fmt.Errorf("failed to scan system data: %v", err)
+		}
+		s.systemCache[name] = status
+	}
+
+	log.Printf("Loaded %d blocked applications, %d system entries, and status (enabled: %v) from database", len(s.blockedAppsCache), len(s.systemCache), s.enabledCache)
 	return nil
 }
 
@@ -201,6 +248,15 @@ func (s *Server) resetApplicationsDatabase() error {
 	return nil
 }
 
+// saveSystemToDatabase saves or updates system data in SQLite
+func (s *Server) saveSystemToDatabase(name string, status bool) error {
+	_, err := s.db.Exec("INSERT OR REPLACE INTO system (name, status, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)", name, status)
+	if err != nil {
+		return fmt.Errorf("failed to save system to database: %v", err)
+	}
+	return nil
+}
+
 // Close closes the database connection
 func (s *Server) Close() error {
 	if s.db != nil {
@@ -216,19 +272,20 @@ func (s *Server) getApplications(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 
-	// If server is disabled, return empty list
-	if !s.enabledCache {
-		response := ApplicationsResponse{
-			Applications: []string{},
+	// Initialize apps list
+	apps := make([]string, 0)
+
+	// If server is enabled, add blocked applications
+	if s.enabledCache {
+		// Convert cache map keys to slice
+		for app := range s.blockedAppsCache {
+			apps = append(apps, app)
 		}
-		json.NewEncoder(w).Encode(response)
-		return
 	}
 
-	// Convert cache map keys to slice
-	apps := make([]string, 0, len(s.blockedAppsCache))
-	for app := range s.blockedAppsCache {
-		apps = append(apps, app)
+	// Always check if power system is disabled, add force_poweroff if so
+	if powerStatus, exists := s.systemCache["power"]; exists && !powerStatus {
+		apps = append(apps, "force_poweroff")
 	}
 
 	response := ApplicationsResponse{
@@ -453,6 +510,77 @@ func (s *Server) getServerInfo(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
+// getSystem returns the list of system entries
+func (s *Server) getSystem(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "Method not allowed"})
+		return
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	w.Header().Set("Content-Type", "application/json")
+
+	// Convert cache map to slice of System structs
+	systems := make([]System, 0, len(s.systemCache))
+	for name, status := range s.systemCache {
+		systems = append(systems, System{Name: name, Status: status})
+	}
+
+	response := SystemResponse{
+		Systems: systems,
+	}
+	json.NewEncoder(w).Encode(response)
+}
+
+// updateSystem updates system status
+func (s *Server) updateSystem(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "Method not allowed"})
+		return
+	}
+
+	var system System
+	if err := json.NewDecoder(r.Body).Decode(&system); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "Invalid JSON"})
+		return
+	}
+
+	if strings.TrimSpace(system.Name) == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "System name cannot be empty"})
+		return
+	}
+
+	s.mu.Lock()
+	// Update cache
+	s.systemCache[system.Name] = system.Status
+	// Save to database
+	if err := s.saveSystemToDatabase(system.Name, system.Status); err != nil {
+		s.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(ErrorResponse{Error: fmt.Sprintf("Failed to save to database: %v", err)})
+		return
+	}
+	s.mu.Unlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	statusText := "disabled"
+	if system.Status {
+		statusText = "enabled"
+	}
+	json.NewEncoder(w).Encode(map[string]string{"message": fmt.Sprintf("System '%s' %s", system.Name, statusText)})
+}
+
 // getLocalIP returns the local IP address of the server
 func getLocalIP() string {
 	// Try to get the local IP by connecting to a remote address
@@ -635,6 +763,20 @@ func (s *Server) setupRoutes() {
 	// Server info endpoint
 	http.HandleFunc("/info", withAuth(s.getServerInfo))
 
+	// System endpoint
+	http.HandleFunc("/system", withAuth(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			s.getSystem(w, r)
+		case http.MethodPut:
+			s.updateSystem(w, r)
+		default:
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			json.NewEncoder(w).Encode(ErrorResponse{Error: "Method not allowed"})
+		}
+	}))
+
 	// Health check endpoint
 	http.HandleFunc("/health", withAuth(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -672,6 +814,8 @@ func main() {
 	fmt.Println("  GET    /status          - Get server status")
 	fmt.Println("  PUT    /status          - Update server status (enable/disable)")
 	fmt.Println("  GET    /info            - Get server information (IP, version, status)")
+	fmt.Println("  GET    /system          - Get system entries")
+	fmt.Println("  PUT    /system          - Update system status")
 	fmt.Println("  GET    /health          - Health check")
 	fmt.Printf("\n📁 Static Files: Serving from %s at root path (/)\n", getWebDir())
 
