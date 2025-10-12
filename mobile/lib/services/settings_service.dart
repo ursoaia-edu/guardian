@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 class SettingsService {
   static const String _serverAddressKey = 'server_address';
+  static const String _tokenKey = 'auth_token';
   static const String _defaultServerAddress = 'http://192.168.1.10:8080';
 
   /// Gets the server address from persistent storage
@@ -19,14 +20,47 @@ class SettingsService {
     await prefs.setString(_serverAddressKey, address);
   }
 
+  /// Gets the authentication token from persistent storage
+  Future<String?> getToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_tokenKey);
+  }
+
+  /// Sets the authentication token in persistent storage
+  Future<void> setToken(String? token) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (token == null || token.isEmpty) {
+      await prefs.remove(_tokenKey);
+    } else {
+      await prefs.setString(_tokenKey, token);
+    }
+  }
+
+  /// Gets HTTP headers with authorization token if available
+  Future<Map<String, String>> _getHeaders({Map<String, String>? additionalHeaders}) async {
+    final headers = <String, String>{};
+    
+    final token = await getToken();
+    if (token != null && token.isNotEmpty) {
+      headers['Authorization'] = 'Bearer $token';
+    }
+    
+    if (additionalHeaders != null) {
+      headers.addAll(additionalHeaders);
+    }
+    
+    return headers;
+  }
+
   /// Tests connection to the server
   Future<bool> testConnection(String serverAddress) async {
     try {
       final client = http.Client();
       final uri = Uri.parse('$serverAddress/health');
+      final headers = await _getHeaders();
 
       final response = await client
-          .get(uri)
+          .get(uri, headers: headers)
           .timeout(const Duration(seconds: 10));
 
       client.close();
@@ -54,9 +88,10 @@ class SettingsService {
       final serverAddress = await getServerAddress();
       final client = http.Client();
       final uri = Uri.parse('$serverAddress/applications/all');
+      final headers = await _getHeaders();
 
       final response = await client
-          .get(uri)
+          .get(uri, headers: headers)
           .timeout(const Duration(seconds: 10));
 
       client.close();
@@ -79,9 +114,10 @@ class SettingsService {
       final serverAddress = await getServerAddress();
       final client = http.Client();
       final uri = Uri.parse('$serverAddress/status');
+      final headers = await _getHeaders();
 
       final response = await client
-          .get(uri)
+          .get(uri, headers: headers)
           .timeout(const Duration(seconds: 10));
 
       client.close();
@@ -103,11 +139,12 @@ class SettingsService {
       final serverAddress = await getServerAddress();
       final client = http.Client();
       final uri = Uri.parse('$serverAddress/applications');
+      final headers = await _getHeaders(additionalHeaders: {'Content-Type': 'application/json'});
 
       final response = await client
           .post(
             uri,
-            headers: {'Content-Type': 'application/json'},
+            headers: headers,
             body: json.encode({'name': applicationName}),
           )
           .timeout(const Duration(seconds: 10));
@@ -126,9 +163,10 @@ class SettingsService {
       final serverAddress = await getServerAddress();
       final client = http.Client();
       final uri = Uri.parse('$serverAddress/applications/$applicationName');
+      final headers = await _getHeaders();
 
       final response = await client
-          .delete(uri)
+          .delete(uri, headers: headers)
           .timeout(const Duration(seconds: 10));
 
       client.close();
@@ -145,9 +183,10 @@ class SettingsService {
       final serverAddress = await getServerAddress();
       final client = http.Client();
       final uri = Uri.parse('$serverAddress/reset');
+      final headers = await _getHeaders();
 
       final response = await client
-          .delete(uri)
+          .delete(uri, headers: headers)
           .timeout(const Duration(seconds: 10));
 
       client.close();
@@ -164,11 +203,12 @@ class SettingsService {
       final serverAddress = await getServerAddress();
       final client = http.Client();
       final uri = Uri.parse('$serverAddress/status');
+      final headers = await _getHeaders(additionalHeaders: {'Content-Type': 'application/json'});
 
       final response = await client
           .put(
             uri,
-            headers: {'Content-Type': 'application/json'},
+            headers: headers,
             body: json.encode({'enabled': enabled}),
           )
           .timeout(const Duration(seconds: 10));

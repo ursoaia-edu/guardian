@@ -47,10 +47,10 @@ type ErrorResponse struct {
 
 // ServerInfoResponse represents server information
 type ServerInfoResponse struct {
-	ServerIP    string `json:"server_ip"`
-	ServerPort  string `json:"server_port"`
-	Version     string `json:"version"`
-	Status      string `json:"status"`
+	ServerIP   string `json:"server_ip"`
+	ServerPort string `json:"server_port"`
+	Version    string `json:"version"`
+	Status     string `json:"status"`
 }
 
 // NewServer creates a new server instance
@@ -237,6 +237,26 @@ func (s *Server) getApplications(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
+// Middleware for token authentication
+func withAuth(handler http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var token = os.Getenv("TOKEN")
+		if token == "" {
+			token = "mILp9n6shk3G9SGSaS2nmP6YlLHwsP1Z"
+		}
+		authHeader := r.Header.Get("Authorization")
+		expected := "Bearer " + token
+
+		if authHeader != expected {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		// If authorized, call the next handler
+		handler(w, r)
+	}
+}
+
 // getAllApplications returns the complete list of blocked applications regardless of server status
 func (s *Server) getAllApplications(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -413,7 +433,7 @@ func (s *Server) getServerInfo(w http.ResponseWriter, r *http.Request) {
 
 	// Get local IP address
 	localIP := getLocalIP()
-	
+
 	// Get server status
 	s.mu.RLock()
 	serverStatus := "enabled"
@@ -578,7 +598,7 @@ func (s *Server) resetApplications(w http.ResponseWriter, r *http.Request) {
 
 // setupRoutes configures the HTTP routes
 func (s *Server) setupRoutes() {
-	http.HandleFunc("/applications", func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("/applications", withAuth(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
 			s.getApplications(w, r)
@@ -589,14 +609,14 @@ func (s *Server) setupRoutes() {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			json.NewEncoder(w).Encode(ErrorResponse{Error: "Method not allowed"})
 		}
-	})
+	}))
 
-	http.HandleFunc("/applications/", s.removeApplication)
+	http.HandleFunc("/applications/", withAuth(s.removeApplication))
 
 	// Get all applications endpoint - always returns full list regardless of server status
-	http.HandleFunc("/applications/all", s.getAllApplications)
+	http.HandleFunc("/applications/all", withAuth(s.getAllApplications))
 
-	http.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("/status", withAuth(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
 			s.getStatus(w, r)
@@ -607,19 +627,19 @@ func (s *Server) setupRoutes() {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			json.NewEncoder(w).Encode(ErrorResponse{Error: "Method not allowed"})
 		}
-	})
+	}))
 
 	// Reset endpoint - remove all applications
-	http.HandleFunc("/reset", s.resetApplications)
+	http.HandleFunc("/reset", withAuth(s.resetApplications))
 
 	// Server info endpoint
-	http.HandleFunc("/info", s.getServerInfo)
+	http.HandleFunc("/info", withAuth(s.getServerInfo))
 
 	// Health check endpoint
-	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("/health", withAuth(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-	})
+	}))
 
 	// Serve static files from /bin/web at root path
 	// This should be the last route to catch all remaining requests

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+
 import '../services/settings_service.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -137,7 +138,9 @@ class _HomeScreenState extends State<HomeScreen> {
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Failed to remove application. Check server connection.'),
+          content: Text(
+            'Failed to remove application. Check server connection.',
+          ),
           backgroundColor: Colors.red,
         ),
       );
@@ -150,7 +153,9 @@ class _HomeScreenState extends State<HomeScreen> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Reset Blocked Applications'),
-        content: const Text('Are you sure you want to remove all blocked applications?'),
+        content: const Text(
+          'Are you sure you want to remove all blocked applications?',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
@@ -182,7 +187,9 @@ class _HomeScreenState extends State<HomeScreen> {
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Failed to reset applications. Check server connection.'),
+            content: Text(
+              'Failed to reset applications. Check server connection.',
+            ),
             backgroundColor: Colors.red,
           ),
         );
@@ -208,7 +215,9 @@ class _HomeScreenState extends State<HomeScreen> {
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Failed to update server status. Check server connection.'),
+          content: Text(
+            'Failed to update server status. Check server connection.',
+          ),
           backgroundColor: Colors.red,
         ),
       );
@@ -225,11 +234,7 @@ class _HomeScreenState extends State<HomeScreen> {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(
-                  Icons.cloud_off,
-                  size: 64,
-                  color: Colors.grey.shade400,
-                ),
+                Icon(Icons.cloud_off, size: 64, color: Colors.grey.shade400),
                 const SizedBox(height: 16),
                 const Text(
                   'Server Not Connected',
@@ -257,11 +262,7 @@ class _HomeScreenState extends State<HomeScreen> {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(
-                  Icons.security,
-                  size: 64,
-                  color: Colors.green.shade400,
-                ),
+                Icon(Icons.security, size: 64, color: Colors.green.shade400),
                 const SizedBox(height: 16),
                 const Text(
                   'No Blocked Applications',
@@ -311,10 +312,7 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppBar(
         title: const Text('ProcSentinel Dashboard'),
         actions: [
-          IconButton(
-            onPressed: _loadData,
-            icon: const Icon(Icons.refresh),
-          ),
+          IconButton(onPressed: _loadData, icon: const Icon(Icons.refresh)),
         ],
       ),
       body: _isLoading
@@ -326,7 +324,9 @@ class _HomeScreenState extends State<HomeScreen> {
                 children: [
                   // Server Status Card
                   Card(
-                    color: _isConnected ? Colors.green.shade50 : Colors.red.shade50,
+                    color: _isConnected
+                        ? Colors.green.shade50
+                        : Colors.red.shade50,
                     child: Padding(
                       padding: const EdgeInsets.all(16.0),
                       child: Row(
@@ -342,23 +342,32 @@ class _HomeScreenState extends State<HomeScreen> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  _isConnected ? 'Server Connected' : 'Server Disconnected',
+                                  _isConnected
+                                      ? 'Server Connected'
+                                      : 'Server Disconnected',
                                   style: TextStyle(
                                     fontSize: 16,
                                     fontWeight: FontWeight.bold,
-                                    color: _isConnected ? Colors.green.shade700 : Colors.red.shade700,
+                                    color: _isConnected
+                                        ? Colors.green.shade700
+                                        : Colors.red.shade700,
                                   ),
                                 ),
                                 Text(
                                   _serverAddress,
-                                  style: const TextStyle(fontSize: 14, color: Colors.grey),
+                                  style: const TextStyle(
+                                    fontSize: 14,
+                                    color: Colors.grey,
+                                  ),
                                 ),
                                 if (_isConnected)
                                   Text(
                                     'Status: ${_serverEnabled ? 'Enabled' : 'Disabled'}',
                                     style: TextStyle(
                                       fontSize: 14,
-                                      color: _serverEnabled ? Colors.green.shade700 : Colors.orange.shade700,
+                                      color: _serverEnabled
+                                          ? Colors.green.shade700
+                                          : Colors.orange.shade700,
                                     ),
                                   ),
                               ],
@@ -380,7 +389,10 @@ class _HomeScreenState extends State<HomeScreen> {
                   if (_isConnected) ...[
                     const Text(
                       'Add Blocked Application',
-                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                     const SizedBox(height: 12),
                     Card(
@@ -422,13 +434,22 @@ class _HomeScreenState extends State<HomeScreen> {
                       children: [
                         const Text(
                           'Blocked Applications',
-                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                         if (_blockedApps.isNotEmpty)
                           TextButton.icon(
                             onPressed: _resetApplications,
-                            icon: const Icon(Icons.clear_all, color: Colors.red),
-                            label: const Text('Reset All', style: TextStyle(color: Colors.red)),
+                            icon: const Icon(
+                              Icons.clear_all,
+                              color: Colors.red,
+                            ),
+                            label: const Text(
+                              'Reset All',
+                              style: TextStyle(color: Colors.red),
+                            ),
                           ),
                       ],
                     ),
@@ -436,9 +457,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ],
 
                   // Applications List - takes remaining space
-                  Expanded(
-                    child: _buildApplicationsList(),
-                  ),
+                  Expanded(child: _buildApplicationsList()),
                 ],
               ),
             ),
