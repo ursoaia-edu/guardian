@@ -98,7 +98,7 @@ func updateBlockedApplications(serverAddress string, blocked *[]string) {
 				log.Println("No applications currently blocked")
 			}
 		}
-		time.Sleep(60 * time.Second) // Update every 60 seconds
+		time.Sleep(30 * time.Second) // Update every 30 seconds
 	}
 }
 
