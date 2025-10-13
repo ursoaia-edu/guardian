@@ -11,7 +11,7 @@ class SystemScreen extends StatefulWidget {
 
 class _SystemScreenState extends State<SystemScreen> {
   final SettingsService _settingsService = SettingsService();
-  
+
   List<Map<String, dynamic>> _systems = [];
   bool _isLoading = true;
   bool _isConnected = false;
@@ -70,7 +70,7 @@ class _SystemScreenState extends State<SystemScreen> {
 
   Future<void> _toggleSystemStatus(String name, bool currentStatus) async {
     final newStatus = !currentStatus;
-    
+
     final success = await _settingsService.updateSystemStatus(name, newStatus);
 
     if (success) {
@@ -84,6 +84,7 @@ class _SystemScreenState extends State<SystemScreen> {
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
+          duration: const Duration(milliseconds: 500),
           content: Text('$name ${newStatus ? 'enabled' : 'disabled'}'),
           backgroundColor: Colors.green,
         ),
@@ -91,6 +92,7 @@ class _SystemScreenState extends State<SystemScreen> {
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
+          duration: const Duration(milliseconds: 500),
           content: Text(
             'Failed to update system status. Check server connection.',
           ),

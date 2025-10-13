@@ -62,6 +62,7 @@ class _HomeScreenState extends State<HomeScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
+            duration: const Duration(milliseconds: 500),
             content: Text('Error loading data: $e'),
             backgroundColor: Colors.red,
           ),
@@ -80,6 +81,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (appName.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
+          duration: Duration(milliseconds: 500),
           content: Text('Please enter an application name'),
           backgroundColor: Colors.orange,
         ),
@@ -90,6 +92,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (_blockedApps.contains(appName)) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
+          duration:  Duration(milliseconds: 500),
           content: Text('Application is already in the blocked list'),
           backgroundColor: Colors.orange,
         ),
@@ -107,6 +110,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
+          duration: const Duration(milliseconds: 500),
           content: Text('Added "$appName" to blocked list'),
           backgroundColor: Colors.green,
         ),
@@ -114,6 +118,7 @@ class _HomeScreenState extends State<HomeScreen> {
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
+          duration: Duration(milliseconds: 500),
           content: Text('Failed to add application. Check server connection.'),
           backgroundColor: Colors.red,
         ),
@@ -131,6 +136,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
+          duration: const Duration(milliseconds: 500),
           content: Text('Removed "$appName" from blocked list'),
           backgroundColor: Colors.green,
         ),
@@ -138,6 +144,7 @@ class _HomeScreenState extends State<HomeScreen> {
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
+          duration: Duration(milliseconds: 500),
           content: Text(
             'Failed to remove application. Check server connection.',
           ),
@@ -180,6 +187,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
+            duration: Duration(milliseconds: 500),
             content: Text('All blocked applications removed'),
             backgroundColor: Colors.green,
           ),
@@ -187,6 +195,7 @@ class _HomeScreenState extends State<HomeScreen> {
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
+            duration: Duration(milliseconds: 500),
             content: Text(
               'Failed to reset applications. Check server connection.',
             ),
@@ -208,6 +217,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
+          duration: const Duration(milliseconds: 500),
           content: Text('Server ${newStatus ? 'enabled' : 'disabled'}'),
           backgroundColor: Colors.green,
         ),
@@ -215,6 +225,7 @@ class _HomeScreenState extends State<HomeScreen> {
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
+          duration: Duration(milliseconds: 500),
           content: Text(
             'Failed to update server status. Check server connection.',
           ),
@@ -310,7 +321,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('ProcSentinel Dashboard'),
+        title: const Text('Guardian Dashboard'),
         actions: [
           IconButton(onPressed: _loadData, icon: const Icon(Icons.refresh)),
         ],

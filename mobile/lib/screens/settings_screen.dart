@@ -198,7 +198,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                 hintText: 'http://192.168.1.10:8080',
                                 prefixIcon: Icon(Icons.link),
                                 border: OutlineInputBorder(),
-                                helperText: 'Enter the ProcSentinel server URL',
+                                helperText: 'Enter the Guardian server URL',
                               ),
                               keyboardType: TextInputType.url,
                               enabled: !_isSaving,
@@ -293,7 +293,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                 Icon(Icons.security, size: 32),
                                 SizedBox(width: 12),
                                 Text(
-                                  'ProcSentinel Mobile',
+                                  'Guardian Mobile',
                                   style: TextStyle(
                                     fontSize: 18,
                                     fontWeight: FontWeight.bold,
@@ -303,7 +303,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             ),
                             const SizedBox(height: 12),
                             const Text(
-                              'Mobile client for managing blocked applications in the ProcSentinel process monitoring system.',
+                              'Mobile client for managing blocked applications in the Guardian process monitoring system.',
                               style: TextStyle(
                                 fontSize: 14,
                                 color: Colors.grey,
