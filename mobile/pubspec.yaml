@@ -93,6 +93,6 @@ flutter_launcher_icons:
   ios: true
   image_path: "assets/icon/ic_launcher.webp"
   min_sdk_android: 21
-  adaptive_icon_background: "#2E7D32"
+  adaptive_icon_background: "#FFFFFF"
   adaptive_icon_foreground: "assets/icon/ic_launcher.webp"
   remove_alpha_ios: true
