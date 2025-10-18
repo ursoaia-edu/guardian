@@ -10,6 +10,7 @@ TOKEN=mILp9n6shk3G9SGSaS2nmP6YlLHwsP1Z1
 SERVER_ADDRESS=http://0.0.0.0:8080
 WEB_DIR=web
 TOKEN=mILp9n6shk3G9SGSaS2nmP6YlLHwsP1Z1
+ADMIN_TOKEN=admin4ILp9n6shk3G9SGSaS2nmP6YlLHwsP1Z
 ...
 
 
@@ -17,14 +18,14 @@ TOKEN=mILp9n6shk3G9SGSaS2nmP6YlLHwsP1Z1
 Generate app icon
 flutter pub run flutter_launcher_icons
 
-### Deploy
+### Install
 ```shell
 sudo su
 mkdir -p /usr/local/bin/procsentinel
 tar -xzvf procsentinel-server.tar.gz -C /usr/local/bin/procsentinel
 cp /usr/local/bin/procsentinel/procsentinel.service /etc/systemd/system/procsentinel.service
-systemctl daemon-reload
-systemctl enable procsentinel
-systemctl start procsentinel
-systemctl status procsentinel
+sudo systemctl daemon-reload
+sudo systemctl enable procsentinel
+sudo systemctl start procsentinel
+sudo systemctl status procsentinel
 ```
