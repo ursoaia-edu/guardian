@@ -295,6 +295,26 @@ func (s *Server) getApplications(w http.ResponseWriter, r *http.Request) {
 }
 
 // Middleware for token authentication
+func withAdminAuth(handler http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var token = os.Getenv("ADMIN_TOKEN")
+		if token == "" {
+			token = "mILp9n6shk3G9SGSaS2nmP6YlLHwsP1Z"
+		}
+		authHeader := r.Header.Get("Authorization")
+		expected := "Bearer " + token
+
+		if authHeader != expected {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		// If authorized, call the next handler
+		handler(w, r)
+	}
+}
+
+// Middleware for token authentication
 func withAuth(handler http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var token = os.Getenv("TOKEN")
@@ -649,7 +669,7 @@ func getWebDir() string {
 	webDir := os.Getenv("WEB_DIR")
 	if webDir == "" {
 		// Default fallback
-		webDir = "../bin/web"
+		webDir = "web"
 	}
 	return webDir
 }
@@ -726,25 +746,16 @@ func (s *Server) resetApplications(w http.ResponseWriter, r *http.Request) {
 
 // setupRoutes configures the HTTP routes
 func (s *Server) setupRoutes() {
-	http.HandleFunc("/applications", withAuth(func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet:
-			s.getApplications(w, r)
-		case http.MethodPost:
-			s.addApplication(w, r)
-		default:
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			json.NewEncoder(w).Encode(ErrorResponse{Error: "Method not allowed"})
-		}
-	}))
+	http.HandleFunc("/applications", withAuth(s.getApplications))
 
-	http.HandleFunc("/applications/", withAuth(s.removeApplication))
+	http.HandleFunc("/applications/add", withAdminAuth(s.addApplication))
+
+	http.HandleFunc("/applications/", withAdminAuth(s.removeApplication))
 
 	// Get all applications endpoint - always returns full list regardless of server status
-	http.HandleFunc("/applications/all", withAuth(s.getAllApplications))
+	http.HandleFunc("/applications/all", withAdminAuth(s.getAllApplications))
 
-	http.HandleFunc("/status", withAuth(func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("/status", withAdminAuth(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
 			s.getStatus(w, r)
@@ -758,13 +769,13 @@ func (s *Server) setupRoutes() {
 	}))
 
 	// Reset endpoint - remove all applications
-	http.HandleFunc("/reset", withAuth(s.resetApplications))
+	http.HandleFunc("/reset", withAdminAuth(s.resetApplications))
 
 	// Server info endpoint
-	http.HandleFunc("/info", withAuth(s.getServerInfo))
+	http.HandleFunc("/info", withAdminAuth(s.getServerInfo))
 
 	// System endpoint
-	http.HandleFunc("/system", withAuth(func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("/system", withAdminAuth(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
 			s.getSystem(w, r)
@@ -778,7 +789,7 @@ func (s *Server) setupRoutes() {
 	}))
 
 	// Health check endpoint
-	http.HandleFunc("/health", withAuth(func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("/health", withAdminAuth(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	}))
@@ -790,7 +801,7 @@ func (s *Server) setupRoutes() {
 
 func main() {
 	// Load environment variables from .env file
-	if err := loadEnvFile("../.env"); err != nil {
+	if err := loadEnvFile(".env"); err != nil {
 		log.Printf("Warning: Could not load .env file: %v", err)
 	}
 
@@ -802,13 +813,21 @@ func main() {
 
 	server.setupRoutes()
 
-	port := "0.0.0.0:8080"
-	fmt.Printf("ProcSentinel Server starting on port %s\n", port)
-	fmt.Println("\n🌐 Web Interface: http://localhost:8080/")
+	var server_address = os.Getenv("SERVER_ADDRESS")
+	var addr = os.Getenv("SERVER_ADDRESS")
+	if server_address == "" {
+		addr = "0.0.0.0:8080"
+		server_address = "http://localhost:8080/"
+	} else {
+		parts := strings.Split(addr, "//")
+		addr = parts[len(parts)-1]
+	}
+	fmt.Printf("ProcSentinel Server starting on %s\n", addr)
+	fmt.Printf("\n🌐 Web Interface: %s", server_address)
 	fmt.Println("\nAPI Endpoints:")
 	fmt.Println("  GET    /applications     - Get list of blocked applications (empty when disabled)")
 	fmt.Println("  GET    /applications/all - Get ALL blocked applications (always returns full list)")
-	fmt.Println("  POST   /applications     - Add new blocked application")
+	fmt.Println("  POST   /applications/add     - Add new blocked application")
 	fmt.Println("  DELETE /applications/{name} - Remove blocked application")
 	fmt.Println("  DELETE /reset            - Remove all blocked applications")
 	fmt.Println("  GET    /status          - Get server status")
@@ -819,5 +838,5 @@ func main() {
 	fmt.Println("  GET    /health          - Health check")
 	fmt.Printf("\n📁 Static Files: Serving from %s at root path (/)\n", getWebDir())
 
-	log.Fatal(http.ListenAndServe(port, nil))
+	log.Fatal(http.ListenAndServe(addr, nil))
 }
