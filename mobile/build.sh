@@ -5,8 +5,8 @@ flutter clean
 flutter build apk --release
 cp build/app/outputs/flutter-apk/app-release.apk ../bin/guardian.apk
 
-flutter build web --release
-cp -r build/web ../bin/web
+# flutter build web --release
+# cp -r build/web ../bin/web
 
 # flutter build windows --release
 # cp build/windows/runner/Release/procsentinel.exe ../bin/guardian.exe

@@ -20,10 +20,9 @@ flutter pub run flutter_launcher_icons
 
 ### Install
 ```shell
-sudo su
-mkdir -p /usr/local/bin/procsentinel
-tar -xzvf procsentinel-server.tar.gz -C /usr/local/bin/procsentinel
-cp /usr/local/bin/procsentinel/procsentinel.service /etc/systemd/system/procsentinel.service
+sudo mkdir -p /usr/local/bin/procsentinel
+sudo tar -xzvf procsentinel-server.tar.gz -C /usr/local/bin/procsentinel
+sudo cp /usr/local/bin/procsentinel/procsentinel.service /etc/systemd/system/procsentinel.service
 sudo systemctl daemon-reload
 sudo systemctl enable procsentinel
 sudo systemctl start procsentinel
