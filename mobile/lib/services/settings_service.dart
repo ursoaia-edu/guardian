@@ -37,18 +37,20 @@ class SettingsService {
   }
 
   /// Gets HTTP headers with authorization token if available
-  Future<Map<String, String>> _getHeaders({Map<String, String>? additionalHeaders}) async {
+  Future<Map<String, String>> _getHeaders({
+    Map<String, String>? additionalHeaders,
+  }) async {
     final headers = <String, String>{};
-    
+
     final token = await getToken();
     if (token != null && token.isNotEmpty) {
       headers['Authorization'] = 'Bearer $token';
     }
-    
+
     if (additionalHeaders != null) {
       headers.addAll(additionalHeaders);
     }
-    
+
     return headers;
   }
 
@@ -57,7 +59,9 @@ class SettingsService {
     try {
       final client = http.Client();
       final uri = Uri.parse('$serverAddress/health');
-      final headers = await _getHeaders();
+      final headers = await _getHeaders(
+        additionalHeaders: {'Content-Type': 'application/json'},
+      );
 
       final response = await client
           .get(uri, headers: headers)
@@ -88,7 +92,9 @@ class SettingsService {
       final serverAddress = await getServerAddress();
       final client = http.Client();
       final uri = Uri.parse('$serverAddress/applications/all');
-      final headers = await _getHeaders();
+      final headers = await _getHeaders(
+        additionalHeaders: {'Content-Type': 'application/json'},
+      );
 
       final response = await client
           .get(uri, headers: headers)
@@ -114,7 +120,9 @@ class SettingsService {
       final serverAddress = await getServerAddress();
       final client = http.Client();
       final uri = Uri.parse('$serverAddress/status');
-      final headers = await _getHeaders();
+      final headers = await _getHeaders(
+        additionalHeaders: {'Content-Type': 'application/json'},
+      );
 
       final response = await client
           .get(uri, headers: headers)
@@ -138,8 +146,10 @@ class SettingsService {
     try {
       final serverAddress = await getServerAddress();
       final client = http.Client();
-      final uri = Uri.parse('$serverAddress/applications');
-      final headers = await _getHeaders(additionalHeaders: {'Content-Type': 'application/json'});
+      final uri = Uri.parse('$serverAddress/applications/add');
+      final headers = await _getHeaders(
+        additionalHeaders: {'Content-Type': 'application/json'},
+      );
 
       final response = await client
           .post(
@@ -163,7 +173,9 @@ class SettingsService {
       final serverAddress = await getServerAddress();
       final client = http.Client();
       final uri = Uri.parse('$serverAddress/applications/$applicationName');
-      final headers = await _getHeaders();
+      final headers = await _getHeaders(
+        additionalHeaders: {'Content-Type': 'application/json'},
+      );
 
       final response = await client
           .delete(uri, headers: headers)
@@ -183,7 +195,9 @@ class SettingsService {
       final serverAddress = await getServerAddress();
       final client = http.Client();
       final uri = Uri.parse('$serverAddress/reset');
-      final headers = await _getHeaders();
+      final headers = await _getHeaders(
+        additionalHeaders: {'Content-Type': 'application/json'},
+      );
 
       final response = await client
           .delete(uri, headers: headers)
@@ -203,14 +217,12 @@ class SettingsService {
       final serverAddress = await getServerAddress();
       final client = http.Client();
       final uri = Uri.parse('$serverAddress/status');
-      final headers = await _getHeaders(additionalHeaders: {'Content-Type': 'application/json'});
+      final headers = await _getHeaders(
+        additionalHeaders: {'Content-Type': 'application/json'},
+      );
 
       final response = await client
-          .put(
-            uri,
-            headers: headers,
-            body: json.encode({'enabled': enabled}),
-          )
+          .put(uri, headers: headers, body: json.encode({'enabled': enabled}))
           .timeout(const Duration(seconds: 10));
 
       client.close();
@@ -227,7 +239,9 @@ class SettingsService {
       final serverAddress = await getServerAddress();
       final client = http.Client();
       final uri = Uri.parse('$serverAddress/system');
-      final headers = await _getHeaders();
+      final headers = await _getHeaders(
+        additionalHeaders: {'Content-Type': 'application/json'},
+      );
 
       final response = await client
           .get(uri, headers: headers)
@@ -253,7 +267,9 @@ class SettingsService {
       final serverAddress = await getServerAddress();
       final client = http.Client();
       final uri = Uri.parse('$serverAddress/system');
-      final headers = await _getHeaders(additionalHeaders: {'Content-Type': 'application/json'});
+      final headers = await _getHeaders(
+        additionalHeaders: {'Content-Type': 'application/json'},
+      );
 
       final response = await client
           .put(

@@ -4,5 +4,5 @@ cp procsentinel.service ../bin/
 
 tar -czvf ../procsentinel-server.tar.gz -C ../bin .
 mkdir -p ../release
-cp deploy.sh ../release/
+cp install.sh ../release/
 mv ../procsentinel-server.tar.gz ../release/
