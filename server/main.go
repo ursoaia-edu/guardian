@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+
+	// "io"
 	"log"
 	"net"
 	"net/http"
@@ -267,6 +269,7 @@ func (s *Server) Close() error {
 
 // getApplications returns the list of blocked applications
 func (s *Server) getApplications(w http.ResponseWriter, r *http.Request) {
+	log.Printf("[GET /applications] Request from %s", r.RemoteAddr)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -291,6 +294,7 @@ func (s *Server) getApplications(w http.ResponseWriter, r *http.Request) {
 	response := ApplicationsResponse{
 		Applications: apps,
 	}
+	log.Printf("[GET /applications] Returning %d applications (enabled: %v)", len(apps), s.enabledCache)
 	json.NewEncoder(w).Encode(response)
 }
 
@@ -305,6 +309,7 @@ func withAdminAuth(handler http.HandlerFunc) http.HandlerFunc {
 		expected := "Bearer " + token
 
 		if authHeader != expected {
+			log.Printf("[AUTH] Unauthorized admin access attempt from %s to %s", r.RemoteAddr, r.URL.Path)
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -325,6 +330,7 @@ func withAuth(handler http.HandlerFunc) http.HandlerFunc {
 		expected := "Bearer " + token
 
 		if authHeader != expected {
+			log.Printf("[AUTH] Unauthorized access attempt from %s to %s", r.RemoteAddr, r.URL.Path)
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -336,7 +342,9 @@ func withAuth(handler http.HandlerFunc) http.HandlerFunc {
 
 // getAllApplications returns the complete list of blocked applications regardless of server status
 func (s *Server) getAllApplications(w http.ResponseWriter, r *http.Request) {
+	log.Printf("[GET /applications/all] Request from %s", r.RemoteAddr)
 	if r.Method != http.MethodGet {
+		log.Printf("[GET /applications/all] Method not allowed: %s", r.Method)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		json.NewEncoder(w).Encode(ErrorResponse{Error: "Method not allowed"})
@@ -357,12 +365,15 @@ func (s *Server) getAllApplications(w http.ResponseWriter, r *http.Request) {
 	response := ApplicationsResponse{
 		Applications: apps,
 	}
+	log.Printf("[GET /applications/all] Returning %d applications", len(apps))
 	json.NewEncoder(w).Encode(response)
 }
 
 // addApplication adds a new application to the blocked list
 func (s *Server) addApplication(w http.ResponseWriter, r *http.Request) {
+	log.Printf("[POST /applications/add] Request from %s", r.RemoteAddr)
 	if r.Method != http.MethodPost {
+		log.Printf("[POST /applications/add] Method not allowed: %s", r.Method)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		json.NewEncoder(w).Encode(ErrorResponse{Error: "Method not allowed"})
@@ -371,6 +382,7 @@ func (s *Server) addApplication(w http.ResponseWriter, r *http.Request) {
 
 	var app Application
 	if err := json.NewDecoder(r.Body).Decode(&app); err != nil {
+		log.Printf("[POST /applications/add] Invalid JSON: %v", err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(ErrorResponse{Error: "Invalid JSON"})
@@ -378,6 +390,7 @@ func (s *Server) addApplication(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if strings.TrimSpace(app.Name) == "" {
+		log.Printf("[POST /applications/add] Empty application name")
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(ErrorResponse{Error: "Application name cannot be empty"})
@@ -390,6 +403,7 @@ func (s *Server) addApplication(w http.ResponseWriter, r *http.Request) {
 	// Save to database
 	if err := s.saveApplicationToDatabase(app.Name); err != nil {
 		s.mu.Unlock()
+		log.Printf("[POST /applications/add] Failed to save '%s': %v", app.Name, err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(ErrorResponse{Error: fmt.Sprintf("Failed to save to database: %v", err)})
@@ -397,6 +411,7 @@ func (s *Server) addApplication(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Unlock()
 
+	log.Printf("[POST /applications/add] Successfully added '%s'", app.Name)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]string{"message": fmt.Sprintf("Application '%s' added to blocked list", app.Name)})
@@ -404,7 +419,9 @@ func (s *Server) addApplication(w http.ResponseWriter, r *http.Request) {
 
 // removeApplication removes an application from the blocked list
 func (s *Server) removeApplication(w http.ResponseWriter, r *http.Request) {
+	log.Printf("[DELETE /applications/{name}] Request from %s", r.RemoteAddr)
 	if r.Method != http.MethodDelete {
+		log.Printf("[DELETE /applications/{name}] Method not allowed: %s", r.Method)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		json.NewEncoder(w).Encode(ErrorResponse{Error: "Method not allowed"})
@@ -414,6 +431,7 @@ func (s *Server) removeApplication(w http.ResponseWriter, r *http.Request) {
 	// Extract application name from URL path
 	path := strings.TrimPrefix(r.URL.Path, "/applications/")
 	if path == "" || path == r.URL.Path {
+		log.Printf("[DELETE /applications/{name}] Missing application name")
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(ErrorResponse{Error: "Application name is required in URL path"})
@@ -423,6 +441,7 @@ func (s *Server) removeApplication(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	if _, exists := s.blockedAppsCache[path]; !exists {
 		s.mu.Unlock()
+		log.Printf("[DELETE /applications/{name}] Application '%s' not found", path)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(ErrorResponse{Error: fmt.Sprintf("Application '%s' not found in blocked list", path)})
@@ -433,6 +452,7 @@ func (s *Server) removeApplication(w http.ResponseWriter, r *http.Request) {
 	// Remove from database
 	if err := s.removeApplicationFromDatabase(path); err != nil {
 		s.mu.Unlock()
+		log.Printf("[DELETE /applications/{name}] Failed to remove '%s': %v", path, err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(ErrorResponse{Error: fmt.Sprintf("Failed to remove from database: %v", err)})
@@ -440,13 +460,16 @@ func (s *Server) removeApplication(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Unlock()
 
+	log.Printf("[DELETE /applications/{name}] Successfully removed '%s'", path)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"message": fmt.Sprintf("Application '%s' removed from blocked list", path)})
 }
 
 // getStatus returns the current server status
 func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
+	log.Printf("[GET /status] Request from %s", r.RemoteAddr)
 	if r.Method != http.MethodGet {
+		log.Printf("[GET /status] Method not allowed: %s", r.Method)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		json.NewEncoder(w).Encode(ErrorResponse{Error: "Method not allowed"})
@@ -457,13 +480,16 @@ func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
 	enabled := s.enabledCache
 	s.mu.RUnlock()
 
+	log.Printf("[GET /status] Current status: enabled=%v", enabled)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(StatusResponse{Enabled: enabled})
 }
 
 // updateStatus updates the server status (enable/disable)
 func (s *Server) updateStatus(w http.ResponseWriter, r *http.Request) {
+	log.Printf("[PUT /status] Request from %s", r.RemoteAddr)
 	if r.Method != http.MethodPut {
+		log.Printf("[PUT /status] Method not allowed: %s", r.Method)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		json.NewEncoder(w).Encode(ErrorResponse{Error: "Method not allowed"})
@@ -472,6 +498,7 @@ func (s *Server) updateStatus(w http.ResponseWriter, r *http.Request) {
 
 	var status StatusResponse
 	if err := json.NewDecoder(r.Body).Decode(&status); err != nil {
+		log.Printf("[PUT /status] Invalid JSON: %v", err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(ErrorResponse{Error: "Invalid JSON"})
@@ -484,6 +511,7 @@ func (s *Server) updateStatus(w http.ResponseWriter, r *http.Request) {
 	// Save to database
 	if err := s.saveStatusToDatabase(status.Enabled); err != nil {
 		s.mu.Unlock()
+		log.Printf("[PUT /status] Failed to save status: %v", err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(ErrorResponse{Error: fmt.Sprintf("Failed to save status to database: %v", err)})
@@ -496,12 +524,15 @@ func (s *Server) updateStatus(w http.ResponseWriter, r *http.Request) {
 	if status.Enabled {
 		statusText = "enabled"
 	}
+	log.Printf("[PUT /status] Server status updated to: %s", statusText)
 	json.NewEncoder(w).Encode(map[string]string{"message": fmt.Sprintf("Server %s", statusText)})
 }
 
 // getServerInfo returns server information including local IP
 func (s *Server) getServerInfo(w http.ResponseWriter, r *http.Request) {
+	log.Printf("[GET /info] Request from %s", r.RemoteAddr)
 	if r.Method != http.MethodGet {
+		log.Printf("[GET /info] Method not allowed: %s", r.Method)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		json.NewEncoder(w).Encode(ErrorResponse{Error: "Method not allowed"})
@@ -526,13 +557,16 @@ func (s *Server) getServerInfo(w http.ResponseWriter, r *http.Request) {
 		Status:     serverStatus,
 	}
 
+	log.Printf("[GET /info] Server info - IP: %s, Status: %s", localIP, serverStatus)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
 }
 
 // getSystem returns the list of system entries
 func (s *Server) getSystem(w http.ResponseWriter, r *http.Request) {
+	log.Printf("[GET /system] Request from %s", r.RemoteAddr)
 	if r.Method != http.MethodGet {
+		log.Printf("[GET /system] Method not allowed: %s", r.Method)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		json.NewEncoder(w).Encode(ErrorResponse{Error: "Method not allowed"})
@@ -553,12 +587,15 @@ func (s *Server) getSystem(w http.ResponseWriter, r *http.Request) {
 	response := SystemResponse{
 		Systems: systems,
 	}
+	log.Printf("[GET /system] Returning %d system entries", len(systems))
 	json.NewEncoder(w).Encode(response)
 }
 
 // updateSystem updates system status
 func (s *Server) updateSystem(w http.ResponseWriter, r *http.Request) {
+	log.Printf("[PUT /system] Request from %s", r.RemoteAddr)
 	if r.Method != http.MethodPut {
+		log.Printf("[PUT /system] Method not allowed: %s", r.Method)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		json.NewEncoder(w).Encode(ErrorResponse{Error: "Method not allowed"})
@@ -567,6 +604,7 @@ func (s *Server) updateSystem(w http.ResponseWriter, r *http.Request) {
 
 	var system System
 	if err := json.NewDecoder(r.Body).Decode(&system); err != nil {
+		log.Printf("[PUT /system] Invalid JSON: %v", err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(ErrorResponse{Error: "Invalid JSON"})
@@ -574,6 +612,7 @@ func (s *Server) updateSystem(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if strings.TrimSpace(system.Name) == "" {
+		log.Printf("[PUT /system] Empty system name")
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(ErrorResponse{Error: "System name cannot be empty"})
@@ -586,6 +625,7 @@ func (s *Server) updateSystem(w http.ResponseWriter, r *http.Request) {
 	// Save to database
 	if err := s.saveSystemToDatabase(system.Name, system.Status); err != nil {
 		s.mu.Unlock()
+		log.Printf("[PUT /system] Failed to save system '%s': %v", system.Name, err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(ErrorResponse{Error: fmt.Sprintf("Failed to save to database: %v", err)})
@@ -598,6 +638,7 @@ func (s *Server) updateSystem(w http.ResponseWriter, r *http.Request) {
 	if system.Status {
 		statusText = "enabled"
 	}
+	log.Printf("[PUT /system] System '%s' updated to: %s", system.Name, statusText)
 	json.NewEncoder(w).Encode(map[string]string{"message": fmt.Sprintf("System '%s' %s", system.Name, statusText)})
 }
 
@@ -718,7 +759,9 @@ func serveStaticFiles() http.Handler {
 
 // resetApplications removes all applications from the blocked list
 func (s *Server) resetApplications(w http.ResponseWriter, r *http.Request) {
+	log.Printf("[DELETE /reset] Request from %s", r.RemoteAddr)
 	if r.Method != http.MethodDelete {
+		log.Printf("[DELETE /reset] Method not allowed: %s", r.Method)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		json.NewEncoder(w).Encode(ErrorResponse{Error: "Method not allowed"})
@@ -733,6 +776,7 @@ func (s *Server) resetApplications(w http.ResponseWriter, r *http.Request) {
 	// Clear database
 	if err := s.resetApplicationsDatabase(); err != nil {
 		s.mu.Unlock()
+		log.Printf("[DELETE /reset] Failed to reset: %v", err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(ErrorResponse{Error: fmt.Sprintf("Failed to reset applications in database: %v", err)})
@@ -740,6 +784,7 @@ func (s *Server) resetApplications(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Unlock()
 
+	log.Printf("[DELETE /reset] Removed %d applications from blocked list", count)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"message": fmt.Sprintf("Reset complete: removed %d applications from blocked list", count)})
 }
@@ -790,6 +835,7 @@ func (s *Server) setupRoutes() {
 
 	// Health check endpoint
 	http.HandleFunc("/health", withAdminAuth(func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("[GET /health] Request from %s", r.RemoteAddr)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	}))
@@ -800,6 +846,18 @@ func (s *Server) setupRoutes() {
 }
 
 func main() {
+	// Setup logging to file
+	// logFile, err := os.OpenFile("procsentinel-server.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	// if err != nil {
+	// 	log.Printf("Warning: Could not open log file: %v", err)
+	// } else {
+	// 	defer logFile.Close()
+	// 	// Write to both file and console
+	// 	multiWriter := io.MultiWriter(os.Stdout, logFile)
+	// 	log.SetOutput(multiWriter)
+	// 	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
+	// }
+
 	// Load environment variables from .env file
 	if err := loadEnvFile(".env"); err != nil {
 		log.Printf("Warning: Could not load .env file: %v", err)

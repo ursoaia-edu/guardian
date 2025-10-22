@@ -3,3 +3,4 @@ bin/
 .env
 .idea/
 deploy.sh
+procsentinel.db
