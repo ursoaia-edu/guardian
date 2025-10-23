@@ -104,9 +104,10 @@ func (s *Server) initDatabase() error {
 	CREATE TABLE IF NOT EXISTS blocked_applications (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		name TEXT UNIQUE NOT NULL,
+		enabled BOOLEAN NOT NULL DEFAULT 1,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
-	CREATE INDEX IF NOT EXISTS idx_blocked_apps_name ON blocked_applications(name);
+	CREATE INDEX IF NOT EXISTS idx_blocked_apps_name ON blocked_applications(name, enabled);
 	`
 
 	// Create server_status table
