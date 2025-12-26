@@ -30,7 +30,9 @@ type Server struct {
 
 // Application represents a blocked application
 type Application struct {
-	Name string `json:"name"`
+	ID      int    `json:"id"`
+	Name    string `json:"name"`
+	Enabled bool   `json:"enabled"`
 }
 
 // StatusResponse represents the server status
@@ -40,6 +42,11 @@ type StatusResponse struct {
 
 // ApplicationsResponse represents the list of blocked applications
 type ApplicationsResponse struct {
+	Applications []Application `json:"applications"`
+}
+
+// ApplicationsClientResponse represents the list of blocked application names for clients
+type ApplicationsClientResponse struct {
 	Applications []string `json:"applications"`
 }
 
@@ -269,8 +276,8 @@ func (s *Server) Close() error {
 }
 
 // getApplications returns the list of blocked applications
-func (s *Server) getApplications(w http.ResponseWriter, r *http.Request) {
-	log.Printf("[GET /applications] Request from %s", r.RemoteAddr)
+func (s *Server) getClientApplications(w http.ResponseWriter, r *http.Request) {
+	log.Printf("[GET /client/applications] Request from %s", r.RemoteAddr)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -281,9 +288,17 @@ func (s *Server) getApplications(w http.ResponseWriter, r *http.Request) {
 
 	// If server is enabled, add blocked applications
 	if s.enabledCache {
-		// Convert cache map keys to slice
-		for app := range s.blockedAppsCache {
-			apps = append(apps, app)
+		// Query database to get full application details
+		rows, err := s.db.Query("SELECT id, name, enabled FROM blocked_applications WHERE enabled = 1")
+		fmt.Println(rows)
+		if err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var app Application
+				if err := rows.Scan(&app.ID, &app.Name, &app.Enabled); err == nil {
+					apps = append(apps, app.Name)
+				}
+			}
 		}
 	}
 
@@ -292,10 +307,10 @@ func (s *Server) getApplications(w http.ResponseWriter, r *http.Request) {
 		apps = append(apps, "force_poweroff")
 	}
 
-	response := ApplicationsResponse{
+	response := ApplicationsClientResponse{
 		Applications: apps,
 	}
-	log.Printf("[GET /applications] Returning %d applications (enabled: %v)", len(apps), s.enabledCache)
+	log.Printf("[GET /client/applications] Returning %d applications (enabled: %v)", len(apps), s.enabledCache)
 	json.NewEncoder(w).Encode(response)
 }
 
@@ -343,9 +358,9 @@ func withAuth(handler http.HandlerFunc) http.HandlerFunc {
 
 // getAllApplications returns the complete list of blocked applications regardless of server status
 func (s *Server) getAllApplications(w http.ResponseWriter, r *http.Request) {
-	log.Printf("[GET /applications/all] Request from %s", r.RemoteAddr)
+	log.Printf("[GET /manage/applications] Request from %s", r.RemoteAddr)
 	if r.Method != http.MethodGet {
-		log.Printf("[GET /applications/all] Method not allowed: %s", r.Method)
+		log.Printf("[GET /manage/applications] Method not allowed: %s", r.Method)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		json.NewEncoder(w).Encode(ErrorResponse{Error: "Method not allowed"})
@@ -358,23 +373,51 @@ func (s *Server) getAllApplications(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	// Always return the full list regardless of server status
-	apps := make([]string, 0, len(s.blockedAppsCache))
-	for app := range s.blockedAppsCache {
+	apps := make([]Application, 0, len(s.blockedAppsCache))
+
+	// Query database to get full application details
+	rows, err := s.db.Query("SELECT id, name, enabled FROM blocked_applications")
+	if err != nil {
+		log.Printf("[GET /manage/applications] Failed to query applications: %v", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "Failed to fetch applications"})
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var app Application
+		if err := rows.Scan(&app.ID, &app.Name, &app.Enabled); err != nil {
+			log.Printf("[GET /manage/applications] Failed to scan application: %v", err)
+			continue
+		}
 		apps = append(apps, app)
 	}
 
 	response := ApplicationsResponse{
 		Applications: apps,
 	}
-	log.Printf("[GET /applications/all] Returning %d applications", len(apps))
+	log.Printf("[GET /manage/applications] Returning %d applications", len(apps))
 	json.NewEncoder(w).Encode(response)
 }
 
 // addApplication adds a new application to the blocked list
+func (s *Server) manageApplication(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodPost:
+		s.addApplication(w, r)
+	case http.MethodDelete:
+		s.removeApplication(w, r)
+	case http.MethodGet:
+		s.getAllApplications(w, r)
+	}
+}
+
+// addApplication adds a new application to the blocked list
 func (s *Server) addApplication(w http.ResponseWriter, r *http.Request) {
-	log.Printf("[POST /applications/add] Request from %s", r.RemoteAddr)
+	log.Printf("[POST /manage/applications] Request from %s", r.RemoteAddr)
 	if r.Method != http.MethodPost {
-		log.Printf("[POST /applications/add] Method not allowed: %s", r.Method)
+		log.Printf("[POST /manage/applications] Method not allowed: %s", r.Method)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		json.NewEncoder(w).Encode(ErrorResponse{Error: "Method not allowed"})
@@ -383,7 +426,7 @@ func (s *Server) addApplication(w http.ResponseWriter, r *http.Request) {
 
 	var app Application
 	if err := json.NewDecoder(r.Body).Decode(&app); err != nil {
-		log.Printf("[POST /applications/add] Invalid JSON: %v", err)
+		log.Printf("[POST /manage/applications] Invalid JSON: %v", err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(ErrorResponse{Error: "Invalid JSON"})
@@ -391,7 +434,7 @@ func (s *Server) addApplication(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if strings.TrimSpace(app.Name) == "" {
-		log.Printf("[POST /applications/add] Empty application name")
+		log.Printf("[POST /manage/applications] Empty application name")
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(ErrorResponse{Error: "Application name cannot be empty"})
@@ -404,7 +447,7 @@ func (s *Server) addApplication(w http.ResponseWriter, r *http.Request) {
 	// Save to database
 	if err := s.saveApplicationToDatabase(app.Name); err != nil {
 		s.mu.Unlock()
-		log.Printf("[POST /applications/add] Failed to save '%s': %v", app.Name, err)
+		log.Printf("[POST /manage/applications] Failed to save '%s': %v", app.Name, err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(ErrorResponse{Error: fmt.Sprintf("Failed to save to database: %v", err)})
@@ -412,7 +455,7 @@ func (s *Server) addApplication(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Unlock()
 
-	log.Printf("[POST /applications/add] Successfully added '%s'", app.Name)
+	log.Printf("[POST /manage/applications] Successfully added '%s'", app.Name)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]string{"message": fmt.Sprintf("Application '%s' added to blocked list", app.Name)})
@@ -420,9 +463,9 @@ func (s *Server) addApplication(w http.ResponseWriter, r *http.Request) {
 
 // removeApplication removes an application from the blocked list
 func (s *Server) removeApplication(w http.ResponseWriter, r *http.Request) {
-	log.Printf("[DELETE /applications/{name}] Request from %s", r.RemoteAddr)
+	log.Printf("[DELETE /manage/applications/{name}] Request from %s", r.RemoteAddr)
 	if r.Method != http.MethodDelete {
-		log.Printf("[DELETE /applications/{name}] Method not allowed: %s", r.Method)
+		log.Printf("[DELETE /manage/applications/{name}] Method not allowed: %s", r.Method)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		json.NewEncoder(w).Encode(ErrorResponse{Error: "Method not allowed"})
@@ -432,7 +475,7 @@ func (s *Server) removeApplication(w http.ResponseWriter, r *http.Request) {
 	// Extract application name from URL path
 	path := strings.TrimPrefix(r.URL.Path, "/applications/")
 	if path == "" || path == r.URL.Path {
-		log.Printf("[DELETE /applications/{name}] Missing application name")
+		log.Printf("[DELETE /manage/applications/{name}] Missing application name")
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(ErrorResponse{Error: "Application name is required in URL path"})
@@ -442,7 +485,7 @@ func (s *Server) removeApplication(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	if _, exists := s.blockedAppsCache[path]; !exists {
 		s.mu.Unlock()
-		log.Printf("[DELETE /applications/{name}] Application '%s' not found", path)
+		log.Printf("[DELETE /manage/applications/{name}] Application '%s' not found", path)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(ErrorResponse{Error: fmt.Sprintf("Application '%s' not found in blocked list", path)})
@@ -453,7 +496,7 @@ func (s *Server) removeApplication(w http.ResponseWriter, r *http.Request) {
 	// Remove from database
 	if err := s.removeApplicationFromDatabase(path); err != nil {
 		s.mu.Unlock()
-		log.Printf("[DELETE /applications/{name}] Failed to remove '%s': %v", path, err)
+		log.Printf("[DELETE /manage/applications/{name}] Failed to remove '%s': %v", path, err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(ErrorResponse{Error: fmt.Sprintf("Failed to remove from database: %v", err)})
@@ -461,7 +504,7 @@ func (s *Server) removeApplication(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Unlock()
 
-	log.Printf("[DELETE /applications/{name}] Successfully removed '%s'", path)
+	log.Printf("[DELETE /manage/applications/{name}] Successfully removed '%s'", path)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"message": fmt.Sprintf("Application '%s' removed from blocked list", path)})
 }
@@ -792,14 +835,9 @@ func (s *Server) resetApplications(w http.ResponseWriter, r *http.Request) {
 
 // setupRoutes configures the HTTP routes
 func (s *Server) setupRoutes() {
-	http.HandleFunc("/applications", withAuth(s.getApplications))
-
-	http.HandleFunc("/applications/add", withAdminAuth(s.addApplication))
-
-	http.HandleFunc("/applications/", withAdminAuth(s.removeApplication))
-
-	// Get all applications endpoint - always returns full list regardless of server status
-	http.HandleFunc("/applications/all", withAdminAuth(s.getAllApplications))
+	http.HandleFunc("/client/applications", withAuth(s.getClientApplications))
+	// Manage applications endpoint - handles add, remove, and get all
+	http.HandleFunc("/manage/applications/", withAdminAuth(s.manageApplication))
 
 	http.HandleFunc("/status", withAdminAuth(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
@@ -885,9 +923,9 @@ func main() {
 	fmt.Printf("\n🌐 Web Interface: %s", server_address)
 	fmt.Println("\nAPI Endpoints:")
 	fmt.Println("  GET    /applications     - Get list of blocked applications (empty when disabled)")
-	fmt.Println("  GET    /applications/all - Get ALL blocked applications (always returns full list)")
-	fmt.Println("  POST   /applications/add     - Add new blocked application")
-	fmt.Println("  DELETE /applications/{name} - Remove blocked application")
+	fmt.Println("  GET    /manage/applications - Get ALL blocked applications (always returns full list)")
+	fmt.Println("  POST   /manage/applications     - Add new blocked application")
+	fmt.Println("  DELETE /manage/applications/{name} - Remove blocked application")
 	fmt.Println("  DELETE /reset            - Remove all blocked applications")
 	fmt.Println("  GET    /status          - Get server status")
 	fmt.Println("  PUT    /status          - Update server status (enable/disable)")
