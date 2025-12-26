@@ -10,14 +10,14 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  final SettingsService _settingsService = SettingsService();
-  final TextEditingController _addAppController = TextEditingController();
+   final SettingsService _settingsService = SettingsService();
+   final TextEditingController _addAppController = TextEditingController();
 
-  List<String> _blockedApps = [];
-  bool _serverEnabled = false;
-  String _serverAddress = '';
-  bool _isLoading = true;
-  bool _isConnected = false;
+   List<Map<String, dynamic>> _blockedApps = [];
+   bool _serverEnabled = false;
+   String _serverAddress = '';
+   bool _isLoading = true;
+   bool _isConnected = false;
 
   @override
   void initState() {
@@ -89,7 +89,7 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
 
-    if (_blockedApps.contains(appName)) {
+    if (_blockedApps.any((app) => app['name'] == appName)) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           duration: Duration(milliseconds: 500),
@@ -103,9 +103,8 @@ class _HomeScreenState extends State<HomeScreen> {
     final success = await _settingsService.addBlockedApplication(appName);
 
     if (success) {
-      setState(() {
-        _blockedApps.add(appName);
-      });
+      // Reload the applications list to get the new app with its id
+      _loadData();
       _addAppController.clear();
 
       if (mounted) {
@@ -137,7 +136,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     if (success) {
       setState(() {
-        _blockedApps.remove(appName);
+        _blockedApps.removeWhere((app) => app['name'] == appName);
       });
 
       if (mounted) {
@@ -156,6 +155,41 @@ class _HomeScreenState extends State<HomeScreen> {
             duration: Duration(milliseconds: 500),
             content: Text(
               'Failed to remove application. Check server connection.',
+            ),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _updateApplicationStatus(String name, bool enabled) async {
+    final success = await _settingsService.updateApplicationStatus(name, enabled);
+
+    if (success) {
+      setState(() {
+        final index = _blockedApps.indexWhere((app) => app['name'] == name);
+        if (index != -1) {
+          _blockedApps[index]['enabled'] = enabled;
+        }
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            duration: const Duration(milliseconds: 500),
+            content: Text('$name ${enabled ? 'enabled' : 'disabled'}'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } else {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            duration: Duration(milliseconds: 500),
+            content: Text(
+              'Failed to update application. Check server connection.',
             ),
             backgroundColor: Colors.red,
           ),
@@ -313,7 +347,10 @@ class _HomeScreenState extends State<HomeScreen> {
     return ListView.builder(
       itemCount: _blockedApps.length,
       itemBuilder: (context, index) {
-        final appName = _blockedApps[index];
+        final app = _blockedApps[index];
+        final appName = app['name'] as String;
+        final appId = app['id'] as int;
+        final enabled = app['enabled'] as bool;
         return Card(
           child: ListTile(
             leading: IconButton(
@@ -323,8 +360,8 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             title: Text(appName),
             trailing: Switch(
-              value: true,
-              onChanged: (_) {},
+              value: enabled,
+              onChanged: (newValue) => _updateApplicationStatus(appName, newValue),
               inactiveThumbColor: Colors.grey,
               inactiveTrackColor: Colors.grey.shade300,
             ),

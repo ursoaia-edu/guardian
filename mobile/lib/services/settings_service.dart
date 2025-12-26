@@ -87,7 +87,7 @@ class SettingsService {
   }
 
   /// Gets the list of blocked applications from the server
-  Future<List<String>> getBlockedApplications() async {
+  Future<List<Map<String, dynamic>>> getBlockedApplications() async {
     try {
       final serverAddress = await getServerAddress();
       final client = http.Client();
@@ -103,12 +103,10 @@ class SettingsService {
       client.close();
 
       if (response.statusCode == 200) {
-         final body = json.decode(response.body);
-         final List<dynamic> applications = body['applications'] ?? [];
-         return applications
-             .map((app) => app is Map ? app['name'] as String : app as String)
-             .toList();
-       }
+        final body = json.decode(response.body);
+        final List<dynamic> applications = body['applications'] ?? [];
+        return applications.cast<Map<String, dynamic>>();
+      }
 
       return [];
     } catch (e) {
@@ -264,6 +262,32 @@ class SettingsService {
       return [];
     } catch (e) {
       return [];
+    }
+  }
+
+  /// Updates an application's enabled status
+  Future<bool> updateApplicationStatus(String name, bool enabled) async {
+    try {
+      final serverAddress = await getServerAddress();
+      final client = http.Client();
+      final uri = Uri.parse('$serverAddress/manage/applications');
+      final headers = await _getHeaders(
+        additionalHeaders: {'Content-Type': 'application/json'},
+      );
+
+      final response = await client
+          .put(
+            uri,
+            headers: headers,
+            body: json.encode({'name': name, 'enabled': enabled}),
+          )
+          .timeout(const Duration(seconds: 10));
+
+      client.close();
+
+      return response.statusCode == 200;
+    } catch (e) {
+      return false;
     }
   }
 

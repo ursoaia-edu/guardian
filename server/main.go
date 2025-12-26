@@ -468,13 +468,6 @@ func (s *Server) addApplication(w http.ResponseWriter, r *http.Request) {
 // putApplication updates an application in the blocked list
 func (s *Server) putApplication(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[PUT /manage/applications] Request from %s", r.RemoteAddr)
-	if r.Method != http.MethodPut {
-		log.Printf("[PUT /manage/applications] Method not allowed: %s", r.Method)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		json.NewEncoder(w).Encode(ErrorResponse{Error: "Method not allowed"})
-		return
-	}
 
 	var req struct {
 		Name    string      `json:"name"`
