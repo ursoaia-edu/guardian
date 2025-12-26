@@ -103,10 +103,12 @@ class SettingsService {
       client.close();
 
       if (response.statusCode == 200) {
-        final body = json.decode(response.body);
-        final List<dynamic> applications = body['applications'] ?? [];
-        return applications.cast<String>();
-      }
+         final body = json.decode(response.body);
+         final List<dynamic> applications = body['applications'] ?? [];
+         return applications
+             .map((app) => app is Map ? app['name'] as String : app as String)
+             .toList();
+       }
 
       return [];
     } catch (e) {

@@ -92,7 +92,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (_blockedApps.contains(appName)) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          duration:  Duration(milliseconds: 500),
+          duration: Duration(milliseconds: 500),
           content: Text('Application is already in the blocked list'),
           backgroundColor: Colors.orange,
         ),
@@ -122,7 +122,9 @@ class _HomeScreenState extends State<HomeScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             duration: Duration(milliseconds: 500),
-            content: Text('Failed to add application. Check server connection.'),
+            content: Text(
+              'Failed to add application. Check server connection.',
+            ),
             backgroundColor: Colors.red,
           ),
         );
@@ -314,12 +316,17 @@ class _HomeScreenState extends State<HomeScreen> {
         final appName = _blockedApps[index];
         return Card(
           child: ListTile(
-            leading: const Icon(Icons.block, color: Colors.red),
-            title: Text(appName),
-            trailing: IconButton(
+            leading: IconButton(
               onPressed: () => _removeApplication(appName),
               icon: const Icon(Icons.delete, color: Colors.red),
               tooltip: 'Remove from blocked list',
+            ),
+            title: Text(appName),
+            trailing: Switch(
+              value: true,
+              onChanged: (_) {},
+              inactiveThumbColor: Colors.grey,
+              inactiveTrackColor: Colors.grey.shade300,
             ),
           ),
         );
