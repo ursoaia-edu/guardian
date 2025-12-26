@@ -91,7 +91,7 @@ class SettingsService {
     try {
       final serverAddress = await getServerAddress();
       final client = http.Client();
-      final uri = Uri.parse('$serverAddress/applications/all');
+      final uri = Uri.parse('$serverAddress/manage/applications');
       final headers = await _getHeaders(
         additionalHeaders: {'Content-Type': 'application/json'},
       );
@@ -146,7 +146,7 @@ class SettingsService {
     try {
       final serverAddress = await getServerAddress();
       final client = http.Client();
-      final uri = Uri.parse('$serverAddress/applications/add');
+      final uri = Uri.parse('$serverAddress/manage/applications');
       final headers = await _getHeaders(
         additionalHeaders: {'Content-Type': 'application/json'},
       );
@@ -172,13 +172,17 @@ class SettingsService {
     try {
       final serverAddress = await getServerAddress();
       final client = http.Client();
-      final uri = Uri.parse('$serverAddress/applications/$applicationName');
+      final uri = Uri.parse('$serverAddress/manage/applications');
       final headers = await _getHeaders(
         additionalHeaders: {'Content-Type': 'application/json'},
       );
 
       final response = await client
-          .delete(uri, headers: headers)
+          .delete(
+            uri,
+            headers: headers,
+            body: json.encode({'name': applicationName}),
+          )
           .timeout(const Duration(seconds: 10));
 
       client.close();

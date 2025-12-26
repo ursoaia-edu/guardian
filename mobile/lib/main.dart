@@ -15,7 +15,7 @@ class ProcSentinelApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'ProcSentinel',
+      title: 'Guardian',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
           seedColor: const Color(0xFF2D3748),
@@ -46,7 +46,7 @@ class _MainNavigationState extends State<MainNavigation> with WidgetsBindingObse
   final SettingsService _settingsService = SettingsService();
   bool _powerEnabled = true; // Default to true (green)
   Timer? _statusTimer;
-  
+
   final List<Widget> _screens = [
     const HomeScreen(),
     const SystemScreen(),
@@ -86,7 +86,7 @@ class _MainNavigationState extends State<MainNavigation> with WidgetsBindingObse
         (system) => system['name'] == 'power',
         orElse: () => {'name': 'power', 'status': true},
       );
-      
+
       if (mounted) {
         setState(() {
           _powerEnabled = powerSystem['status'] ?? true;
