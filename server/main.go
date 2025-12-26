@@ -403,9 +403,12 @@ func (s *Server) getAllApplications(w http.ResponseWriter, r *http.Request) {
 
 // addApplication adds a new application to the blocked list
 func (s *Server) manageApplication(w http.ResponseWriter, r *http.Request) {
+	fmt.Println(r.Method)
 	switch r.Method {
 	case http.MethodPost:
 		s.addApplication(w, r)
+	case http.MethodPut:
+		s.putApplication(w, r)
 	case http.MethodDelete:
 		s.removeApplication(w, r)
 	case http.MethodGet:
@@ -424,8 +427,10 @@ func (s *Server) addApplication(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var app Application
-	if err := json.NewDecoder(r.Body).Decode(&app); err != nil {
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		log.Printf("[POST /manage/applications] Invalid JSON: %v", err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
@@ -433,7 +438,7 @@ func (s *Server) addApplication(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if strings.TrimSpace(app.Name) == "" {
+	if strings.TrimSpace(req.Name) == "" {
 		log.Printf("[POST /manage/applications] Empty application name")
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
@@ -443,11 +448,11 @@ func (s *Server) addApplication(w http.ResponseWriter, r *http.Request) {
 
 	s.mu.Lock()
 	// Update cache
-	s.blockedAppsCache[app.Name] = true
+	s.blockedAppsCache[req.Name] = true
 	// Save to database
-	if err := s.saveApplicationToDatabase(app.Name); err != nil {
+	if err := s.saveApplicationToDatabase(req.Name); err != nil {
 		s.mu.Unlock()
-		log.Printf("[POST /manage/applications] Failed to save '%s': %v", app.Name, err)
+		log.Printf("[POST /manage/applications] Failed to save '%s': %v", req.Name, err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(ErrorResponse{Error: fmt.Sprintf("Failed to save to database: %v", err)})
@@ -455,48 +460,116 @@ func (s *Server) addApplication(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Unlock()
 
-	log.Printf("[POST /manage/applications] Successfully added '%s'", app.Name)
+	log.Printf("[POST /manage/applications] Successfully added '%s'", req.Name)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(map[string]string{"message": fmt.Sprintf("Application '%s' added to blocked list", app.Name)})
+	json.NewEncoder(w).Encode(map[string]string{"message": fmt.Sprintf("Application '%s' added to blocked list", req.Name)})
 }
 
-// removeApplication removes an application from the blocked list
-func (s *Server) removeApplication(w http.ResponseWriter, r *http.Request) {
-	log.Printf("[DELETE /manage/applications/{name}] Request from %s", r.RemoteAddr)
-	if r.Method != http.MethodDelete {
-		log.Printf("[DELETE /manage/applications/{name}] Method not allowed: %s", r.Method)
+// putApplication updates an application in the blocked list
+func (s *Server) putApplication(w http.ResponseWriter, r *http.Request) {
+	log.Printf("[PUT /manage/applications] Request from %s", r.RemoteAddr)
+	if r.Method != http.MethodPut {
+		log.Printf("[PUT /manage/applications] Method not allowed: %s", r.Method)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		json.NewEncoder(w).Encode(ErrorResponse{Error: "Method not allowed"})
 		return
 	}
 
-	// Extract application name from URL path
-	path := strings.TrimPrefix(r.URL.Path, "/applications/")
-	if path == "" || path == r.URL.Path {
-		log.Printf("[DELETE /manage/applications/{name}] Missing application name")
+	var req struct {
+		Name    string `json:"name"`
+		Enabled int    `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Printf("[PUT /manage/applications] Invalid JSON: %v", err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(ErrorResponse{Error: "Application name is required in URL path"})
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "Invalid JSON"})
+		return
+	}
+
+	if strings.TrimSpace(req.Name) == "" {
+		log.Printf("[PUT /manage/applications] Empty application name")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "Application name cannot be empty"})
 		return
 	}
 
 	s.mu.Lock()
-	if _, exists := s.blockedAppsCache[path]; !exists {
+	if _, exists := s.blockedAppsCache[req.Name]; !exists {
 		s.mu.Unlock()
-		log.Printf("[DELETE /manage/applications/{name}] Application '%s' not found", path)
+		log.Printf("[PUT /manage/applications] Application '%s' not found", req.Name)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(ErrorResponse{Error: fmt.Sprintf("Application '%s' not found in blocked list", path)})
+		json.NewEncoder(w).Encode(ErrorResponse{Error: fmt.Sprintf("Application '%s' not found in blocked list", req.Name)})
+		return
+	}
+
+	// Update database
+	_, err := s.db.Exec("UPDATE blocked_applications SET enabled = ? WHERE name = ?", req.Enabled, req.Name)
+	if err != nil {
+		s.mu.Unlock()
+		log.Printf("[PUT /manage/applications] Failed to update '%s': %v", req.Name, err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(ErrorResponse{Error: fmt.Sprintf("Failed to update database: %v", err)})
+		return
+	}
+	s.mu.Unlock()
+
+	log.Printf("[PUT /manage/applications] Successfully updated '%s' with enabled=%d", req.Name, req.Enabled)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"message": fmt.Sprintf("Application '%s' updated successfully", req.Name)})
+}
+
+// removeApplication removes an application from the blocked list
+func (s *Server) removeApplication(w http.ResponseWriter, r *http.Request) {
+	log.Printf("[DELETE /applications] Request from %s", r.RemoteAddr)
+	if r.Method != http.MethodDelete {
+		log.Printf("[DELETE /applications] Method not allowed: %s", r.Method)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "Method not allowed"})
+		return
+	}
+
+	// Extract application name from request body
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Printf("[DELETE /applications] Invalid JSON: %v", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "Invalid JSON"})
+		return
+	}
+
+	if strings.TrimSpace(req.Name) == "" {
+		log.Printf("[DELETE /applications] Missing application name")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "Application name is required in request body"})
+		return
+	}
+
+	s.mu.Lock()
+	if _, exists := s.blockedAppsCache[req.Name]; !exists {
+		s.mu.Unlock()
+		log.Printf("[DELETE /applications] Application '%s' not found", req.Name)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(ErrorResponse{Error: fmt.Sprintf("Application '%s' not found in blocked list", req.Name)})
 		return
 	}
 	// Remove from cache
-	delete(s.blockedAppsCache, path)
+	delete(s.blockedAppsCache, req.Name)
 	// Remove from database
-	if err := s.removeApplicationFromDatabase(path); err != nil {
+	if err := s.removeApplicationFromDatabase(req.Name); err != nil {
 		s.mu.Unlock()
-		log.Printf("[DELETE /manage/applications/{name}] Failed to remove '%s': %v", path, err)
+		log.Printf("[DELETE /applications] Failed to remove '%s': %v", req.Name, err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(ErrorResponse{Error: fmt.Sprintf("Failed to remove from database: %v", err)})
@@ -504,9 +577,9 @@ func (s *Server) removeApplication(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Unlock()
 
-	log.Printf("[DELETE /manage/applications/{name}] Successfully removed '%s'", path)
+	log.Printf("[DELETE /applications] Successfully removed '%s'", req.Name)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"message": fmt.Sprintf("Application '%s' removed from blocked list", path)})
+	json.NewEncoder(w).Encode(map[string]string{"message": fmt.Sprintf("Application '%s' removed from blocked list", req.Name)})
 }
 
 // getStatus returns the current server status
@@ -837,7 +910,7 @@ func (s *Server) resetApplications(w http.ResponseWriter, r *http.Request) {
 func (s *Server) setupRoutes() {
 	http.HandleFunc("/client/applications", withAuth(s.getClientApplications))
 	// Manage applications endpoint - handles add, remove, and get all
-	http.HandleFunc("/manage/applications/", withAdminAuth(s.manageApplication))
+	http.HandleFunc("/manage/applications", withAdminAuth(s.manageApplication))
 
 	http.HandleFunc("/status", withAdminAuth(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
@@ -922,17 +995,18 @@ func main() {
 	fmt.Printf("ProcSentinel Server starting on %s\n", addr)
 	fmt.Printf("\n🌐 Web Interface: %s", server_address)
 	fmt.Println("\nAPI Endpoints:")
-	fmt.Println("  GET    /applications     - Get list of blocked applications (empty when disabled)")
-	fmt.Println("  GET    /manage/applications - Get ALL blocked applications (always returns full list)")
+	fmt.Println("  GET    /client/applications     - Get list of blocked applications (empty when disabled)")
+	fmt.Println("  GET    /manage/applications     - Get ALL blocked applications (always returns full list)")
 	fmt.Println("  POST   /manage/applications     - Add new blocked application")
-	fmt.Println("  DELETE /manage/applications/{name} - Remove blocked application")
-	fmt.Println("  DELETE /reset            - Remove all blocked applications")
-	fmt.Println("  GET    /status          - Get server status")
-	fmt.Println("  PUT    /status          - Update server status (enable/disable)")
-	fmt.Println("  GET    /info            - Get server information (IP, version, status)")
-	fmt.Println("  GET    /system          - Get system entries")
-	fmt.Println("  PUT    /system          - Update system status")
-	fmt.Println("  GET    /health          - Health check")
+	fmt.Println("  PUT    /manage/applications     - Update application")
+	fmt.Println("  DELETE /manage/applications     - Remove blocked application")
+	fmt.Println("  DELETE /reset                   - Remove all blocked applications")
+	fmt.Println("  GET    /status                  - Get server status")
+	fmt.Println("  PUT    /status                  - Update server status (enable/disable)")
+	fmt.Println("  GET    /info                    - Get server information (IP, version, status)")
+	fmt.Println("  GET    /system                  - Get system entries")
+	fmt.Println("  PUT    /system                  - Update system status")
+	fmt.Println("  GET    /health                  - Health check")
 	fmt.Printf("\n📁 Static Files: Serving from %s at root path (/)\n", getWebDir())
 
 	log.Fatal(http.ListenAndServe(addr, nil))
