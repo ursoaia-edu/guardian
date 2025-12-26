@@ -290,7 +290,6 @@ func (s *Server) getClientApplications(w http.ResponseWriter, r *http.Request) {
 	if s.enabledCache {
 		// Query database to get full application details
 		rows, err := s.db.Query("SELECT id, name, enabled FROM blocked_applications WHERE enabled = 1")
-		fmt.Println(rows)
 		if err == nil {
 			defer rows.Close()
 			for rows.Next() {
@@ -403,7 +402,6 @@ func (s *Server) getAllApplications(w http.ResponseWriter, r *http.Request) {
 
 // addApplication adds a new application to the blocked list
 func (s *Server) manageApplication(w http.ResponseWriter, r *http.Request) {
-	fmt.Println(r.Method)
 	switch r.Method {
 	case http.MethodPost:
 		s.addApplication(w, r)
@@ -478,14 +476,33 @@ func (s *Server) putApplication(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Name    string `json:"name"`
-		Enabled int    `json:"enabled"`
+		Name    string      `json:"name"`
+		Enabled interface{} `json:"enabled"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		log.Printf("[PUT /manage/applications] Invalid JSON: %v", err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(ErrorResponse{Error: "Invalid JSON"})
+		return
+	}
+
+	// Convert enabled to int (accept both bool and int)
+	var enabledInt int
+	switch v := req.Enabled.(type) {
+	case bool:
+		if v {
+			enabledInt = 1
+		} else {
+			enabledInt = 0
+		}
+	case float64:
+		enabledInt = int(v)
+	default:
+		log.Printf("[PUT /manage/applications] Invalid enabled type")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "Invalid enabled field type"})
 		return
 	}
 
@@ -508,7 +525,7 @@ func (s *Server) putApplication(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Update database
-	_, err := s.db.Exec("UPDATE blocked_applications SET enabled = ? WHERE name = ?", req.Enabled, req.Name)
+	_, err := s.db.Exec("UPDATE blocked_applications SET enabled = ? WHERE name = ?", enabledInt, req.Name)
 	if err != nil {
 		s.mu.Unlock()
 		log.Printf("[PUT /manage/applications] Failed to update '%s': %v", req.Name, err)
@@ -519,7 +536,7 @@ func (s *Server) putApplication(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Unlock()
 
-	log.Printf("[PUT /manage/applications] Successfully updated '%s' with enabled=%d", req.Name, req.Enabled)
+	log.Printf("[PUT /manage/applications] Successfully updated '%s' with enabled=%d", req.Name, enabledInt)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"message": fmt.Sprintf("Application '%s' updated successfully", req.Name)})
 }
