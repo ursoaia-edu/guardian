@@ -338,6 +338,7 @@ func withAdminAuth(handler http.HandlerFunc) http.HandlerFunc {
 func withAuth(handler http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var token = os.Getenv("TOKEN")
+
 		if token == "" {
 			token = "mILp9n6shk3G9SGSaS2nmP6YlLHwsP1Z"
 		}

@@ -82,30 +82,34 @@ class _SystemScreenState extends State<SystemScreen> {
         }
       });
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          duration: const Duration(milliseconds: 500),
-          content: Text('$name ${newStatus ? 'enabled' : 'disabled'}'),
-          backgroundColor: Colors.green,
-        ),
-      );
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          duration: const Duration(milliseconds: 500),
-          content: Text(
-            'Failed to update system status. Check server connection.',
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            duration: const Duration(milliseconds: 500),
+            content: Text('$name ${newStatus ? 'enabled' : 'disabled'}'),
+            backgroundColor: Colors.green,
           ),
-          backgroundColor: Colors.red,
-        ),
-      );
-    }
+        );
+      }
+      } else {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            duration: Duration(milliseconds: 500),
+            content: Text(
+              'Failed to update system status. Check server connection.',
+            ),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      }
   }
 
   Widget _buildSystemsList() {
     if (!_isConnected) {
       return Card(
-        child: Container(
+        child: SizedBox(
           width: double.infinity,
           child: Padding(
             padding: const EdgeInsets.all(24.0),
@@ -133,7 +137,7 @@ class _SystemScreenState extends State<SystemScreen> {
 
     if (_systems.isEmpty) {
       return Card(
-        child: Container(
+        child: SizedBox(
           width: double.infinity,
           child: Padding(
             padding: const EdgeInsets.all(24.0),
