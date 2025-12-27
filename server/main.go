@@ -140,6 +140,16 @@ func (s *Server) initDatabase() error {
 	INSERT OR IGNORE INTO system (name, status) VALUES ('power', 1);
 	`
 
+	// Create computers table
+	createComputersTable := `
+	CREATE TABLE IF NOT EXISTS computers (
+		identity INTEGER PRIMARY KEY,
+		blocked BOOLEAN NOT NULL DEFAULT 0,
+		datetime DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+	CREATE INDEX IF NOT EXISTS idx_computers_identity ON computers(identity);
+	`
+
 	if _, err := s.db.Exec(createBAppsTable); err != nil {
 		return fmt.Errorf("failed to create blocked_applications table: %v", err)
 	}
@@ -150,6 +160,10 @@ func (s *Server) initDatabase() error {
 
 	if _, err := s.db.Exec(createSystemTable); err != nil {
 		return fmt.Errorf("failed to create system table: %v", err)
+	}
+
+	if _, err := s.db.Exec(createComputersTable); err != nil {
+		return fmt.Errorf("failed to create computers table: %v", err)
 	}
 
 	return nil
@@ -267,6 +281,15 @@ func (s *Server) saveSystemToDatabase(name string, status bool) error {
 	return nil
 }
 
+// updateComputerDateTime updates or creates a computer record with current datetime
+func (s *Server) updateComputerDateTime(identity int) error {
+	_, err := s.db.Exec("INSERT OR REPLACE INTO computers (identity, blocked, datetime) VALUES (?, 0, CURRENT_TIMESTAMP)", identity)
+	if err != nil {
+		return fmt.Errorf("failed to update computer record: %v", err)
+	}
+	return nil
+}
+
 // Close closes the database connection
 func (s *Server) Close() error {
 	if s.db != nil {
@@ -278,6 +301,23 @@ func (s *Server) Close() error {
 // getApplications returns the list of blocked applications
 func (s *Server) getClientApplications(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[GET /client/applications] Request from %s", r.RemoteAddr)
+
+	// Extract identity parameter
+	identityStr := r.URL.Query().Get("identity")
+	fmt.Println(identityStr)
+	if identityStr != "" {
+		// Parse identity as integer and update computer record
+		if identity, err := parseIntParam(identityStr); err == nil {
+			if err := s.updateComputerDateTime(identity); err != nil {
+				log.Printf("[GET /client/applications] Failed to update computer record for identity %d: %v", identity, err)
+			} else {
+				log.Printf("[GET /client/applications] Updated computer record for identity %d", identity)
+			}
+		} else {
+			log.Printf("[GET /client/applications] Invalid identity parameter: %s", identityStr)
+		}
+	}
+
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -768,6 +808,13 @@ func (s *Server) updateSystem(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("[PUT /system] System '%s' updated to: %s", system.Name, statusText)
 	json.NewEncoder(w).Encode(map[string]string{"message": fmt.Sprintf("System '%s' %s", system.Name, statusText)})
+}
+
+// parseIntParam parses a string parameter as an integer
+func parseIntParam(param string) (int, error) {
+	var value int
+	_, err := fmt.Sscanf(param, "%d", &value)
+	return value, err
 }
 
 // getLocalIP returns the local IP address of the server
