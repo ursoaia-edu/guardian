@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -64,6 +65,19 @@ type System struct {
 // SystemResponse represents a system response
 type SystemResponse struct {
 	Systems []System `json:"systems"`
+}
+
+// Computer represents a computer record
+type Computer struct {
+	Identity int    `json:"identity"`
+	Blocked  bool   `json:"blocked"`
+	DateTime string `json:"datetime"`
+}
+
+// ComputersResponse represents the list of computers
+type ComputersResponse struct {
+	Computers []Computer `json:"computers"`
+	Time      string     `json:"time"`
 }
 
 // ServerInfoResponse represents server information
@@ -301,6 +315,13 @@ func (s *Server) Close() error {
 // getApplications returns the list of blocked applications
 func (s *Server) getClientApplications(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[GET /client/applications] Request from %s", r.RemoteAddr)
+	if r.Method != http.MethodGet {
+		log.Printf("[GET /client/applications] Method not allowed: %s", r.Method)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "Method not allowed"})
+		return
+	}
 
 	// Extract identity parameter
 	identityStr := r.URL.Query().Get("identity")
@@ -399,13 +420,6 @@ func withAuth(handler http.HandlerFunc) http.HandlerFunc {
 // getAllApplications returns the complete list of blocked applications regardless of server status
 func (s *Server) getAllApplications(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[GET /manage/applications] Request from %s", r.RemoteAddr)
-	if r.Method != http.MethodGet {
-		log.Printf("[GET /manage/applications] Method not allowed: %s", r.Method)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		json.NewEncoder(w).Encode(ErrorResponse{Error: "Method not allowed"})
-		return
-	}
 
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -458,13 +472,6 @@ func (s *Server) manageApplication(w http.ResponseWriter, r *http.Request) {
 // addApplication adds a new application to the blocked list
 func (s *Server) addApplication(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[POST /manage/applications] Request from %s", r.RemoteAddr)
-	if r.Method != http.MethodPost {
-		log.Printf("[POST /manage/applications] Method not allowed: %s", r.Method)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		json.NewEncoder(w).Encode(ErrorResponse{Error: "Method not allowed"})
-		return
-	}
 
 	var req struct {
 		Name string `json:"name"`
@@ -578,13 +585,6 @@ func (s *Server) putApplication(w http.ResponseWriter, r *http.Request) {
 // removeApplication removes an application from the blocked list
 func (s *Server) removeApplication(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[DELETE /applications] Request from %s", r.RemoteAddr)
-	if r.Method != http.MethodDelete {
-		log.Printf("[DELETE /applications] Method not allowed: %s", r.Method)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		json.NewEncoder(w).Encode(ErrorResponse{Error: "Method not allowed"})
-		return
-	}
 
 	// Extract application name from request body
 	var req struct {
@@ -636,13 +636,6 @@ func (s *Server) removeApplication(w http.ResponseWriter, r *http.Request) {
 // getStatus returns the current server status
 func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[GET /status] Request from %s", r.RemoteAddr)
-	if r.Method != http.MethodGet {
-		log.Printf("[GET /status] Method not allowed: %s", r.Method)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		json.NewEncoder(w).Encode(ErrorResponse{Error: "Method not allowed"})
-		return
-	}
 
 	s.mu.RLock()
 	enabled := s.enabledCache
@@ -656,13 +649,6 @@ func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
 // updateStatus updates the server status (enable/disable)
 func (s *Server) updateStatus(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[PUT /status] Request from %s", r.RemoteAddr)
-	if r.Method != http.MethodPut {
-		log.Printf("[PUT /status] Method not allowed: %s", r.Method)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		json.NewEncoder(w).Encode(ErrorResponse{Error: "Method not allowed"})
-		return
-	}
 
 	var status StatusResponse
 	if err := json.NewDecoder(r.Body).Decode(&status); err != nil {
@@ -733,13 +719,6 @@ func (s *Server) getServerInfo(w http.ResponseWriter, r *http.Request) {
 // getSystem returns the list of system entries
 func (s *Server) getSystem(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[GET /system] Request from %s", r.RemoteAddr)
-	if r.Method != http.MethodGet {
-		log.Printf("[GET /system] Method not allowed: %s", r.Method)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		json.NewEncoder(w).Encode(ErrorResponse{Error: "Method not allowed"})
-		return
-	}
 
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -762,13 +741,6 @@ func (s *Server) getSystem(w http.ResponseWriter, r *http.Request) {
 // updateSystem updates system status
 func (s *Server) updateSystem(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[PUT /system] Request from %s", r.RemoteAddr)
-	if r.Method != http.MethodPut {
-		log.Printf("[PUT /system] Method not allowed: %s", r.Method)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		json.NewEncoder(w).Encode(ErrorResponse{Error: "Method not allowed"})
-		return
-	}
 
 	var system System
 	if err := json.NewDecoder(r.Body).Decode(&system); err != nil {
@@ -815,6 +787,11 @@ func parseIntParam(param string) (int, error) {
 	var value int
 	_, err := fmt.Sscanf(param, "%d", &value)
 	return value, err
+}
+
+// getCurrentTime returns the current server time in ISO format
+func getCurrentTime() string {
+	return time.Now().Format("2006-01-02T15:04:05Z07:00")
 }
 
 // getLocalIP returns the local IP address of the server
@@ -932,6 +909,79 @@ func serveStaticFiles() http.Handler {
 	return http.FileServer(http.Dir(absWebDir))
 }
 
+// getComputers returns the list of all computers
+func (s *Server) getComputers(w http.ResponseWriter, r *http.Request) {
+	log.Printf("[GET /manage/computers] Request from %s", r.RemoteAddr)
+
+	w.Header().Set("Content-Type", "application/json")
+
+	// Query database to get all computers
+	rows, err := s.db.Query("SELECT identity, blocked, datetime FROM computers ORDER BY datetime DESC")
+	if err != nil {
+		log.Printf("[GET /manage/computers] Failed to query computers: %v", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "Failed to fetch computers"})
+		return
+	}
+	defer rows.Close()
+
+	computers := make([]Computer, 0)
+	for rows.Next() {
+		var computer Computer
+		if err := rows.Scan(&computer.Identity, &computer.Blocked, &computer.DateTime); err != nil {
+			log.Printf("[GET /manage/computers] Failed to scan computer: %v", err)
+			continue
+		}
+		computers = append(computers, computer)
+	}
+
+	response := ComputersResponse{
+		Computers: computers,
+		Time:      getCurrentTime(),
+	}
+
+	log.Printf("[GET /manage/computers] Returning %d computers", len(computers))
+	json.NewEncoder(w).Encode(response)
+}
+
+// updateComputer updates a computer's blocked status
+func (s *Server) updateComputer(w http.ResponseWriter, r *http.Request) {
+	log.Printf("[PUT /manage/computers] Request from %s", r.RemoteAddr)
+
+	var req struct {
+		Identity int  `json:"identity"`
+		Blocked  bool `json:"blocked"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Printf("[PUT /manage/computers] Invalid JSON: %v", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "Invalid JSON"})
+		return
+	}
+
+	s.mu.Lock()
+	// Update database
+	_, err := s.db.Exec("INSERT OR REPLACE INTO computers (identity, blocked) VALUES (?, ?)", req.Identity, req.Blocked)
+	if err != nil {
+		s.mu.Unlock()
+		log.Printf("[PUT /manage/computers] Failed to update computer %d: %v", req.Identity, err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(ErrorResponse{Error: fmt.Sprintf("Failed to update computer in database: %v", err)})
+		return
+	}
+	s.mu.Unlock()
+
+	statusText := "unblocked"
+	if req.Blocked {
+		statusText = "blocked"
+	}
+	log.Printf("[PUT /manage/computers] Computer %d %s successfully", req.Identity, statusText)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"message": fmt.Sprintf("Computer %d %s successfully", req.Identity, statusText)})
+}
+
 // resetApplications removes all applications from the blocked list
 func (s *Server) resetApplications(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[DELETE /reset] Request from %s", r.RemoteAddr)
@@ -1003,6 +1053,16 @@ func (s *Server) setupRoutes() {
 		}
 	}))
 
+	// Computers endpoint
+	http.HandleFunc("/manage/computers", withAdminAuth(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			s.getComputers(w, r)
+		case http.MethodPut:
+			s.updateComputer(w, r)
+		}
+	}))
+
 	// Health check endpoint
 	http.HandleFunc("/health", withAdminAuth(func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[GET /health] Request from %s", r.RemoteAddr)
@@ -1064,6 +1124,8 @@ func main() {
 	fmt.Println("  GET    /info                    - Get server information (IP, version, status)")
 	fmt.Println("  GET    /system                  - Get system entries")
 	fmt.Println("  PUT    /system                  - Update system status")
+	fmt.Println("  GET    /manage/computers        - Get list of all computers with timestamps")
+	fmt.Println("  PUT    /manage/computers        - Update computer blocked status")
 	fmt.Println("  GET    /health                  - Health check")
 	fmt.Printf("\n📁 Static Files: Serving from %s at root path (/)\n", getWebDir())
 
