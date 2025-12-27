@@ -1053,6 +1053,35 @@ func (s *Server) resetComputers(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"message": "All computers unblocked successfully"})
 }
 
+// blockAllComputers sets all computers to blocked
+func (s *Server) blockAllComputers(w http.ResponseWriter, r *http.Request) {
+	log.Printf("[PUT /manage/computers/block_all] Request from %s", r.RemoteAddr)
+	if r.Method != http.MethodPut {
+		log.Printf("[PUT /manage/computers/block_all] Method not allowed: %s", r.Method)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "Method not allowed"})
+		return
+	}
+
+	s.mu.Lock()
+	// Update all computers to set blocked = true
+	_, err := s.db.Exec("UPDATE computers SET blocked = 1")
+	if err != nil {
+		s.mu.Unlock()
+		log.Printf("[PUT /manage/computers/block_all] Failed to block all computers: %v", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(ErrorResponse{Error: fmt.Sprintf("Failed to block computers in database: %v", err)})
+		return
+	}
+	s.mu.Unlock()
+
+	log.Printf("[PUT /manage/computers/block_all] All computers blocked successfully")
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"message": "All computers blocked successfully"})
+}
+
 // setupRoutes configures the HTTP routes
 func (s *Server) setupRoutes() {
 	http.HandleFunc("/client/applications", withAuth(s.getClientApplications))
@@ -1104,6 +1133,9 @@ func (s *Server) setupRoutes() {
 
 	// Reset computers endpoint - unblock all computers
 	http.HandleFunc("/manage/computers/reset", withAdminAuth(s.resetComputers))
+
+	// Block all computers endpoint
+	http.HandleFunc("/manage/computers/block_all", withAdminAuth(s.blockAllComputers))
 
 	// Health check endpoint
 	http.HandleFunc("/health", withAdminAuth(func(w http.ResponseWriter, r *http.Request) {

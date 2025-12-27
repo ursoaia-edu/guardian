@@ -145,7 +145,7 @@ class _ComputersScreenState extends State<ComputersScreen> {
     }
   }
 
-  Future<void> _resetAllComputers() async {
+  Future<void> _unblockAllComputers() async {
     final success = await _settingsService.resetAllComputers();
 
     if (success) {
@@ -155,7 +155,7 @@ class _ComputersScreenState extends State<ComputersScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             duration: Duration(milliseconds: 500),
-            content: Text('All computers reset successfully'),
+            content: Text('All computers unblocked successfully'),
             backgroundColor: Colors.green,
           ),
         );
@@ -165,7 +165,35 @@ class _ComputersScreenState extends State<ComputersScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             duration: Duration(milliseconds: 500),
-            content: Text('Failed to reset computers'),
+            content: Text('Failed to unblock computers'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _blockAllComputers() async {
+    final success = await _settingsService.blockAllComputers();
+
+    if (success) {
+      // Update computers data without loading spinner
+      await _updateServerTime();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            duration: Duration(milliseconds: 500),
+            content: Text('All computers blocked successfully'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } else {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            duration: Duration(milliseconds: 500),
+            content: Text('Failed to block computers'),
             backgroundColor: Colors.red,
           ),
         );
@@ -458,16 +486,34 @@ class _ComputersScreenState extends State<ComputersScreen> {
                               ),
                               const SizedBox(width: 12),
                               ElevatedButton(
-                                onPressed: _resetAllComputers,
+                                onPressed: _blockAllComputers,
                                 style: ElevatedButton.styleFrom(
                                   padding: const EdgeInsets.symmetric(
-                                    horizontal: 12,
-                                    vertical: 8,
+                                    horizontal: 8,
+                                    vertical: 4,
+                                  ),
+                                  backgroundColor: Colors.red,
+                                ),
+                                child: const Text(
+                                  'Block All',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              ElevatedButton(
+                                onPressed: _unblockAllComputers,
+                                style: ElevatedButton.styleFrom(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 4,
                                   ),
                                   backgroundColor: Colors.blue,
                                 ),
                                 child: const Text(
-                                  'Reset All',
+                                  'Unblock All',
                                   style: TextStyle(
                                     fontSize: 12,
                                     color: Colors.white,

@@ -10,14 +10,14 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-   final SettingsService _settingsService = SettingsService();
-   final TextEditingController _addAppController = TextEditingController();
+  final SettingsService _settingsService = SettingsService();
+  final TextEditingController _addAppController = TextEditingController();
 
-   List<Map<String, dynamic>> _blockedApps = [];
-   bool _serverEnabled = false;
-   String _serverAddress = '';
-   bool _isLoading = true;
-   bool _isConnected = false;
+  List<Map<String, dynamic>> _blockedApps = [];
+  bool _serverEnabled = false;
+  String _serverAddress = '';
+  bool _isLoading = true;
+  bool _isConnected = false;
 
   @override
   void initState() {
@@ -164,7 +164,10 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _updateApplicationStatus(String name, bool enabled) async {
-    final success = await _settingsService.updateApplicationStatus(name, enabled);
+    final success = await _settingsService.updateApplicationStatus(
+      name,
+      enabled,
+    );
 
     if (success) {
       setState(() {
@@ -360,7 +363,8 @@ class _HomeScreenState extends State<HomeScreen> {
             title: Text(appName),
             trailing: Switch(
               value: enabled,
-              onChanged: (newValue) => _updateApplicationStatus(appName, newValue),
+              onChanged: (newValue) =>
+                  _updateApplicationStatus(appName, newValue),
               inactiveThumbColor: Colors.grey,
               inactiveTrackColor: Colors.grey.shade300,
             ),
@@ -517,7 +521,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               color: Colors.red,
                             ),
                             label: const Text(
-                              'Reset All',
+                              'Remove All',
                               style: TextStyle(color: Colors.red),
                             ),
                           ),

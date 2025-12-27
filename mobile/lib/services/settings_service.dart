@@ -376,7 +376,7 @@ class SettingsService {
     }
   }
 
-  /// Resets all computers
+  /// Resets all computers (unblocks all)
   Future<bool> resetAllComputers() async {
     try {
       final serverAddress = await getServerAddress();
@@ -388,6 +388,28 @@ class SettingsService {
 
       final response = await client
           .delete(uri, headers: headers)
+          .timeout(const Duration(seconds: 10));
+
+      client.close();
+
+      return response.statusCode == 200;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /// Blocks all computers
+  Future<bool> blockAllComputers() async {
+    try {
+      final serverAddress = await getServerAddress();
+      final client = http.Client();
+      final uri = Uri.parse('$serverAddress/manage/computers/block_all');
+      final headers = await _getHeaders(
+        additionalHeaders: {'Content-Type': 'application/json'},
+      );
+
+      final response = await client
+          .put(uri, headers: headers)
           .timeout(const Duration(seconds: 10));
 
       client.close();
