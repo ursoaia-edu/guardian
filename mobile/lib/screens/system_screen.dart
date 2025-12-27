@@ -76,7 +76,9 @@ class _SystemScreenState extends State<SystemScreen> {
     if (success) {
       // Update local state
       setState(() {
-        final systemIndex = _systems.indexWhere((system) => system['name'] == name);
+        final systemIndex = _systems.indexWhere(
+          (system) => system['name'] == name,
+        );
         if (systemIndex != -1) {
           _systems[systemIndex]['status'] = newStatus;
         }
@@ -91,7 +93,7 @@ class _SystemScreenState extends State<SystemScreen> {
           ),
         );
       }
-      } else {
+    } else {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -103,7 +105,7 @@ class _SystemScreenState extends State<SystemScreen> {
           ),
         );
       }
-      }
+    }
   }
 
   Widget _buildSystemsList() {
@@ -170,49 +172,23 @@ class _SystemScreenState extends State<SystemScreen> {
         final name = system['name'] as String;
         final status = system['status'] as bool;
 
-        return Card(
-          child: Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Row(
-              children: [
-                Icon(
-                  _getSystemIcon(name),
-                  size: 32,
-                  color: status ? Colors.green : Colors.grey,
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        name.toUpperCase(),
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'Status: ${status ? 'Enabled' : 'Disabled'}',
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: status ? Colors.green.shade700 : Colors.grey.shade600,
-                        ),
-                      ),
-                    ],
+        return GestureDetector(
+          onTap: () => _toggleSystemStatus(name, status),
+          child: Card(
+            color: status ? Colors.green.shade600 : Colors.red.shade600,
+            child: Padding(
+              padding: const EdgeInsets.all(24.0),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(_getSystemIcon(name), size: 48, color: Colors.white),
+                  const SizedBox(height: 8),
+                  Text(
+                    status ? 'Enabled' : 'Disabled',
+                    style: const TextStyle(fontSize: 14, color: Colors.white),
                   ),
-                ),
-                ElevatedButton(
-                  onPressed: () => _toggleSystemStatus(name, status),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: status ? Colors.red : Colors.green,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                  ),
-                  child: Text(status ? 'Disable' : 'Enable'),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         );
