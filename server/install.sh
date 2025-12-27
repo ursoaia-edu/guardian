@@ -12,4 +12,5 @@ cp /usr/local/bin/procsentinel/procsentinel.service /etc/systemd/system/procsent
 systemctl daemon-reload
 systemctl enable procsentinel
 systemctl start procsentinel
+systemctl restart procsentinel
 systemctl status procsentinel
