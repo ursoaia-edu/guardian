@@ -76,8 +76,8 @@ type Computer struct {
 
 // ComputersResponse represents the list of computers
 type ComputersResponse struct {
-	Computers []Computer `json:"computers"`
-	Time      string     `json:"time"`
+	Computers   []Computer `json:"computers"`
+	CurrentTime string     `json:"current_time"`
 }
 
 // ServerInfoResponse represents server information
@@ -936,8 +936,8 @@ func (s *Server) getComputers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response := ComputersResponse{
-		Computers: computers,
-		Time:      getCurrentTime(),
+		Computers:   computers,
+		CurrentTime: getCurrentTime(),
 	}
 
 	log.Printf("[GET /manage/computers] Returning %d computers", len(computers))

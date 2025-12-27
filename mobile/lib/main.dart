@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'screens/home_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/system_screen.dart';
+import 'screens/computers_screen.dart';
 import 'services/settings_service.dart';
 
 void main() {
@@ -50,6 +51,7 @@ class _MainNavigationState extends State<MainNavigation> with WidgetsBindingObse
   final List<Widget> _screens = [
     const HomeScreen(),
     const SystemScreen(),
+    const ComputersScreen(),
     const SettingsScreen(),
   ];
 
@@ -129,6 +131,10 @@ class _MainNavigationState extends State<MainNavigation> with WidgetsBindingObse
               color: _powerEnabled ? Colors.green : Colors.red,
             ),
             label: 'System',
+          ),
+          const BottomNavigationBarItem(
+            icon: Icon(Icons.computer),
+            label: 'Computers',
           ),
           const BottomNavigationBarItem(
             icon: Icon(Icons.settings),

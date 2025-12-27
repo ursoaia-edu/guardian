@@ -316,4 +316,62 @@ class SettingsService {
       return false;
     }
   }
+
+  /// Gets computers data from the server
+  Future<Map<String, dynamic>> getComputersData() async {
+    try {
+      final serverAddress = await getServerAddress();
+      final client = http.Client();
+      final uri = Uri.parse('$serverAddress/manage/computers');
+      final headers = await _getHeaders(
+        additionalHeaders: {'Content-Type': 'application/json'},
+      );
+
+      final response = await client
+          .get(uri, headers: headers)
+          .timeout(const Duration(seconds: 10));
+
+      client.close();
+
+      if (response.statusCode == 200) {
+        final body = json.decode(response.body);
+        final List<dynamic> computersList = body['computers'] ?? [];
+        return {
+          'computers': computersList.cast<Map<String, dynamic>>(),
+          'current_time':
+              body['current_time'] != null ? DateTime.parse(body['current_time'] as String) : null,
+        };
+      }
+
+      return {'computers': [], 'current_time': null};
+    } catch (e) {
+      return {'computers': [], 'current_time': null};
+    }
+  }
+
+  /// Updates computer blocked status
+  Future<bool> updateComputerBlocked(int computerId, bool blocked) async {
+    try {
+      final serverAddress = await getServerAddress();
+      final client = http.Client();
+      final uri = Uri.parse('$serverAddress/manage/computers');
+      final headers = await _getHeaders(
+        additionalHeaders: {'Content-Type': 'application/json'},
+      );
+
+      final response = await client
+          .put(
+            uri,
+            headers: headers,
+            body: json.encode({'identity': computerId, 'blocked': blocked}),
+          )
+          .timeout(const Duration(seconds: 10));
+
+      client.close();
+
+      return response.statusCode == 200;
+    } catch (e) {
+      return false;
+    }
+  }
 }
