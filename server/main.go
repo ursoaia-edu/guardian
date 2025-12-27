@@ -916,7 +916,7 @@ func (s *Server) getComputers(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	// Query database to get all computers
-	rows, err := s.db.Query("SELECT identity, blocked, datetime FROM computers ORDER BY datetime DESC")
+	rows, err := s.db.Query("SELECT identity, blocked, datetime FROM computers ORDER BY identity ASC")
 	if err != nil {
 		log.Printf("[GET /manage/computers] Failed to query computers: %v", err)
 		w.WriteHeader(http.StatusInternalServerError)
@@ -1014,6 +1014,35 @@ func (s *Server) resetApplications(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"message": fmt.Sprintf("Reset complete: removed %d applications from blocked list", count)})
 }
 
+// resetComputers sets all blocked computers to false
+func (s *Server) resetComputers(w http.ResponseWriter, r *http.Request) {
+	log.Printf("[DELETE /manage/computers/reset] Request from %s", r.RemoteAddr)
+	if r.Method != http.MethodDelete {
+		log.Printf("[DELETE /manage/computers/reset] Method not allowed: %s", r.Method)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "Method not allowed"})
+		return
+	}
+
+	s.mu.Lock()
+	// Update all computers to set blocked = false
+	_, err := s.db.Exec("UPDATE computers SET blocked = 0")
+	if err != nil {
+		s.mu.Unlock()
+		log.Printf("[DELETE /manage/computers/reset] Failed to reset computers: %v", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(ErrorResponse{Error: fmt.Sprintf("Failed to reset computers in database: %v", err)})
+		return
+	}
+	s.mu.Unlock()
+
+	log.Printf("[DELETE /manage/computers/reset] All computers unblocked successfully")
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"message": "All computers unblocked successfully"})
+}
+
 // setupRoutes configures the HTTP routes
 func (s *Server) setupRoutes() {
 	http.HandleFunc("/client/applications", withAuth(s.getClientApplications))
@@ -1034,7 +1063,7 @@ func (s *Server) setupRoutes() {
 	}))
 
 	// Reset endpoint - remove all applications
-	http.HandleFunc("/reset", withAdminAuth(s.resetApplications))
+	http.HandleFunc("/manage/applications/reset", withAdminAuth(s.resetApplications))
 
 	// Server info endpoint
 	http.HandleFunc("/info", withAdminAuth(s.getServerInfo))
@@ -1062,6 +1091,9 @@ func (s *Server) setupRoutes() {
 			s.updateComputer(w, r)
 		}
 	}))
+
+	// Reset computers endpoint - unblock all computers
+	http.HandleFunc("/manage/computers/reset", withAdminAuth(s.resetComputers))
 
 	// Health check endpoint
 	http.HandleFunc("/health", withAdminAuth(func(w http.ResponseWriter, r *http.Request) {
@@ -1113,20 +1145,21 @@ func main() {
 	fmt.Printf("ProcSentinel Server starting on %s\n", addr)
 	fmt.Printf("\n🌐 Web Interface: %s", server_address)
 	fmt.Println("\nAPI Endpoints:")
-	fmt.Println("  GET    /client/applications     - Get list of blocked applications (empty when disabled)")
-	fmt.Println("  GET    /manage/applications     - Get ALL blocked applications (always returns full list)")
-	fmt.Println("  POST   /manage/applications     - Add new blocked application")
-	fmt.Println("  PUT    /manage/applications     - Update application")
-	fmt.Println("  DELETE /manage/applications     - Remove blocked application")
-	fmt.Println("  DELETE /reset                   - Remove all blocked applications")
-	fmt.Println("  GET    /status                  - Get server status")
-	fmt.Println("  PUT    /status                  - Update server status (enable/disable)")
-	fmt.Println("  GET    /info                    - Get server information (IP, version, status)")
-	fmt.Println("  GET    /system                  - Get system entries")
-	fmt.Println("  PUT    /system                  - Update system status")
-	fmt.Println("  GET    /manage/computers        - Get list of all computers with timestamps")
-	fmt.Println("  PUT    /manage/computers        - Update computer blocked status")
-	fmt.Println("  GET    /health                  - Health check")
+	fmt.Println("  GET    /client/applications       - Get list of blocked applications (empty when disabled)")
+	fmt.Println("  GET    /manage/applications       - Get ALL blocked applications (always returns full list)")
+	fmt.Println("  POST   /manage/applications       - Add new blocked application")
+	fmt.Println("  PUT    /manage/applications       - Update application")
+	fmt.Println("  DELETE /manage/applications       - Remove blocked application")
+	fmt.Println("  DELETE /manage/applications/reset - Remove all blocked applications")
+	fmt.Println("  GET    /status                    - Get server status")
+	fmt.Println("  PUT    /status                    - Update server status (enable/disable)")
+	fmt.Println("  GET    /info                      - Get server information (IP, version, status)")
+	fmt.Println("  GET    /system                    - Get system entries")
+	fmt.Println("  PUT    /system                    - Update system status")
+	fmt.Println("  GET    /manage/computers          - Get list of all computers with timestamps")
+	fmt.Println("  PUT    /manage/computers          - Update computer blocked status")
+	fmt.Println("  Delete /manage/computers/reset    - Reset all blocked computers")
+	fmt.Println("  GET    /health                    - Health check")
 	fmt.Printf("\n📁 Static Files: Serving from %s at root path (/)\n", getWebDir())
 
 	log.Fatal(http.ListenAndServe(addr, nil))

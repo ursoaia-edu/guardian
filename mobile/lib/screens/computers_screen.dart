@@ -145,6 +145,34 @@ class _ComputersScreenState extends State<ComputersScreen> {
     }
   }
 
+  Future<void> _resetAllComputers() async {
+    final success = await _settingsService.resetAllComputers();
+
+    if (success) {
+      // Update computers data without loading spinner
+      await _updateServerTime();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            duration: Duration(milliseconds: 500),
+            content: Text('All computers reset successfully'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } else {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            duration: Duration(milliseconds: 500),
+            content: Text('Failed to reset computers'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
   bool _isComputerOnline(String datetimeStr) {
     if (_currentServerTime == null) return false;
 
@@ -417,11 +445,36 @@ class _ComputersScreenState extends State<ComputersScreen> {
                             fontWeight: FontWeight.bold,
                           ),
                         ),
-                        Text(
-                          '${_computers.length} device${_computers.length != 1 ? 's' : ''}',
-                          style: TextStyle(
-                            fontSize: 14,
-                            color: Colors.grey.shade600,
+                        Expanded(
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.end,
+                            children: [
+                              Text(
+                                '${_computers.length} device${_computers.length != 1 ? 's' : ''}',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  color: Colors.grey.shade600,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              ElevatedButton(
+                                onPressed: _resetAllComputers,
+                                style: ElevatedButton.styleFrom(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 8,
+                                  ),
+                                  backgroundColor: Colors.blue,
+                                ),
+                                child: const Text(
+                                  'Reset All',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       ],

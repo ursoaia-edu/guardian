@@ -198,7 +198,7 @@ class SettingsService {
     try {
       final serverAddress = await getServerAddress();
       final client = http.Client();
-      final uri = Uri.parse('$serverAddress/reset');
+      final uri = Uri.parse('$serverAddress/manage/applications/reset');
       final headers = await _getHeaders(
         additionalHeaders: {'Content-Type': 'application/json'},
       );
@@ -338,8 +338,9 @@ class SettingsService {
         final List<dynamic> computersList = body['computers'] ?? [];
         return {
           'computers': computersList.cast<Map<String, dynamic>>(),
-          'current_time':
-              body['current_time'] != null ? DateTime.parse(body['current_time'] as String) : null,
+          'current_time': body['current_time'] != null
+              ? DateTime.parse(body['current_time'] as String)
+              : null,
         };
       }
 
@@ -365,6 +366,28 @@ class SettingsService {
             headers: headers,
             body: json.encode({'identity': computerId, 'blocked': blocked}),
           )
+          .timeout(const Duration(seconds: 10));
+
+      client.close();
+
+      return response.statusCode == 200;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /// Resets all computers
+  Future<bool> resetAllComputers() async {
+    try {
+      final serverAddress = await getServerAddress();
+      final client = http.Client();
+      final uri = Uri.parse('$serverAddress/manage/computers/reset');
+      final headers = await _getHeaders(
+        additionalHeaders: {'Content-Type': 'application/json'},
+      );
+
+      final response = await client
+          .delete(uri, headers: headers)
           .timeout(const Duration(seconds: 10));
 
       client.close();
