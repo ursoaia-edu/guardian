@@ -25,9 +25,9 @@ class _ComputersScreenState extends State<ComputersScreen> {
   void initState() {
     super.initState();
     _loadData();
-    // Auto-refresh every 60 seconds
-    _refreshTimer = Timer.periodic(const Duration(seconds: 60), (_) {
-      _loadData();
+    // Update server time every 60 seconds (lightweight, no full data fetch)
+    _refreshTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      _updateServerTime();
     });
   }
 
@@ -81,6 +81,23 @@ class _ComputersScreenState extends State<ComputersScreen> {
       setState(() {
         _isLoading = false;
       });
+    }
+  }
+
+  Future<void> _updateServerTime() async {
+    try {
+      final result = await _settingsService.getComputersData();
+      final newComputers = result['computers'] ?? [];
+      final newTime = result['current_time'];
+
+      if (mounted && newTime != null) {
+        setState(() {
+          _computers = List<Map<String, dynamic>>.from(newComputers);
+          _currentServerTime = newTime;
+        });
+      }
+    } catch (e) {
+      // Silently fail on time update
     }
   }
 
@@ -149,7 +166,9 @@ class _ComputersScreenState extends State<ComputersScreen> {
       final localTime = computerTime.toLocal();
 
       // Format: "Dec 27, 1:18 AM"
-      final hour = localTime.hour > 12 ? localTime.hour - 12 : (localTime.hour == 0 ? 12 : localTime.hour);
+      final hour = localTime.hour > 12
+          ? localTime.hour - 12
+          : (localTime.hour == 0 ? 12 : localTime.hour);
       final minute = localTime.minute.toString().padLeft(2, '0');
       final period = localTime.hour >= 12 ? 'PM' : 'AM';
       final monthAbbr = _monthAbbr(localTime.month);
@@ -161,7 +180,20 @@ class _ComputersScreenState extends State<ComputersScreen> {
   }
 
   String _monthAbbr(int month) {
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
     return months[month - 1];
   }
 
