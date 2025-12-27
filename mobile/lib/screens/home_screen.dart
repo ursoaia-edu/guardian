@@ -349,7 +349,6 @@ class _HomeScreenState extends State<HomeScreen> {
       itemBuilder: (context, index) {
         final app = _blockedApps[index];
         final appName = app['name'] as String;
-        final appId = app['id'] as int;
         final enabled = app['enabled'] as bool;
         return Card(
           child: ListTile(
