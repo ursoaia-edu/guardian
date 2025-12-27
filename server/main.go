@@ -297,7 +297,7 @@ func (s *Server) saveSystemToDatabase(name string, status bool) error {
 
 // updateComputerDateTime updates or creates a computer record with current datetime
 func (s *Server) updateComputerDateTime(identity int) error {
-	_, err := s.db.Exec("INSERT OR REPLACE INTO computers (identity, blocked, datetime) VALUES (?, 0, CURRENT_TIMESTAMP)", identity)
+	_, err := s.db.Exec("INSERT INTO computers (identity, blocked, datetime) VALUES (?, 1, CURRENT_TIMESTAMP) ON CONFLICT(identity) DO UPDATE SET datetime = CURRENT_TIMESTAMP", identity)
 	if err != nil {
 		return fmt.Errorf("failed to update computer record: %v", err)
 	}
@@ -326,13 +326,23 @@ func (s *Server) getClientApplications(w http.ResponseWriter, r *http.Request) {
 	// Extract identity parameter
 	identityStr := r.URL.Query().Get("identity")
 	fmt.Println(identityStr)
+	isComputerBlocked := true
 	if identityStr != "" {
-		// Parse identity as integer and update computer record
+		// Parse identity as integer and check if computer is blocked
 		if identity, err := parseIntParam(identityStr); err == nil {
-			if err := s.updateComputerDateTime(identity); err != nil {
-				log.Printf("[GET /client/applications] Failed to update computer record for identity %d: %v", identity, err)
+			// Query computer status
+			var blocked bool
+			err := s.db.QueryRow("SELECT blocked FROM computers WHERE identity = ?", identity).Scan(&blocked)
+			if err == nil || err == sql.ErrNoRows {
+				isComputerBlocked = blocked
+
+				if err := s.updateComputerDateTime(identity); err != nil {
+					log.Printf("[GET /client/applications] Failed to update computer record for identity %d: %v", identity, err)
+				} else {
+					log.Printf("[GET /client/applications] Updated computer record for identity %d", identity)
+				}
 			} else {
-				log.Printf("[GET /client/applications] Updated computer record for identity %d", identity)
+				log.Printf("[GET /client/applications] Failed to query computer status for identity %d: %v", identity, err)
 			}
 		} else {
 			log.Printf("[GET /client/applications] Invalid identity parameter: %s", identityStr)
@@ -347,8 +357,8 @@ func (s *Server) getClientApplications(w http.ResponseWriter, r *http.Request) {
 	// Initialize apps list
 	apps := make([]string, 0)
 
-	// If server is enabled, add blocked applications
-	if s.enabledCache {
+	// If server is enabled and computer is not blocked, add blocked applications
+	if s.enabledCache && (identityStr == "" || isComputerBlocked) {
 		// Query database to get full application details
 		rows, err := s.db.Query("SELECT id, name, enabled FROM blocked_applications WHERE enabled = 1")
 		if err == nil {
