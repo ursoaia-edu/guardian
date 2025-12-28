@@ -103,8 +103,11 @@ class _HomeScreenState extends State<HomeScreen> {
     final success = await _settingsService.addBlockedApplication(appName);
 
     if (success) {
-      // Reload the applications list to get the new app with its id
-      _loadData();
+      // Fetch the newly added application with its ID
+      final apps = await _settingsService.getBlockedApplications();
+      setState(() {
+        _blockedApps = apps;
+      });
       _addAppController.clear();
 
       if (mounted) {
