@@ -440,7 +440,7 @@ func (s *Server) getAllApplications(w http.ResponseWriter, r *http.Request) {
 	apps := make([]Application, 0, len(s.blockedAppsCache))
 
 	// Query database to get full application details
-	rows, err := s.db.Query("SELECT id, name, enabled FROM blocked_applications")
+	rows, err := s.db.Query("SELECT id, name, enabled FROM blocked_applications ORDER BY id DESC")
 	if err != nil {
 		log.Printf("[GET /manage/applications] Failed to query applications: %v", err)
 		w.WriteHeader(http.StatusInternalServerError)

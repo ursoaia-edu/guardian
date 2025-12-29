@@ -5,3 +5,5 @@ bin/
 deploy.sh
 procsentinel.db
 build/
+procsentinel
+procsentinel-server

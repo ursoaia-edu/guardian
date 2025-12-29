@@ -1,8 +1,16 @@
-go build -o ../bin/procsentinel-server
-cp .env ../bin/
-cp procsentinel.service ../bin/
+go build -o procsentinel-server
 
-tar -czvf ../procsentinel-server.tar.gz -C ../bin .
+
+TAR_FILE="procsentinel-server.tar.gz"
+
+echo "Creating archive: $TAR_FILE"
+
+tar -czf "$TAR_FILE" \
+  .env \
+  procsentinel-server \
+  procsentinel.service
+
 mkdir -p ../release
 cp install.sh ../release/
-mv ../procsentinel-server.tar.gz ../release/
+mv "$TAR_FILE" ../release/
+# rm procsentinel-server
