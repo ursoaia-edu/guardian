@@ -3,12 +3,14 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -55,7 +57,14 @@ func fetchBlockedApplications(serverAddress string) ([]string, error) {
 		token = "mILp9n6shk3G9SGSaS2nmP6YlLHwsP1Z"
 	}
 
-	req, err := http.NewRequest("GET", serverAddress+"/applications", nil)
+	url := serverAddress + "/client/applications"
+	if identity := os.Getenv("IDENTITY"); identity != "" {
+		if _, err := strconv.Atoi(identity); err == nil {
+			url += "?identity=" + identity
+		}
+	}
+
+	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		panic(err)
 	}
@@ -98,11 +107,80 @@ func updateBlockedApplications(serverAddress string, blocked *[]string) {
 				log.Println("No applications currently blocked")
 			}
 		}
-		time.Sleep(30 * time.Second) // Update every 30 seconds
+		time.Sleep(10 * time.Second) // Update every 10 seconds
 	}
 }
 
 func main() {
+	var (
+		install   = flag.Bool("install", false, "Install Windows service")
+		remove    = flag.Bool("remove", false, "Remove Windows service")
+		start     = flag.Bool("start", false, "Start Windows service")
+		stop      = flag.Bool("stop", false, "Stop Windows service")
+		debugMode = flag.Bool("debug", false, "Run service in debug mode")
+	)
+	flag.Parse()
+
+	if runtime.GOOS == "windows" {
+		// Handle Windows service installation/management
+		if *install {
+			err := installService()
+			if err != nil {
+				log.Fatalf("Failed to install service: %v", err)
+			}
+			fmt.Println("Service installed successfully")
+			return
+		}
+
+		if *remove {
+			err := removeService()
+			if err != nil {
+				log.Fatalf("Failed to remove service: %v", err)
+			}
+			fmt.Println("Service removed successfully")
+			return
+		}
+
+		if *start {
+			err := startService()
+			if err != nil {
+				log.Fatalf("Failed to start service: %v", err)
+			}
+			fmt.Println("Service started successfully")
+			return
+		}
+
+		if *stop {
+			err := stopService()
+			if err != nil {
+				log.Fatalf("Failed to stop service: %v", err)
+			}
+			fmt.Println("Service stopped successfully")
+			return
+		}
+
+		// Check if running as a Windows service
+		isService, err := isWindowsService()
+		if err != nil {
+			log.Fatalf("Failed to determine if running as service: %v", err)
+		}
+
+		if isService {
+			runService(svcName, false)
+			return
+		}
+
+		if *debugMode {
+			runService(svcName, true)
+			return
+		}
+	}
+
+	// Run in console mode (default for non-Windows or when not running as service)
+	runConsole()
+}
+
+func runConsole() {
 	// Load environment variables from .env file
 	if err := loadEnvFile(); err != nil {
 		log.Printf("Warning: Could not load .env file: %v. Using defaults.", err)
@@ -152,10 +230,19 @@ func main() {
 		// Create a local copy to avoid race conditions with the update goroutine
 		localBlocked := make([]string, len(blocked))
 		copy(localBlocked, blocked)
-
+		time_to_sleep := 1
 		for _, name := range localBlocked {
-			if name != "" && strings.Contains(processText, strings.ToLower(name)) {
-				// Kill the process
+			if name == "force_poweroff" || name == "force_shutdown" {
+				time_to_sleep = 60
+				log.Printf("Shutdown PC triggered: %s", name)
+				// Perform shutdown
+				if err := shutdownPCService(); err != nil {
+					log.Printf("Failed to shutdown PC: %v", err)
+				} else {
+					log.Println("Shutdown initiated successfully")
+				}
+
+			} else if name != "" && strings.Contains(processText, strings.ToLower(name)) {
 				if err := killProcess(name); err == nil {
 					log.Printf("Killed process: %s", name)
 				} else {
@@ -164,7 +251,7 @@ func main() {
 			}
 		}
 
-		time.Sleep(10 * time.Second) // check every second
+		time.Sleep(time.Duration(time_to_sleep) * time.Second) // check every second
 	}
 }
 
