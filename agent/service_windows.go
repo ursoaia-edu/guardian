@@ -127,10 +127,19 @@ func runAgent(stopCh <-chan bool) {
 	// Initial fetch (don't wait 10 seconds for first fetch)
 	apps, err := fetchBlockedApplications(serverAddress)
 	if err != nil {
-		elog.Warning(1, fmt.Sprintf("Initial fetch failed: %v. Starting with empty list.", err))
-		blocked = []string{}
+		elog.Warning(1, fmt.Sprintf("Initial fetch failed: %v. Loading from apps.txt.", err))
+		if cached, loadErr := loadAppsFromFile(); loadErr == nil {
+			blocked = cached
+			elog.Info(1, fmt.Sprintf("Loaded %d applications from apps.txt", len(cached)))
+		} else {
+			elog.Warning(1, fmt.Sprintf("Could not load apps.txt: %v. Starting with empty list.", loadErr))
+			blocked = []string{}
+		}
 	} else {
 		blocked = apps
+		if err := saveAppsToFile(apps); err != nil {
+			elog.Warning(1, fmt.Sprintf("Failed to save apps.txt: %v", err))
+		}
 		if len(apps) > 0 {
 			elog.Info(1, fmt.Sprintf("Initial blocked applications: %v", apps))
 		} else {
@@ -200,10 +209,18 @@ func updateBlockedApplicationsService(serverAddress string, blocked *[]string, s
 		case <-ticker.C:
 			apps, err := fetchBlockedApplications(serverAddress)
 			if err != nil {
-				elog.Warning(1, fmt.Sprintf("Failed to fetch blocked applications: %v. Using empty list.", err))
-				*blocked = []string{} // Use empty list when server is unavailable
+				elog.Warning(1, fmt.Sprintf("Failed to fetch blocked applications: %v. Loading from apps.txt.", err))
+				if cached, loadErr := loadAppsFromFile(); loadErr == nil {
+					*blocked = cached
+					elog.Info(1, fmt.Sprintf("Loaded %d applications from apps.txt", len(cached)))
+				} else {
+					elog.Warning(1, fmt.Sprintf("Could not load apps.txt: %v", loadErr))
+				}
 			} else {
 				*blocked = apps
+				if err := saveAppsToFile(apps); err != nil {
+					elog.Warning(1, fmt.Sprintf("Failed to save apps.txt: %v", err))
+				}
 				if len(apps) > 0 {
 					elog.Info(1, fmt.Sprintf("Updated blocked applications: %v", apps))
 				} else {
