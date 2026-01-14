@@ -9,15 +9,30 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
 	"time"
 )
 
-// ApplicationsResponse represents the server response for blocked applications
-type ApplicationsResponse struct {
-	Applications []string `json:"applications"`
+// ClientApplication represents an application from the server
+type ClientApplication struct {
+	Name string `json:"name"`
+	Mode string `json:"mode"`
+}
+
+// ClientEntry represents a client entry from the server
+type ClientEntry struct {
+	Name   string `json:"name"`
+	Status bool   `json:"status"`
+}
+
+// SyncResponse represents the server response from /client/sync
+type SyncResponse struct {
+	Applications []ClientApplication `json:"applications"`
+	Mode         string              `json:"mode"`
+	Client       []ClientEntry       `json:"client"`
 }
 
 // loadEnvFile loads environment variables from .env file
@@ -46,8 +61,8 @@ func loadEnvFile() error {
 	return scanner.Err()
 }
 
-// fetchBlockedApplications fetches the list of blocked applications from the server
-func fetchBlockedApplications(serverAddress string) ([]string, error) {
+// fetchSync fetches the full sync state from the server
+func fetchSync(serverAddress string) (*SyncResponse, error) {
 	client := &http.Client{
 		Timeout: 10 * time.Second,
 	}
@@ -57,7 +72,7 @@ func fetchBlockedApplications(serverAddress string) ([]string, error) {
 		token = "mILp9n6shk3G9SGSaS2nmP6YlLHwsP1Z"
 	}
 
-	url := serverAddress + "/client/applications"
+	url := serverAddress + "/client/sync"
 	if identity := os.Getenv("IDENTITY"); identity != "" {
 		if _, err := strconv.Atoi(identity); err == nil {
 			url += "?identity=" + identity
@@ -66,15 +81,13 @@ func fetchBlockedApplications(serverAddress string) ([]string, error) {
 
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		panic(err)
+		return nil, fmt.Errorf("failed to create request: %v", err)
 	}
 
 	req.Header.Add("Authorization", "Bearer "+token)
-
 	req.Header.Add("Accept", "application/json")
 
 	resp, err := client.Do(req)
-
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to server: %v", err)
 	}
@@ -84,38 +97,34 @@ func fetchBlockedApplications(serverAddress string) ([]string, error) {
 		return nil, fmt.Errorf("server returned status %d", resp.StatusCode)
 	}
 
-	var response ApplicationsResponse
+	var response SyncResponse
 	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %v", err)
 	}
 
-	return response.Applications, nil
+	return &response, nil
 }
 
-// updateBlockedApplications fetches updated list from server
-func updateBlockedApplications(serverAddress string, blocked *[]string) {
+// updateSync fetches updated sync state from server
+func updateSync(serverAddress string, state **SyncResponse) {
 	for {
-		apps, err := fetchBlockedApplications(serverAddress)
+		resp, err := fetchSync(serverAddress)
 		if err != nil {
-			log.Printf("Failed to fetch blocked applications: %v. Loading from apps.txt.", err)
-			if cached, loadErr := loadAppsFromFile(); loadErr == nil {
-				*blocked = cached
-				log.Printf("Loaded %d applications from apps.txt", len(cached))
+			log.Printf("Failed to sync: %v. Loading from sync.json.", err)
+			if cached, loadErr := loadSyncFromFile(); loadErr == nil {
+				*state = cached
+				log.Printf("Loaded %d applications from sync.json", len(cached.Applications))
 			} else {
-				log.Printf("Could not load apps.txt: %v", loadErr)
+				log.Printf("Could not load sync.json: %v", loadErr)
 			}
 		} else {
-			*blocked = apps
-			if err := saveAppsToFile(apps); err != nil {
-				log.Printf("Failed to save apps.txt: %v", err)
+			*state = resp
+			if err := saveSyncToFile(resp); err != nil {
+				log.Printf("Failed to save sync.json: %v", err)
 			}
-			if len(apps) > 0 {
-				log.Printf("Updated blocked applications: %v", apps)
-			} else {
-				log.Println("No applications currently blocked")
-			}
+			log.Printf("Synced: %d applications, mode=%s", len(resp.Applications), resp.Mode)
 		}
-		time.Sleep(10 * time.Second) // Update every 10 seconds
+		time.Sleep(10 * time.Second)
 	}
 }
 
@@ -204,38 +213,49 @@ func runConsole() {
 	log.Printf("Server address: %s", serverAddress)
 	log.Println("Press Ctrl+C to stop.")
 
-	// Initialize blocked applications list
-	var blocked []string
+	// Initialize sync state
+	var state *SyncResponse
 
-	// Start background goroutine to update blocked applications every 60 seconds
-	go updateBlockedApplications(serverAddress, &blocked)
+	// Start background goroutine to sync every 10 seconds
+	go updateSync(serverAddress, &state)
 
-	// Initial fetch (don't wait 60 seconds for first fetch)
-	apps, err := fetchBlockedApplications(serverAddress)
+	// Initial fetch
+	resp, err := fetchSync(serverAddress)
 	if err != nil {
-		log.Printf("Initial fetch failed: %v. Loading from apps.txt.", err)
-		if cached, loadErr := loadAppsFromFile(); loadErr == nil {
-			blocked = cached
-			log.Printf("Loaded %d applications from apps.txt", len(cached))
+		log.Printf("Initial sync failed: %v. Loading from sync.json.", err)
+		if cached, loadErr := loadSyncFromFile(); loadErr == nil {
+			state = cached
+			log.Printf("Loaded %d applications from sync.json", len(cached.Applications))
 		} else {
-			log.Printf("Could not load apps.txt: %v. Starting with empty list.", loadErr)
-			blocked = []string{}
+			log.Printf("Could not load sync.json: %v. Starting with empty state.", loadErr)
+			state = &SyncResponse{}
 		}
 	} else {
-		blocked = apps
-		if err := saveAppsToFile(apps); err != nil {
-			log.Printf("Failed to save apps.txt: %v", err)
+		state = resp
+		if err := saveSyncToFile(resp); err != nil {
+			log.Printf("Failed to save sync.json: %v", err)
 		}
-		if len(apps) > 0 {
-			log.Printf("Initial blocked applications: %v", apps)
-		} else {
-			log.Println("No applications currently blocked")
-		}
+		log.Printf("Initial sync: %d applications, mode=%s", len(resp.Applications), resp.Mode)
 	}
 
 	// Main process monitoring loop
 	for {
-		// Get list of running processes based on OS
+		if state == nil || len(state.Applications) == 0 {
+			time.Sleep(1 * time.Second)
+			continue
+		}
+
+		// Check power status from client entries
+		if powerStatus, found := getClientEntry(state, "power"); found && !powerStatus {
+			log.Println("Shutdown PC triggered: power disabled")
+			if err := shutdownPCService(); err != nil {
+				log.Printf("Failed to shutdown PC: %v", err)
+			}
+			time.Sleep(60 * time.Second)
+			continue
+		}
+
+		// Get list of running processes
 		processes, err := getProcessList()
 		if err != nil {
 			log.Printf("Error getting process list: %v", err)
@@ -244,32 +264,94 @@ func runConsole() {
 		}
 
 		processText := strings.ToLower(processes)
-		// Create a local copy to avoid race conditions with the update goroutine
-		localBlocked := make([]string, len(blocked))
-		copy(localBlocked, blocked)
-		time_to_sleep := 1
-		for _, name := range localBlocked {
-			if name == "force_poweroff" || name == "force_shutdown" {
-				time_to_sleep = 60
-				log.Printf("Shutdown PC triggered: %s", name)
-				// Perform shutdown
-				if err := shutdownPCService(); err != nil {
-					log.Printf("Failed to shutdown PC: %v", err)
-				} else {
-					log.Println("Shutdown initiated successfully")
-				}
 
-			} else if name != "" && strings.Contains(processText, strings.ToLower(name)) {
-				if err := killProcess(name); err == nil {
-					log.Printf("Killed process: %s", name)
-				} else {
-					log.Printf("Failed to kill process %s: %v", name, err)
+		// Copy current state to avoid race
+		localApps := make([]ClientApplication, len(state.Applications))
+		copy(localApps, state.Applications)
+		localMode := state.Mode
+
+		if localMode == "blacklist" {
+			// Kill processes that match the list
+			for _, app := range localApps {
+				if app.Name != "" && strings.Contains(processText, strings.ToLower(app.Name)) {
+					if err := killProcess(app.Name); err == nil {
+						log.Printf("Killed process: %s", app.Name)
+					} else {
+						log.Printf("Failed to kill process %s: %v", app.Name, err)
+					}
+				}
+			}
+		} else if localMode == "whitelist" {
+			// Kill processes NOT in the list
+			allowedSet := make(map[string]bool)
+			for _, app := range localApps {
+				allowedSet[strings.ToLower(app.Name)] = true
+			}
+			for _, line := range strings.Split(processes, "\n") {
+				line = strings.TrimSpace(line)
+				if line == "" {
+					continue
+				}
+				procName := extractProcessName(line)
+				if procName == "" {
+					continue
+				}
+				if !allowedSet[strings.ToLower(procName)] && !isSystemProcess(procName) {
+					if err := killProcess(procName); err == nil {
+						log.Printf("Killed non-whitelisted process: %s", procName)
+					}
 				}
 			}
 		}
 
-		time.Sleep(time.Duration(time_to_sleep) * time.Second) // check every second
+		time.Sleep(1 * time.Second)
 	}
+}
+
+// extractProcessName extracts the process name from a process list line
+func extractProcessName(line string) string {
+	switch runtime.GOOS {
+	case "windows":
+		// tasklist format: "firefox.exe    1234 Console  1  100,000 K"
+		fields := strings.Fields(line)
+		if len(fields) > 0 {
+			return fields[0]
+		}
+	case "linux", "darwin":
+		// ps aux format: "user  PID %CPU %MEM VSZ RSS TTY STAT START TIME COMMAND"
+		fields := strings.Fields(line)
+		if len(fields) >= 11 {
+			return filepath.Base(fields[10])
+		}
+	}
+	return ""
+}
+
+// isSystemProcess returns true for processes that should never be killed
+func isSystemProcess(name string) bool {
+	lower := strings.ToLower(name)
+	systemProcs := []string{
+		// Windows
+		"system", "system idle process", "registry", "smss.exe", "csrss.exe",
+		"wininit.exe", "services.exe", "lsass.exe", "svchost.exe", "explorer.exe",
+		"dwm.exe", "winlogon.exe", "fontdrvhost.exe", "sihost.exe", "taskhostw.exe",
+		"runtimebroker.exe", "shellexperiencehost.exe", "searchui.exe",
+		"conhost.exe", "ctfmon.exe", "tasklist.exe", "cmd.exe", "powershell.exe",
+		"procsentinel-agent64.exe", "procsentinel-agent32.exe",
+		// Linux/macOS
+		"init", "systemd", "kthreadd", "bash", "zsh", "sh", "sshd", "login",
+		"getty", "cron", "dbus-daemon", "NetworkManager", "pulseaudio",
+		"Xorg", "xdg-desktop-portal", "gnome-shell", "gdm", "lightdm",
+		"procsentinel-agent", "ps", "pkill",
+		// macOS
+		"launchd", "WindowServer", "kernel_task", "loginwindow", "Finder", "Dock",
+	}
+	for _, sys := range systemProcs {
+		if lower == strings.ToLower(sys) {
+			return true
+		}
+	}
+	return false
 }
 
 // getProcessList returns a list of running processes based on the operating system
@@ -286,22 +368,39 @@ func getProcessList() (string, error) {
 	}
 }
 
-// saveAppsToFile saves the blocked applications list to apps.txt
-func saveAppsToFile(apps []string) error {
-	return os.WriteFile("apps.txt", []byte(strings.Join(apps, "\n")), 0644)
+// saveSyncToFile saves the sync response to sync.json
+func saveSyncToFile(resp *SyncResponse) error {
+	data, err := json.Marshal(resp)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile("sync.json", data, 0644)
 }
 
-// loadAppsFromFile loads the blocked applications list from apps.txt
-func loadAppsFromFile() ([]string, error) {
-	data, err := os.ReadFile("apps.txt")
+// loadSyncFromFile loads the sync response from sync.json
+func loadSyncFromFile() (*SyncResponse, error) {
+	data, err := os.ReadFile("sync.json")
 	if err != nil {
 		return nil, err
 	}
-	content := strings.TrimSpace(string(data))
-	if content == "" {
-		return []string{}, nil
+	var resp SyncResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, err
 	}
-	return strings.Split(content, "\n"), nil
+	return &resp, nil
+}
+
+// getClientEntry returns the status of a client entry by name
+func getClientEntry(state *SyncResponse, name string) (bool, bool) {
+	if state == nil {
+		return false, false
+	}
+	for _, entry := range state.Client {
+		if entry.Name == name {
+			return entry.Status, true
+		}
+	}
+	return false, false
 }
 
 // killProcess terminates a process by name based on the operating system
