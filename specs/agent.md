@@ -2,17 +2,17 @@
 
 ## Overview
 
-The ProcSentinel agent is a Go client that runs on target machines, polls the server for a list of blocked applications, and kills matching processes. It is designed primarily as a Windows service but also runs in console mode on Linux and macOS.
+The ProcSentinel agent is a Go client that runs on target machines, polls the server for the current sync state (applications, mode, client entries), and enforces process rules. It supports blacklist mode (kill matching processes) and whitelist mode (kill everything except allowed processes). Designed primarily as a Windows service but also runs in console mode on Linux and macOS.
 
 ## File Structure
 
 | File                   | Build Tag    | Purpose                                          |
 |------------------------|--------------|--------------------------------------------------|
-| `main.go`              | (none)       | Core logic: server polling, process list/kill, console entry point |
+| `main.go`              | (none)       | Core logic: sync polling, process list/kill, console entry point, file persistence |
 | `main_windows.go`      | `windows`    | Windows service detection via `svc.IsWindowsService()` |
 | `main_stub.go`         | `!windows`   | Stub: `isWindowsService()` always returns false  |
 | `service_windows.go`   | `windows`    | Full Windows service implementation (install, remove, start, stop, run) |
-| `service_stub.go`      | `!windows`   | Stubs for service management functions + `svcName` const |
+| `service_stub.go`      | `!windows`   | Stubs for service management functions, `shutdownPCService`, `svcName` const |
 | `shutdown_windows.go`  | `windows`    | Windows shutdown via Win32 API (`InitiateSystemShutdownExW`) |
 
 ## Execution Modes
@@ -36,39 +36,74 @@ Registered as service name `ProcSentinelAgent`. The service:
 | `-stop`     | Stop the Windows service       |
 | `-debug`    | Run service in debug mode      |
 
+## Data Model
+
+The agent works with a `SyncResponse` struct received from `GET /client/sync`:
+
+```go
+type SyncResponse struct {
+    Applications []ClientApplication `json:"applications"`
+    Mode         string              `json:"mode"`
+    Client       []ClientEntry       `json:"client"`
+}
+```
+
+- `Applications` — list of apps with name and mode, pre-filtered by the server to match current mode
+- `Mode` — `"blacklist"` or `"whitelist"`
+- `Client` — key-value entries (e.g. `power` status)
+
 ## Polling Loop
 
 Two concurrent loops run after startup:
 
-### 1. Server Poll (background goroutine)
+### 1. Server Sync (background goroutine)
 - **Console mode:** polls every 10 seconds (hardcoded)
 - **Service mode:** polls every 20 seconds (default), configurable via `CHECK_INTERVAL` env var
-- Calls `GET /client/applications?identity=<IDENTITY>` with Bearer token auth
-- On success: saves the list to `apps.txt` for offline use
-- On failure: loads the last known list from `apps.txt` (fails closed — keeps enforcing cached blocks)
+- Calls `GET /client/sync?identity=<IDENTITY>` with Bearer token auth
+- On success: saves full response to `sync.json`
+- On failure: loads last known state from `sync.json`
 
 ### 2. Process Monitor (main loop)
-- **Console mode:** checks every 1 second (or 60 seconds if shutdown is triggered)
-- **Service mode:** checks every 1 second via `time.Ticker`
-- Gets the full process list, then iterates the blocked list:
+- Checks every 1 second via loop (console) or `time.Ticker` (service)
+- Skips if no applications in current state
+- Checks client entries first (e.g. power), then enforces app rules based on mode
 
-#### Process List/Kill (platform-specific)
+## Process Enforcement
+
+### Blacklist Mode
+Kill processes that match any application name in the list. Case-insensitive substring match.
+
+### Whitelist Mode
+Kill processes NOT in the allowed list, with system process protection. Parses each line of the process list to extract the process name, then kills it if:
+1. It's not in the allowed set (case-insensitive)
+2. It's not a system-critical process
+
+### Process Name Extraction
+| OS              | Format                                          | Extraction                   |
+|-----------------|-------------------------------------------------|------------------------------|
+| Windows         | `tasklist` — first field is process name        | `fields[0]`                  |
+| Linux / macOS   | `ps aux` — 11th field is command                | `filepath.Base(fields[10])`  |
+
+### Process List/Kill (platform-specific)
 | OS              | List Command   | Kill Command             |
 |-----------------|----------------|--------------------------|
 | Windows         | `tasklist`     | `taskkill /F /IM <name>` |
 | Linux / macOS   | `ps aux`       | `pkill -f <name>`        |
 
-#### Matching
-Process matching is case-insensitive substring match: `strings.Contains(processText, strings.ToLower(name))`.
+### System Process Protection
+In whitelist mode, the agent maintains a hardcoded list of system-critical processes that are never killed:
 
-## Special Commands
+- **Windows:** `system`, `csrss.exe`, `svchost.exe`, `explorer.exe`, `dwm.exe`, `lsass.exe`, `services.exe`, `winlogon.exe`, `conhost.exe`, `cmd.exe`, `powershell.exe`, `procsentinel-agent*.exe`, etc.
+- **Linux:** `init`, `systemd`, `bash`, `zsh`, `sh`, `sshd`, `cron`, `dbus-daemon`, `procsentinel-agent`, `ps`, `pkill`, etc.
+- **macOS:** `launchd`, `WindowServer`, `kernel_task`, `loginwindow`, `Finder`, `Dock`, etc.
 
-The server can inject special command strings into the blocked applications list:
+## Client Entries
 
-| Command           | Behavior                                                              |
-|-------------------|-----------------------------------------------------------------------|
-| `force_poweroff`  | Triggers OS shutdown. On Windows: uses Win32 API with `SeShutdownPrivilege`. Console mode: sleeps 60s between checks after trigger. |
-| `force_shutdown`  | Same behavior as `force_poweroff`                                     |
+The agent reads client entries from the sync response to handle system-level commands:
+
+| Entry   | Behavior when `status: false`                     |
+|---------|---------------------------------------------------|
+| `power` | Triggers OS shutdown via `shutdownPCService()`    |
 
 ### Windows Shutdown Sequence
 1. Open process token with `TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY`
@@ -76,7 +111,7 @@ The server can inject special command strings into the blocked applications list
 3. Enable the privilege via `AdjustTokenPrivileges`
 4. Call `InitiateSystemShutdownExW` with `bForceAppsClosed=TRUE`, `bRebootAfterShutdown=FALSE`
 
-Non-Windows platforms have no `shutdownPC()` implementation (only the service stub exists).
+Non-Windows platforms return an error from the `shutdownPCService()` stub.
 
 ## Configuration
 
@@ -91,22 +126,20 @@ Loaded from `.env` file in working directory (or executable directory for Window
 
 ## Offline Persistence
 
-The agent saves the blocked applications list to `apps.txt` (one app per line) in the working directory every time it successfully fetches from the server. When the server is unreachable:
+The agent saves the full sync response to `sync.json` in the working directory every time it successfully syncs with the server. When the server is unreachable:
 
-1. On initial startup: loads from `apps.txt`. If the file doesn't exist, starts with an empty list.
-2. During polling: loads from `apps.txt`, preserving the last known blocked list.
-3. When the server comes back online: fetches the current list and overwrites `apps.txt`.
+1. On initial startup: loads from `sync.json`. If the file doesn't exist, starts with empty state.
+2. During polling: loads from `sync.json`, preserving the last known state.
+3. When the server comes back online: fetches current state and overwrites `sync.json`.
 
-This ensures the agent continues enforcing blocks even when the PC is offline.
+This ensures the agent continues enforcing rules even when the PC is offline, including the correct mode and client entries.
 
 ## Concurrency Notes
 
-- The blocked list (`[]string`) is shared between the poll goroutine and the monitor loop via pointer. A local copy is made each iteration to reduce race window, but there is no mutex — this is a known data race.
+- The `SyncResponse` pointer is shared between the poll goroutine and the monitor loop. Local copies of applications and mode are made each iteration to reduce the race window, but there is no mutex — this is a known data race.
 - The Windows service mode uses a `stopCh` channel for coordinated shutdown between the service handler and agent goroutine.
 
 ## Build
-
-Requires `CGO_ENABLED=1` (for go-sqlite3 dependency at module level).
 
 | Script            | Output                                        |
 |-------------------|-----------------------------------------------|

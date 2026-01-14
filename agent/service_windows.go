@@ -118,33 +118,29 @@ func runAgent(stopCh <-chan bool) {
 	elog.Info(1, fmt.Sprintf("ProcSentinel Agent service started"))
 	elog.Info(1, fmt.Sprintf("Server address: %s", serverAddress))
 
-	// Initialize blocked applications list
-	var blocked []string
+	// Initialize sync state
+	var state *SyncResponse
 
-	// Start background goroutine to update blocked applications every 10 seconds
-	go updateBlockedApplicationsService(serverAddress, &blocked, stopCh)
+	// Start background goroutine to sync
+	go updateSyncService(serverAddress, &state, stopCh)
 
-	// Initial fetch (don't wait 10 seconds for first fetch)
-	apps, err := fetchBlockedApplications(serverAddress)
+	// Initial fetch
+	resp, err := fetchSync(serverAddress)
 	if err != nil {
-		elog.Warning(1, fmt.Sprintf("Initial fetch failed: %v. Loading from apps.txt.", err))
-		if cached, loadErr := loadAppsFromFile(); loadErr == nil {
-			blocked = cached
-			elog.Info(1, fmt.Sprintf("Loaded %d applications from apps.txt", len(cached)))
+		elog.Warning(1, fmt.Sprintf("Initial sync failed: %v. Loading from sync.json.", err))
+		if cached, loadErr := loadSyncFromFile(); loadErr == nil {
+			state = cached
+			elog.Info(1, fmt.Sprintf("Loaded %d applications from sync.json", len(cached.Applications)))
 		} else {
-			elog.Warning(1, fmt.Sprintf("Could not load apps.txt: %v. Starting with empty list.", loadErr))
-			blocked = []string{}
+			elog.Warning(1, fmt.Sprintf("Could not load sync.json: %v. Starting with empty state.", loadErr))
+			state = &SyncResponse{}
 		}
 	} else {
-		blocked = apps
-		if err := saveAppsToFile(apps); err != nil {
-			elog.Warning(1, fmt.Sprintf("Failed to save apps.txt: %v", err))
+		state = resp
+		if err := saveSyncToFile(resp); err != nil {
+			elog.Warning(1, fmt.Sprintf("Failed to save sync.json: %v", err))
 		}
-		if len(apps) > 0 {
-			elog.Info(1, fmt.Sprintf("Initial blocked applications: %v", apps))
-		} else {
-			elog.Info(1, "No applications currently blocked")
-		}
+		elog.Info(1, fmt.Sprintf("Initial sync: %d applications, mode=%s", len(resp.Applications), resp.Mode))
 	}
 
 	// Main process monitoring loop
@@ -157,6 +153,19 @@ func runAgent(stopCh <-chan bool) {
 			elog.Info(1, "Agent stopping")
 			return
 		case <-ticker.C:
+			if state == nil || len(state.Applications) == 0 {
+				continue
+			}
+
+			// Check power status from client entries
+			if powerStatus, found := getClientEntry(state, "power"); found && !powerStatus {
+				elog.Info(1, "Shutdown PC triggered: power disabled")
+				if err := shutdownPCService(); err != nil {
+					elog.Error(1, fmt.Sprintf("Failed to shutdown PC: %v", err))
+				}
+				continue
+			}
+
 			// Get list of running processes
 			processes, err := getProcessList()
 			if err != nil {
@@ -165,25 +174,40 @@ func runAgent(stopCh <-chan bool) {
 			}
 
 			processText := strings.ToLower(processes)
-			// Create a local copy to avoid race conditions with the update goroutine
-			localBlocked := make([]string, len(blocked))
-			copy(localBlocked, blocked)
 
-			for _, name := range localBlocked {
-				if name == "force_poweroff" || name == "force_shutdown" {
-					elog.Info(1, fmt.Sprintf("Shutdown PC triggered: %s", name))
+			// Copy current state to avoid race
+			localApps := make([]ClientApplication, len(state.Applications))
+			copy(localApps, state.Applications)
+			localMode := state.Mode
 
-					// Perform shutdown
-					if err := shutdownPCService(); err != nil {
-						elog.Error(1, fmt.Sprintf("Failed to shutdown PC: %v", err))
+			if localMode == "blacklist" {
+				for _, app := range localApps {
+					if app.Name != "" && strings.Contains(processText, strings.ToLower(app.Name)) {
+						if err := killProcess(app.Name); err == nil {
+							elog.Info(1, fmt.Sprintf("Killed process: %s", app.Name))
+						} else {
+							elog.Error(1, fmt.Sprintf("Failed to kill process %s: %v", app.Name, err))
+						}
 					}
-
-				} else if name != "" && strings.Contains(processText, strings.ToLower(name)) {
-					// Kill the process
-					if err := killProcess(name); err == nil {
-						elog.Info(1, fmt.Sprintf("Killed process: %s", name))
-					} else {
-						elog.Error(1, fmt.Sprintf("Failed to kill process %s: %v", name, err))
+				}
+			} else if localMode == "whitelist" {
+				allowedSet := make(map[string]bool)
+				for _, app := range localApps {
+					allowedSet[strings.ToLower(app.Name)] = true
+				}
+				for _, line := range strings.Split(processes, "\n") {
+					line = strings.TrimSpace(line)
+					if line == "" {
+						continue
+					}
+					procName := extractProcessName(line)
+					if procName == "" {
+						continue
+					}
+					if !allowedSet[strings.ToLower(procName)] && !isSystemProcess(procName) {
+						if err := killProcess(procName); err == nil {
+							elog.Info(1, fmt.Sprintf("Killed non-whitelisted process: %s", procName))
+						}
 					}
 				}
 			}
@@ -191,8 +215,8 @@ func runAgent(stopCh <-chan bool) {
 	}
 }
 
-// updateBlockedApplicationsService fetches updated list from server for service
-func updateBlockedApplicationsService(serverAddress string, blocked *[]string, stopCh <-chan bool) {
+// updateSyncService fetches updated sync state from server for service mode
+func updateSyncService(serverAddress string, state **SyncResponse, stopCh <-chan bool) {
 	sleepSeconds := 20
 	if envSleep := os.Getenv("CHECK_INTERVAL"); envSleep != "" {
 		if val, err := strconv.Atoi(envSleep); err == nil {
@@ -207,25 +231,21 @@ func updateBlockedApplicationsService(serverAddress string, blocked *[]string, s
 		case <-stopCh:
 			return
 		case <-ticker.C:
-			apps, err := fetchBlockedApplications(serverAddress)
+			resp, err := fetchSync(serverAddress)
 			if err != nil {
-				elog.Warning(1, fmt.Sprintf("Failed to fetch blocked applications: %v. Loading from apps.txt.", err))
-				if cached, loadErr := loadAppsFromFile(); loadErr == nil {
-					*blocked = cached
-					elog.Info(1, fmt.Sprintf("Loaded %d applications from apps.txt", len(cached)))
+				elog.Warning(1, fmt.Sprintf("Failed to sync: %v. Loading from sync.json.", err))
+				if cached, loadErr := loadSyncFromFile(); loadErr == nil {
+					*state = cached
+					elog.Info(1, fmt.Sprintf("Loaded %d applications from sync.json", len(cached.Applications)))
 				} else {
-					elog.Warning(1, fmt.Sprintf("Could not load apps.txt: %v", loadErr))
+					elog.Warning(1, fmt.Sprintf("Could not load sync.json: %v", loadErr))
 				}
 			} else {
-				*blocked = apps
-				if err := saveAppsToFile(apps); err != nil {
-					elog.Warning(1, fmt.Sprintf("Failed to save apps.txt: %v", err))
+				*state = resp
+				if err := saveSyncToFile(resp); err != nil {
+					elog.Warning(1, fmt.Sprintf("Failed to save sync.json: %v", err))
 				}
-				if len(apps) > 0 {
-					elog.Info(1, fmt.Sprintf("Updated blocked applications: %v", apps))
-				} else {
-					elog.Info(1, "No applications currently blocked")
-				}
+				elog.Info(1, fmt.Sprintf("Synced: %d applications, mode=%s", len(resp.Applications), resp.Mode))
 			}
 		}
 	}

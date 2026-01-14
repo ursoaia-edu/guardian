@@ -6,6 +6,10 @@ import (
 	"fmt"
 )
 
+func shutdownPCService() error {
+	return fmt.Errorf("shutdown not supported on this platform")
+}
+
 // Stub functions for non-Windows systems
 func installService() error {
 	return fmt.Errorf("service installation not supported on this platform")
