@@ -1,9 +1,14 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
-class SettingsService {
+class SettingsService extends ChangeNotifier {
+  static final SettingsService _instance = SettingsService._internal();
+  factory SettingsService() => _instance;
+  SettingsService._internal();
+
   static const String _serverAddressKey = 'server_address';
   static const String _tokenKey = 'auth_token';
   static const String _defaultServerAddress = 'http://192.168.1.10:8080';
@@ -18,6 +23,7 @@ class SettingsService {
   Future<void> setServerAddress(String address) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_serverAddressKey, address);
+    notifyListeners();
   }
 
   /// Gets the authentication token from persistent storage
@@ -34,6 +40,7 @@ class SettingsService {
     } else {
       await prefs.setString(_tokenKey, token);
     }
+    notifyListeners();
   }
 
   /// Gets HTTP headers with authorization token if available
@@ -56,8 +63,8 @@ class SettingsService {
 
   /// Tests connection to the server
   Future<bool> testConnection(String serverAddress) async {
+    final client = http.Client();
     try {
-      final client = http.Client();
       final uri = Uri.parse('$serverAddress/health');
       final headers = await _getHeaders(
         additionalHeaders: {'Content-Type': 'application/json'},
@@ -67,15 +74,11 @@ class SettingsService {
           .get(uri, headers: headers)
           .timeout(const Duration(seconds: 10));
 
-      client.close();
-
       if (response.statusCode == 200) {
-        // Try to parse the health check response
         try {
           final body = json.decode(response.body);
           return body['status'] == 'ok';
         } catch (_) {
-          // If JSON parsing fails, just check status code
           return true;
         }
       }
@@ -83,14 +86,16 @@ class SettingsService {
       return false;
     } catch (e) {
       return false;
+    } finally {
+      client.close();
     }
   }
 
   /// Gets the list of blocked applications from the server
   Future<List<Map<String, dynamic>>> getBlockedApplications() async {
+    final client = http.Client();
     try {
       final serverAddress = await getServerAddress();
-      final client = http.Client();
       final uri = Uri.parse('$serverAddress/manage/applications');
       final headers = await _getHeaders(
         additionalHeaders: {'Content-Type': 'application/json'},
@@ -99,8 +104,6 @@ class SettingsService {
       final response = await client
           .get(uri, headers: headers)
           .timeout(const Duration(seconds: 10));
-
-      client.close();
 
       if (response.statusCode == 200) {
         final body = json.decode(response.body);
@@ -111,14 +114,16 @@ class SettingsService {
       return [];
     } catch (e) {
       return [];
+    } finally {
+      client.close();
     }
   }
 
-  /// Gets the server status
-  Future<bool> getServerStatus() async {
+  /// Gets the server status (enabled state and mode)
+  Future<Map<String, dynamic>> getServerStatus() async {
+    final client = http.Client();
     try {
       final serverAddress = await getServerAddress();
-      final client = http.Client();
       final uri = Uri.parse('$serverAddress/status');
       final headers = await _getHeaders(
         additionalHeaders: {'Content-Type': 'application/json'},
@@ -128,24 +133,27 @@ class SettingsService {
           .get(uri, headers: headers)
           .timeout(const Duration(seconds: 10));
 
-      client.close();
-
       if (response.statusCode == 200) {
         final body = json.decode(response.body);
-        return body['enabled'] ?? false;
+        return {
+          'enabled': body['enabled'] ?? false,
+          'mode': body['mode'] ?? 'blacklist',
+        };
       }
 
-      return false;
+      return {'enabled': false, 'mode': 'blacklist'};
     } catch (e) {
-      return false;
+      return {'enabled': false, 'mode': 'blacklist'};
+    } finally {
+      client.close();
     }
   }
 
   /// Adds a new blocked application
-  Future<bool> addBlockedApplication(String applicationName) async {
+  Future<bool> addBlockedApplication(String applicationName, {String mode = 'blacklist'}) async {
+    final client = http.Client();
     try {
       final serverAddress = await getServerAddress();
-      final client = http.Client();
       final uri = Uri.parse('$serverAddress/manage/applications');
       final headers = await _getHeaders(
         additionalHeaders: {'Content-Type': 'application/json'},
@@ -155,23 +163,23 @@ class SettingsService {
           .post(
             uri,
             headers: headers,
-            body: json.encode({'name': applicationName}),
+            body: json.encode({'name': applicationName, 'mode': mode}),
           )
           .timeout(const Duration(seconds: 10));
-
-      client.close();
 
       return response.statusCode == 201;
     } catch (e) {
       return false;
+    } finally {
+      client.close();
     }
   }
 
   /// Removes a blocked application
   Future<bool> removeBlockedApplication(String applicationName) async {
+    final client = http.Client();
     try {
       final serverAddress = await getServerAddress();
-      final client = http.Client();
       final uri = Uri.parse('$serverAddress/manage/applications');
       final headers = await _getHeaders(
         additionalHeaders: {'Content-Type': 'application/json'},
@@ -185,19 +193,19 @@ class SettingsService {
           )
           .timeout(const Duration(seconds: 10));
 
-      client.close();
-
       return response.statusCode == 200;
     } catch (e) {
       return false;
+    } finally {
+      client.close();
     }
   }
 
   /// Resets all blocked applications
   Future<bool> resetBlockedApplications() async {
+    final client = http.Client();
     try {
       final serverAddress = await getServerAddress();
-      final client = http.Client();
       final uri = Uri.parse('$serverAddress/manage/applications/reset');
       final headers = await _getHeaders(
         additionalHeaders: {'Content-Type': 'application/json'},
@@ -207,42 +215,47 @@ class SettingsService {
           .delete(uri, headers: headers)
           .timeout(const Duration(seconds: 10));
 
-      client.close();
-
       return response.statusCode == 200;
     } catch (e) {
       return false;
+    } finally {
+      client.close();
     }
   }
 
-  /// Toggles server status (enable/disable)
-  Future<bool> toggleServerStatus(bool enabled) async {
+  /// Toggles server status (enable/disable) with optional mode
+  Future<bool> toggleServerStatus(bool enabled, {String? mode}) async {
+    final client = http.Client();
     try {
       final serverAddress = await getServerAddress();
-      final client = http.Client();
       final uri = Uri.parse('$serverAddress/status');
       final headers = await _getHeaders(
         additionalHeaders: {'Content-Type': 'application/json'},
       );
 
-      final response = await client
-          .put(uri, headers: headers, body: json.encode({'enabled': enabled}))
-          .timeout(const Duration(seconds: 10));
+      final payload = <String, dynamic>{'enabled': enabled};
+      if (mode != null) {
+        payload['mode'] = mode;
+      }
 
-      client.close();
+      final response = await client
+          .put(uri, headers: headers, body: json.encode(payload))
+          .timeout(const Duration(seconds: 10));
 
       return response.statusCode == 200;
     } catch (e) {
       return false;
+    } finally {
+      client.close();
     }
   }
 
-  /// Gets system data from the server
-  Future<List<Map<String, dynamic>>> getSystemData() async {
+  /// Gets client entries from the server
+  Future<List<Map<String, dynamic>>> getClientData() async {
+    final client = http.Client();
     try {
       final serverAddress = await getServerAddress();
-      final client = http.Client();
-      final uri = Uri.parse('$serverAddress/system');
+      final uri = Uri.parse('$serverAddress/client');
       final headers = await _getHeaders(
         additionalHeaders: {'Content-Type': 'application/json'},
       );
@@ -251,25 +264,25 @@ class SettingsService {
           .get(uri, headers: headers)
           .timeout(const Duration(seconds: 10));
 
-      client.close();
-
       if (response.statusCode == 200) {
         final body = json.decode(response.body);
-        final List<dynamic> systems = body['systems'] ?? [];
-        return systems.cast<Map<String, dynamic>>();
+        final List<dynamic> entries = body['entries'] ?? [];
+        return entries.cast<Map<String, dynamic>>();
       }
 
       return [];
     } catch (e) {
       return [];
+    } finally {
+      client.close();
     }
   }
 
   /// Updates an application's enabled status
   Future<bool> updateApplicationStatus(String name, bool enabled) async {
+    final client = http.Client();
     try {
       final serverAddress = await getServerAddress();
-      final client = http.Client();
       final uri = Uri.parse('$serverAddress/manage/applications');
       final headers = await _getHeaders(
         additionalHeaders: {'Content-Type': 'application/json'},
@@ -283,20 +296,20 @@ class SettingsService {
           )
           .timeout(const Duration(seconds: 10));
 
-      client.close();
-
       return response.statusCode == 200;
     } catch (e) {
       return false;
+    } finally {
+      client.close();
     }
   }
 
-  /// Updates system status
-  Future<bool> updateSystemStatus(String name, bool status) async {
+  /// Updates a client entry status
+  Future<bool> updateClientStatus(String name, bool status) async {
+    final client = http.Client();
     try {
       final serverAddress = await getServerAddress();
-      final client = http.Client();
-      final uri = Uri.parse('$serverAddress/system');
+      final uri = Uri.parse('$serverAddress/client');
       final headers = await _getHeaders(
         additionalHeaders: {'Content-Type': 'application/json'},
       );
@@ -309,19 +322,19 @@ class SettingsService {
           )
           .timeout(const Duration(seconds: 10));
 
-      client.close();
-
       return response.statusCode == 200;
     } catch (e) {
       return false;
+    } finally {
+      client.close();
     }
   }
 
   /// Gets computers data from the server
   Future<Map<String, dynamic>> getComputersData() async {
+    final client = http.Client();
     try {
       final serverAddress = await getServerAddress();
-      final client = http.Client();
       final uri = Uri.parse('$serverAddress/manage/computers');
       final headers = await _getHeaders(
         additionalHeaders: {'Content-Type': 'application/json'},
@@ -330,8 +343,6 @@ class SettingsService {
       final response = await client
           .get(uri, headers: headers)
           .timeout(const Duration(seconds: 10));
-
-      client.close();
 
       if (response.statusCode == 200) {
         final body = json.decode(response.body);
@@ -347,14 +358,16 @@ class SettingsService {
       return {'computers': [], 'current_time': null};
     } catch (e) {
       return {'computers': [], 'current_time': null};
+    } finally {
+      client.close();
     }
   }
 
   /// Updates computer blocked status
   Future<bool> updateComputerBlocked(int computerId, bool blocked) async {
+    final client = http.Client();
     try {
       final serverAddress = await getServerAddress();
-      final client = http.Client();
       final uri = Uri.parse('$serverAddress/manage/computers');
       final headers = await _getHeaders(
         additionalHeaders: {'Content-Type': 'application/json'},
@@ -368,19 +381,19 @@ class SettingsService {
           )
           .timeout(const Duration(seconds: 10));
 
-      client.close();
-
       return response.statusCode == 200;
     } catch (e) {
       return false;
+    } finally {
+      client.close();
     }
   }
 
   /// Resets all computers (unblocks all)
   Future<bool> resetAllComputers() async {
+    final client = http.Client();
     try {
       final serverAddress = await getServerAddress();
-      final client = http.Client();
       final uri = Uri.parse('$serverAddress/manage/computers/reset');
       final headers = await _getHeaders(
         additionalHeaders: {'Content-Type': 'application/json'},
@@ -390,19 +403,19 @@ class SettingsService {
           .delete(uri, headers: headers)
           .timeout(const Duration(seconds: 10));
 
-      client.close();
-
       return response.statusCode == 200;
     } catch (e) {
       return false;
+    } finally {
+      client.close();
     }
   }
 
   /// Blocks all computers
   Future<bool> blockAllComputers() async {
+    final client = http.Client();
     try {
       final serverAddress = await getServerAddress();
-      final client = http.Client();
       final uri = Uri.parse('$serverAddress/manage/computers/block_all');
       final headers = await _getHeaders(
         additionalHeaders: {'Content-Type': 'application/json'},
@@ -412,11 +425,11 @@ class SettingsService {
           .put(uri, headers: headers)
           .timeout(const Duration(seconds: 10));
 
-      client.close();
-
       return response.statusCode == 200;
     } catch (e) {
       return false;
+    } finally {
+      client.close();
     }
   }
 }

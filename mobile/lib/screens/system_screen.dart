@@ -20,7 +20,18 @@ class _SystemScreenState extends State<SystemScreen> {
   @override
   void initState() {
     super.initState();
+    _settingsService.addListener(_onSettingsChanged);
     _loadData();
+  }
+
+  void _onSettingsChanged() {
+    _loadData();
+  }
+
+  @override
+  void dispose() {
+    _settingsService.removeListener(_onSettingsChanged);
+    super.dispose();
   }
 
   Future<void> _loadData() async {
@@ -36,8 +47,8 @@ class _SystemScreenState extends State<SystemScreen> {
       _isConnected = await _settingsService.testConnection(_serverAddress);
 
       if (_isConnected) {
-        // Load system data
-        final systems = await _settingsService.getSystemData();
+        // Load client data
+        final systems = await _settingsService.getClientData();
 
         setState(() {
           _systems = systems;
@@ -56,7 +67,7 @@ class _SystemScreenState extends State<SystemScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error loading system data: $e'),
+            content: Text('Error loading client data: $e'),
             backgroundColor: Colors.red,
           ),
         );
@@ -71,7 +82,7 @@ class _SystemScreenState extends State<SystemScreen> {
   Future<void> _toggleSystemStatus(String name, bool currentStatus) async {
     final newStatus = !currentStatus;
 
-    final success = await _settingsService.updateSystemStatus(name, newStatus);
+    final success = await _settingsService.updateClientStatus(name, newStatus);
 
     if (success) {
       // Update local state
@@ -99,7 +110,7 @@ class _SystemScreenState extends State<SystemScreen> {
           const SnackBar(
             duration: Duration(milliseconds: 500),
             content: Text(
-              'Failed to update system status. Check server connection.',
+              'Failed to update status. Check server connection.',
             ),
             backgroundColor: Colors.red,
           ),
@@ -149,12 +160,12 @@ class _SystemScreenState extends State<SystemScreen> {
                 Icon(Icons.settings, size: 64, color: Colors.blue.shade400),
                 const SizedBox(height: 16),
                 const Text(
-                  'No System Entries',
+                  'No Client Entries',
                   style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 8),
                 const Text(
-                  'No system entries available on the server',
+                  'No client entries available on the server',
                   textAlign: TextAlign.center,
                   style: TextStyle(color: Colors.grey),
                 ),
@@ -222,74 +233,77 @@ class _SystemScreenState extends State<SystemScreen> {
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
-          : Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Connection Status Card
-                  Card(
-                    color: _isConnected
-                        ? Colors.green.shade50
-                        : Colors.red.shade50,
-                    child: Padding(
-                      padding: const EdgeInsets.all(16.0),
-                      child: Row(
-                        children: [
-                          Icon(
-                            _isConnected ? Icons.wifi : Icons.wifi_off,
-                            color: _isConnected ? Colors.green : Colors.red,
-                            size: 32,
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  _isConnected
-                                      ? 'Server Connected'
-                                      : 'Server Disconnected',
-                                  style: TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.bold,
-                                    color: _isConnected
-                                        ? Colors.green.shade700
-                                        : Colors.red.shade700,
-                                  ),
-                                ),
-                                Text(
-                                  _serverAddress,
-                                  style: const TextStyle(
-                                    fontSize: 14,
-                                    color: Colors.grey,
-                                  ),
-                                ),
-                              ],
+          : RefreshIndicator(
+              onRefresh: _loadData,
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Connection Status Card
+                    Card(
+                      color: _isConnected
+                          ? Colors.green.shade50
+                          : Colors.red.shade50,
+                      child: Padding(
+                        padding: const EdgeInsets.all(16.0),
+                        child: Row(
+                          children: [
+                            Icon(
+                              _isConnected ? Icons.wifi : Icons.wifi_off,
+                              color: _isConnected ? Colors.green : Colors.red,
+                              size: 32,
                             ),
-                          ),
-                        ],
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    _isConnected
+                                        ? 'Server Connected'
+                                        : 'Server Disconnected',
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.bold,
+                                      color: _isConnected
+                                          ? Colors.green.shade700
+                                          : Colors.red.shade700,
+                                    ),
+                                  ),
+                                  Text(
+                                    _serverAddress,
+                                    style: const TextStyle(
+                                      fontSize: 14,
+                                      color: Colors.grey,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
-                  ),
 
-                  const SizedBox(height: 24),
+                    const SizedBox(height: 24),
 
-                  // System Controls Header
-                  if (_isConnected) ...[
-                    const Text(
-                      'System Controls',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
+                    // System Controls Header
+                    if (_isConnected) ...[
+                      const Text(
+                        'System Controls',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 12),
+                      const SizedBox(height: 12),
+                    ],
+
+                    // Systems List - takes remaining space
+                    Expanded(child: _buildSystemsList()),
                   ],
-
-                  // Systems List - takes remaining space
-                  Expanded(child: _buildSystemsList()),
-                ],
+                ),
               ),
             ),
     );
