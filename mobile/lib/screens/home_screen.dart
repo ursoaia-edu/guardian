@@ -15,6 +15,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   List<Map<String, dynamic>> _blockedApps = [];
   bool _serverEnabled = false;
+  String _serverMode = 'blacklist';
   String _serverAddress = '';
   bool _isLoading = true;
   bool _isConnected = false;
@@ -22,6 +23,11 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    _settingsService.addListener(_onSettingsChanged);
+    _loadData();
+  }
+
+  void _onSettingsChanged() {
     _loadData();
   }
 
@@ -44,12 +50,14 @@ class _HomeScreenState extends State<HomeScreen> {
 
         setState(() {
           _blockedApps = apps;
-          _serverEnabled = status;
+          _serverEnabled = status['enabled'] as bool;
+          _serverMode = status['mode'] as String;
         });
       } else {
         setState(() {
           _blockedApps = [];
           _serverEnabled = false;
+          _serverMode = 'blacklist';
         });
       }
     } catch (e) {
@@ -57,6 +65,7 @@ class _HomeScreenState extends State<HomeScreen> {
         _isConnected = false;
         _blockedApps = [];
         _serverEnabled = false;
+        _serverMode = 'blacklist';
       });
 
       if (mounted) {
@@ -93,14 +102,14 @@ class _HomeScreenState extends State<HomeScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           duration: Duration(milliseconds: 500),
-          content: Text('Application is already in the blocked list'),
+          content: Text('Application is already in the list'),
           backgroundColor: Colors.orange,
         ),
       );
       return;
     }
 
-    final success = await _settingsService.addBlockedApplication(appName);
+    final success = await _settingsService.addBlockedApplication(appName, mode: _serverMode);
 
     if (success) {
       // Fetch the newly added application with its ID
@@ -114,7 +123,7 @@ class _HomeScreenState extends State<HomeScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             duration: const Duration(milliseconds: 500),
-            content: Text('Added "$appName" to blocked list'),
+            content: Text('Added "$appName" ($_serverMode)'),
             backgroundColor: Colors.green,
           ),
         );
@@ -146,7 +155,7 @@ class _HomeScreenState extends State<HomeScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             duration: const Duration(milliseconds: 500),
-            content: Text('Removed "$appName" from blocked list'),
+            content: Text('Removed "$appName"'),
             backgroundColor: Colors.green,
           ),
         );
@@ -209,9 +218,9 @@ class _HomeScreenState extends State<HomeScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Reset Blocked Applications'),
+        title: const Text('Reset Applications'),
         content: const Text(
-          'Are you sure you want to remove all blocked applications?',
+          'Are you sure you want to remove all applications?',
         ),
         actions: [
           TextButton(
@@ -239,7 +248,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               duration: Duration(milliseconds: 500),
-              content: Text('All blocked applications removed'),
+              content: Text('All applications removed'),
               backgroundColor: Colors.green,
             ),
           );
@@ -293,6 +302,40 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  Future<void> _setMode(String mode) async {
+    final success = await _settingsService.toggleServerStatus(_serverEnabled, mode: mode);
+
+    if (success) {
+      setState(() {
+        _serverMode = mode;
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            duration: const Duration(milliseconds: 500),
+            content: Text('Mode changed to $mode'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } else {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            duration: Duration(milliseconds: 500),
+            content: Text('Failed to change mode. Check server connection.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Color _modeColor(String mode) {
+    return mode == 'whitelist' ? Colors.blue : Colors.deepOrange;
+  }
+
   Widget _buildApplicationsList() {
     if (!_isConnected) {
       return Card(
@@ -334,12 +377,12 @@ class _HomeScreenState extends State<HomeScreen> {
                 Icon(Icons.security, size: 64, color: Colors.green.shade400),
                 const SizedBox(height: 16),
                 const Text(
-                  'No Blocked Applications',
+                  'No Applications',
                   style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 8),
                 const Text(
-                  'Add applications to monitor and block',
+                  'Add applications to monitor and control',
                   textAlign: TextAlign.center,
                   style: TextStyle(color: Colors.grey),
                 ),
@@ -356,14 +399,23 @@ class _HomeScreenState extends State<HomeScreen> {
         final app = _blockedApps[index];
         final appName = app['name'] as String;
         final enabled = app['enabled'] as bool;
+        final mode = (app['mode'] as String?) ?? 'blacklist';
         return Card(
           child: ListTile(
             leading: IconButton(
               onPressed: () => _removeApplication(appName),
               icon: const Icon(Icons.delete, color: Colors.red),
-              tooltip: 'Remove from blocked list',
+              tooltip: 'Remove application',
             ),
             title: Text(appName),
+            subtitle: Text(
+              mode,
+              style: TextStyle(
+                fontSize: 12,
+                color: _modeColor(mode),
+                fontWeight: FontWeight.w500,
+              ),
+            ),
             trailing: Switch(
               value: enabled,
               onChanged: (newValue) =>
@@ -379,6 +431,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    _settingsService.removeListener(_onSettingsChanged);
     _addAppController.dispose();
     super.dispose();
   }
@@ -394,148 +447,207 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
-          : Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Server Status Card
-                  Card(
-                    color: _isConnected
-                        ? Colors.green.shade50
-                        : Colors.red.shade50,
-                    child: Padding(
-                      padding: const EdgeInsets.all(16.0),
-                      child: Row(
-                        children: [
-                          Icon(
-                            _isConnected ? Icons.wifi : Icons.wifi_off,
-                            color: _isConnected ? Colors.green : Colors.red,
-                            size: 32,
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  _isConnected
-                                      ? 'Server Connected'
-                                      : 'Server Disconnected',
-                                  style: TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.bold,
-                                    color: _isConnected
-                                        ? Colors.green.shade700
-                                        : Colors.red.shade700,
-                                  ),
-                                ),
-                                Text(
-                                  _serverAddress,
-                                  style: const TextStyle(
-                                    fontSize: 14,
-                                    color: Colors.grey,
-                                  ),
-                                ),
-                                if (_isConnected)
-                                  Text(
-                                    'Status: ${_serverEnabled ? 'Enabled' : 'Disabled'}',
-                                    style: TextStyle(
-                                      fontSize: 14,
-                                      color: _serverEnabled
-                                          ? Colors.green.shade700
-                                          : Colors.orange.shade700,
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          ),
-                          if (_isConnected)
-                            Switch(
-                              value: _serverEnabled,
-                              onChanged: (_) => _toggleServerStatus(),
-                            ),
-                        ],
-                      ),
-                    ),
-                  ),
-
-                  const SizedBox(height: 24),
-
-                  // Add Application Section
-                  if (_isConnected) ...[
-                    const Text(
-                      'Add Blocked Application',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
+          : RefreshIndicator(
+              onRefresh: _loadData,
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Server Status Card
                     Card(
+                      color: _isConnected
+                          ? Colors.green.shade50
+                          : Colors.red.shade50,
                       child: Padding(
                         padding: const EdgeInsets.all(16.0),
                         child: Row(
                           children: [
-                            Expanded(
-                              child: TextField(
-                                controller: _addAppController,
-                                decoration: const InputDecoration(
-                                  hintText: 'Enter application name',
-                                  prefixIcon: Icon(Icons.app_blocking),
-                                  border: OutlineInputBorder(),
-                                ),
-                                onSubmitted: (_) => _addApplication(),
-                              ),
+                            Icon(
+                              _isConnected ? Icons.wifi : Icons.wifi_off,
+                              color: _isConnected ? Colors.green : Colors.red,
+                              size: 32,
                             ),
                             const SizedBox(width: 12),
-                            ElevatedButton(
-                              onPressed: _addApplication,
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFF2D3748),
-                                foregroundColor: Colors.white,
-                                padding: const EdgeInsets.all(16),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    _isConnected
+                                        ? 'Server Connected'
+                                        : 'Server Disconnected',
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.bold,
+                                      color: _isConnected
+                                          ? Colors.green.shade700
+                                          : Colors.red.shade700,
+                                    ),
+                                  ),
+                                  Text(
+                                    _serverAddress,
+                                    style: const TextStyle(
+                                      fontSize: 14,
+                                      color: Colors.grey,
+                                    ),
+                                  ),
+                                  if (_isConnected)
+                                    Text(
+                                      'Status: ${_serverEnabled ? 'Enabled' : 'Disabled'}',
+                                      style: TextStyle(
+                                        fontSize: 14,
+                                        color: _serverEnabled
+                                            ? Colors.green.shade700
+                                            : Colors.orange.shade700,
+                                      ),
+                                    ),
+                                ],
                               ),
-                              child: const Icon(Icons.add),
                             ),
+                            if (_isConnected)
+                              Switch(
+                                value: _serverEnabled,
+                                onChanged: (_) => _toggleServerStatus(),
+                              ),
                           ],
                         ),
                       ),
                     ),
 
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 16),
 
-                    // Blocked Applications List
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text(
-                          'Blocked Applications',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
+                    // Mode Toggle
+                    if (_isConnected)
+                      SizedBox(
+                        width: double.infinity,
+                        child: SegmentedButton<String>(
+                          segments: [
+                            ButtonSegment<String>(
+                              value: 'blacklist',
+                              label: const Text('Blacklist'),
+                              icon: Icon(
+                                Icons.block,
+                                color: _serverMode == 'blacklist'
+                                    ? Colors.white
+                                    : Colors.deepOrange,
+                              ),
+                            ),
+                            ButtonSegment<String>(
+                              value: 'whitelist',
+                              label: const Text('Whitelist'),
+                              icon: Icon(
+                                Icons.check_circle_outline,
+                                color: _serverMode == 'whitelist'
+                                    ? Colors.white
+                                    : Colors.blue,
+                              ),
+                            ),
+                          ],
+                          selected: {_serverMode},
+                          onSelectionChanged: (selected) {
+                            _setMode(selected.first);
+                          },
+                          style: ButtonStyle(
+                            backgroundColor: WidgetStateProperty.resolveWith(
+                              (states) {
+                                if (states.contains(WidgetState.selected)) {
+                                  return _serverMode == 'blacklist'
+                                      ? Colors.deepOrange
+                                      : Colors.blue;
+                                }
+                                return null;
+                              },
+                            ),
+                            foregroundColor: WidgetStateProperty.resolveWith(
+                              (states) {
+                                if (states.contains(WidgetState.selected)) {
+                                  return Colors.white;
+                                }
+                                return null;
+                              },
+                            ),
                           ),
                         ),
-                        if (_blockedApps.isNotEmpty)
-                          TextButton.icon(
-                            onPressed: _resetApplications,
-                            icon: const Icon(
-                              Icons.clear_all,
-                              color: Colors.red,
-                            ),
-                            label: const Text(
-                              'Remove All',
-                              style: TextStyle(color: Colors.red),
+                      ),
+
+                    const SizedBox(height: 24),
+
+                    // Add Application Section
+                    if (_isConnected) ...[
+                      const Text(
+                        'Add Application',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Card(
+                        child: Padding(
+                          padding: const EdgeInsets.all(16.0),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: TextField(
+                                  controller: _addAppController,
+                                  decoration: const InputDecoration(
+                                    hintText: 'Enter application name',
+                                    prefixIcon: Icon(Icons.app_blocking),
+                                    border: OutlineInputBorder(),
+                                  ),
+                                  onSubmitted: (_) => _addApplication(),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              ElevatedButton(
+                                onPressed: _addApplication,
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: const Color(0xFF2D3748),
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.all(16),
+                                ),
+                                child: const Icon(Icons.add),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+
+                      const SizedBox(height: 24),
+
+                      // Applications List Header
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text(
+                            'Applications',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
                             ),
                           ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                  ],
+                          if (_blockedApps.isNotEmpty)
+                            TextButton.icon(
+                              onPressed: _resetApplications,
+                              icon: const Icon(
+                                Icons.clear_all,
+                                color: Colors.red,
+                              ),
+                              label: const Text(
+                                'Remove All',
+                                style: TextStyle(color: Colors.red),
+                              ),
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                    ],
 
-                  // Applications List - takes remaining space
-                  Expanded(child: _buildApplicationsList()),
-                ],
+                    // Applications List - takes remaining space
+                    Expanded(child: _buildApplicationsList()),
+                  ],
+                ),
               ),
             ),
     );
