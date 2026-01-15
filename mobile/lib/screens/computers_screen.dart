@@ -24,15 +24,21 @@ class _ComputersScreenState extends State<ComputersScreen> {
   @override
   void initState() {
     super.initState();
+    _settingsService.addListener(_onSettingsChanged);
     _loadData();
-    // Update server time every 60 seconds (lightweight, no full data fetch)
+    // Update server time every 10 seconds
     _refreshTimer = Timer.periodic(const Duration(seconds: 10), (_) {
       _updateServerTime();
     });
   }
 
+  void _onSettingsChanged() {
+    _loadData();
+  }
+
   @override
   void dispose() {
+    _settingsService.removeListener(_onSettingsChanged);
     _refreshTimer?.cancel();
     super.dispose();
   }
@@ -221,7 +227,6 @@ class _ComputersScreenState extends State<ComputersScreen> {
       final computerTime = DateTime.parse(datetimeStr);
       final localTime = computerTime.toLocal();
 
-      // Format: "Dec 27, 1:18 AM"
       final hour = localTime.hour > 12
           ? localTime.hour - 12
           : (localTime.hour == 0 ? 12 : localTime.hour);
@@ -237,18 +242,8 @@ class _ComputersScreenState extends State<ComputersScreen> {
 
   String _monthAbbr(int month) {
     const months = [
-      'Jan',
-      'Feb',
-      'Mar',
-      'Apr',
-      'May',
-      'Jun',
-      'Jul',
-      'Aug',
-      'Sep',
-      'Oct',
-      'Nov',
-      'Dec',
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
     ];
     return months[month - 1];
   }
@@ -410,47 +405,116 @@ class _ComputersScreenState extends State<ComputersScreen> {
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
-          : Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Connection Status Card
-                  Card(
-                    color: _isConnected
-                        ? Colors.green.shade50
-                        : Colors.red.shade50,
-                    child: Padding(
-                      padding: const EdgeInsets.all(16.0),
-                      child: Row(
+          : RefreshIndicator(
+              onRefresh: _loadData,
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Connection Status Card
+                    Card(
+                      color: _isConnected
+                          ? Colors.green.shade50
+                          : Colors.red.shade50,
+                      child: Padding(
+                        padding: const EdgeInsets.all(16.0),
+                        child: Row(
+                          children: [
+                            Icon(
+                              _isConnected ? Icons.wifi : Icons.wifi_off,
+                              color: _isConnected ? Colors.green : Colors.red,
+                              size: 32,
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    _isConnected
+                                        ? 'Server Connected'
+                                        : 'Server Disconnected',
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.bold,
+                                      color: _isConnected
+                                          ? Colors.green.shade700
+                                          : Colors.red.shade700,
+                                    ),
+                                  ),
+                                  Text(
+                                    _serverAddress,
+                                    style: const TextStyle(
+                                      fontSize: 14,
+                                      color: Colors.grey,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    // Computers List Header
+                    if (_isConnected) ...[
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Icon(
-                            _isConnected ? Icons.wifi : Icons.wifi_off,
-                            color: _isConnected ? Colors.green : Colors.red,
-                            size: 32,
+                          const Text(
+                            'Computers',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
-                          const SizedBox(width: 12),
                           Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.end,
                               children: [
                                 Text(
-                                  _isConnected
-                                      ? 'Server Connected'
-                                      : 'Server Disconnected',
+                                  '${_computers.length} device${_computers.length != 1 ? 's' : ''}',
                                   style: TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.bold,
-                                    color: _isConnected
-                                        ? Colors.green.shade700
-                                        : Colors.red.shade700,
+                                    fontSize: 14,
+                                    color: Colors.grey.shade600,
                                   ),
                                 ),
-                                Text(
-                                  _serverAddress,
-                                  style: const TextStyle(
-                                    fontSize: 14,
-                                    color: Colors.grey,
+                                const SizedBox(width: 12),
+                                ElevatedButton(
+                                  onPressed: _blockAllComputers,
+                                  style: ElevatedButton.styleFrom(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 4,
+                                    ),
+                                    backgroundColor: Colors.red,
+                                  ),
+                                  child: const Text(
+                                    'Block All',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                ElevatedButton(
+                                  onPressed: _unblockAllComputers,
+                                  style: ElevatedButton.styleFrom(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 4,
+                                    ),
+                                    backgroundColor: Colors.blue,
+                                  ),
+                                  child: const Text(
+                                    'Unblock All',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: Colors.white,
+                                    ),
                                   ),
                                 ),
                               ],
@@ -458,78 +522,12 @@ class _ComputersScreenState extends State<ComputersScreen> {
                           ),
                         ],
                       ),
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-                  // Computers List Header
-                  if (_isConnected) ...[
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text(
-                          'Computers',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        Expanded(
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.end,
-                            children: [
-                              Text(
-                                '${_computers.length} device${_computers.length != 1 ? 's' : ''}',
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  color: Colors.grey.shade600,
-                                ),
-                              ),
-                              const SizedBox(width: 12),
-                              ElevatedButton(
-                                onPressed: _blockAllComputers,
-                                style: ElevatedButton.styleFrom(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                    vertical: 4,
-                                  ),
-                                  backgroundColor: Colors.red,
-                                ),
-                                child: const Text(
-                                  'Block All',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: Colors.white,
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              ElevatedButton(
-                                onPressed: _unblockAllComputers,
-                                style: ElevatedButton.styleFrom(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                    vertical: 4,
-                                  ),
-                                  backgroundColor: Colors.blue,
-                                ),
-                                child: const Text(
-                                  'Unblock All',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: Colors.white,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
+                      const SizedBox(height: 12),
+                    ],
+                    // Computers List - takes remaining space
+                    Expanded(child: _buildComputersList()),
                   ],
-                  // Computers List - takes remaining space
-                  Expanded(child: _buildComputersList()),
-                ],
+                ),
               ),
             ),
     );
