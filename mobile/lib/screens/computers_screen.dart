@@ -17,7 +17,6 @@ class _ComputersScreenState extends State<ComputersScreen> {
   List<Map<String, dynamic>> _computers = [];
   bool _isLoading = true;
   bool _isConnected = false;
-  String _serverAddress = '';
   DateTime? _currentServerTime;
   Timer? _refreshTimer;
 
@@ -26,7 +25,6 @@ class _ComputersScreenState extends State<ComputersScreen> {
     super.initState();
     _settingsService.addListener(_onSettingsChanged);
     _loadData();
-    // Update server time every 10 seconds
     _refreshTimer = Timer.periodic(const Duration(seconds: 10), (_) {
       _updateServerTime();
     });
@@ -49,14 +47,10 @@ class _ComputersScreenState extends State<ComputersScreen> {
     });
 
     try {
-      // Load server address
-      _serverAddress = await _settingsService.getServerAddress();
-
-      // Test connection
-      _isConnected = await _settingsService.testConnection(_serverAddress);
+      final serverAddress = await _settingsService.getServerAddress();
+      _isConnected = await _settingsService.testConnection(serverAddress);
 
       if (_isConnected) {
-        // Load computers data
         final result = await _settingsService.getComputersData();
         setState(() {
           _computers = result['computers'] ?? [];
@@ -78,6 +72,7 @@ class _ComputersScreenState extends State<ComputersScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
+            duration: const Duration(seconds: 3),
             content: Text('Error loading computers: $e'),
             backgroundColor: Colors.red,
           ),
@@ -103,7 +98,7 @@ class _ComputersScreenState extends State<ComputersScreen> {
         });
       }
     } catch (e) {
-      // Silently fail on time update
+      // Silently fail on background update
     }
   }
 
@@ -119,7 +114,6 @@ class _ComputersScreenState extends State<ComputersScreen> {
     );
 
     if (success) {
-      // Update local state
       setState(() {
         final computerIndex = _computers.indexWhere(
           (computer) => computer['identity'] == computerId,
@@ -132,8 +126,10 @@ class _ComputersScreenState extends State<ComputersScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            duration: const Duration(milliseconds: 500),
-            content: Text('Computer ${newBlocked ? 'blocked' : 'unblocked'}'),
+            duration: const Duration(seconds: 2),
+            content: Text(
+              'Computer #$computerId ${newBlocked ? 'blocked' : 'unblocked'}',
+            ),
             backgroundColor: Colors.green,
           ),
         );
@@ -142,7 +138,7 @@ class _ComputersScreenState extends State<ComputersScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            duration: Duration(milliseconds: 500),
+            duration: Duration(seconds: 3),
             content: Text('Failed to update computer status'),
             backgroundColor: Colors.red,
           ),
@@ -152,16 +148,34 @@ class _ComputersScreenState extends State<ComputersScreen> {
   }
 
   Future<void> _unblockAllComputers() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Unblock All?'),
+        content: const Text('This will unblock all computers.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Unblock All'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
     final success = await _settingsService.resetAllComputers();
 
     if (success) {
-      // Update computers data without loading spinner
       await _updateServerTime();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            duration: Duration(milliseconds: 500),
-            content: Text('All computers unblocked successfully'),
+            duration: Duration(seconds: 2),
+            content: Text('All computers unblocked'),
             backgroundColor: Colors.green,
           ),
         );
@@ -170,7 +184,7 @@ class _ComputersScreenState extends State<ComputersScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            duration: Duration(milliseconds: 500),
+            duration: Duration(seconds: 3),
             content: Text('Failed to unblock computers'),
             backgroundColor: Colors.red,
           ),
@@ -180,16 +194,35 @@ class _ComputersScreenState extends State<ComputersScreen> {
   }
 
   Future<void> _blockAllComputers() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Block All?'),
+        content: const Text('This will block all computers.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Block All'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
     final success = await _settingsService.blockAllComputers();
 
     if (success) {
-      // Update computers data without loading spinner
       await _updateServerTime();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            duration: Duration(milliseconds: 500),
-            content: Text('All computers blocked successfully'),
+            duration: Duration(seconds: 2),
+            content: Text('All computers blocked'),
             backgroundColor: Colors.green,
           ),
         );
@@ -198,7 +231,7 @@ class _ComputersScreenState extends State<ComputersScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            duration: Duration(milliseconds: 500),
+            duration: Duration(seconds: 3),
             content: Text('Failed to block computers'),
             backgroundColor: Colors.red,
           ),
@@ -248,64 +281,59 @@ class _ComputersScreenState extends State<ComputersScreen> {
     return months[month - 1];
   }
 
+  Widget _buildDisconnected() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.cloud_off, size: 72, color: Colors.grey.shade400),
+          const SizedBox(height: 16),
+          const Text(
+            'Server Not Connected',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Check your server settings and connection',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.grey),
+          ),
+          const SizedBox(height: 24),
+          OutlinedButton.icon(
+            onPressed: _loadData,
+            icon: const Icon(Icons.refresh),
+            label: const Text('Retry'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmpty() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.computer, size: 72, color: Colors.grey.shade300),
+          const SizedBox(height: 16),
+          const Text(
+            'No Computers',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'No computers have connected yet',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.grey),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildComputersList() {
-    if (!_isConnected) {
-      return Card(
-        child: SizedBox(
-          width: double.infinity,
-          child: Padding(
-            padding: const EdgeInsets.all(24.0),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.cloud_off, size: 64, color: Colors.grey.shade400),
-                const SizedBox(height: 16),
-                const Text(
-                  'Server Not Connected',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  'Please check your server settings and connection',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.grey),
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
-    }
-
-    if (_computers.isEmpty) {
-      return Card(
-        child: SizedBox(
-          width: double.infinity,
-          child: Padding(
-            padding: const EdgeInsets.all(24.0),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.computer, size: 64, color: Colors.blue.shade400),
-                const SizedBox(height: 16),
-                const Text(
-                  'No Computers',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  'No computers available on the server',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.grey),
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
-    }
-
     return ListView.builder(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
       itemCount: _computers.length,
       itemBuilder: (context, index) {
         final computer = _computers[index];
@@ -315,76 +343,55 @@ class _ComputersScreenState extends State<ComputersScreen> {
         final isOnline = _isComputerOnline(datetime);
 
         return Card(
-          margin: const EdgeInsets.symmetric(vertical: 8),
+          margin: const EdgeInsets.symmetric(vertical: 6),
           child: Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            padding: const EdgeInsets.all(14.0),
+            child: Row(
               children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Computer #$identity',
-                            style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Row(
-                            children: [
-                              Icon(
-                                Icons.circle,
-                                size: 12,
-                                color: isOnline ? Colors.green : Colors.grey,
-                              ),
-                              const SizedBox(width: 6),
-                              Text(
-                                isOnline ? 'Online' : 'Offline',
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  color: isOnline
-                                      ? Colors.green
-                                      : Colors.grey.shade600,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            'Last seen: ${_formatLastSeen(datetime)}',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.grey.shade600,
-                            ),
-                          ),
-                        ],
+                // Online indicator
+                Container(
+                  width: 10,
+                  height: 10,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: isOnline ? Colors.green : Colors.grey.shade400,
+                  ),
+                ),
+                const SizedBox(width: 14),
+                // Info
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Computer #$identity',
+                        style: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
-                    ),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        const Text(
-                          'Block',
-                          style: TextStyle(fontSize: 12, color: Colors.grey),
+                      const SizedBox(height: 2),
+                      Text(
+                        isOnline
+                            ? 'Online'
+                            : 'Last seen ${_formatLastSeen(datetime)}',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: isOnline
+                              ? Colors.green
+                              : Colors.grey.shade600,
                         ),
-                        const SizedBox(height: 4),
-                        Switch(
-                          value: blocked,
-                          onChanged: (_) =>
-                              _toggleComputerBlocked(identity, blocked),
-                          inactiveThumbColor: Colors.grey,
-                          inactiveTrackColor: Colors.grey.shade300,
-                        ),
-                      ],
-                    ),
-                  ],
+                      ),
+                    ],
+                  ),
+                ),
+                // Block switch
+                Switch(
+                  value: blocked,
+                  onChanged: (_) =>
+                      _toggleComputerBlocked(identity, blocked),
+                  inactiveThumbColor: Colors.grey,
+                  inactiveTrackColor: Colors.grey.shade300,
                 ),
               ],
             ),
@@ -400,136 +407,62 @@ class _ComputersScreenState extends State<ComputersScreen> {
       appBar: AppBar(
         title: const Text('Computers'),
         actions: [
+          if (_isConnected && _computers.isNotEmpty) ...[
+            IconButton(
+              onPressed: _blockAllComputers,
+              icon: const Icon(Icons.lock),
+              tooltip: 'Block all',
+            ),
+            IconButton(
+              onPressed: _unblockAllComputers,
+              icon: const Icon(Icons.lock_open),
+              tooltip: 'Unblock all',
+            ),
+          ],
           IconButton(onPressed: _loadData, icon: const Icon(Icons.refresh)),
         ],
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
-          : RefreshIndicator(
-              onRefresh: _loadData,
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Connection Status Card
-                    Card(
-                      color: _isConnected
-                          ? Colors.green.shade50
-                          : Colors.red.shade50,
-                      child: Padding(
-                        padding: const EdgeInsets.all(16.0),
-                        child: Row(
-                          children: [
-                            Icon(
-                              _isConnected ? Icons.wifi : Icons.wifi_off,
-                              color: _isConnected ? Colors.green : Colors.red,
-                              size: 32,
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    _isConnected
-                                        ? 'Server Connected'
-                                        : 'Server Disconnected',
-                                    style: TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.bold,
-                                      color: _isConnected
-                                          ? Colors.green.shade700
-                                          : Colors.red.shade700,
-                                    ),
-                                  ),
-                                  Text(
-                                    _serverAddress,
-                                    style: const TextStyle(
-                                      fontSize: 14,
-                                      color: Colors.grey,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 24),
-                    // Computers List Header
-                    if (_isConnected) ...[
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text(
-                            'Computers',
+          : !_isConnected
+              ? _buildDisconnected()
+              : RefreshIndicator(
+                  onRefresh: _loadData,
+                  child: Column(
+                    children: [
+                      // Device count bar
+                      if (_computers.isNotEmpty)
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 8,
+                          ),
+                          color: Colors.grey.shade100,
+                          child: Text(
+                            '${_computers.length} device${_computers.length != 1 ? 's' : ''}'
+                            ' \u2022 '
+                            '${_computers.where((c) => _isComputerOnline(c['datetime'] as String)).length} online',
                             style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
+                              fontSize: 13,
+                              color: Colors.grey.shade700,
                             ),
                           ),
-                          Expanded(
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.end,
-                              children: [
-                                Text(
-                                  '${_computers.length} device${_computers.length != 1 ? 's' : ''}',
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    color: Colors.grey.shade600,
-                                  ),
+                        ),
+                      Expanded(
+                        child: _computers.isEmpty
+                            ? ListView(children: [
+                                SizedBox(
+                                  height:
+                                      MediaQuery.of(context).size.height * 0.5,
+                                  child: _buildEmpty(),
                                 ),
-                                const SizedBox(width: 12),
-                                ElevatedButton(
-                                  onPressed: _blockAllComputers,
-                                  style: ElevatedButton.styleFrom(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 8,
-                                      vertical: 4,
-                                    ),
-                                    backgroundColor: Colors.red,
-                                  ),
-                                  child: const Text(
-                                    'Block All',
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      color: Colors.white,
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                ElevatedButton(
-                                  onPressed: _unblockAllComputers,
-                                  style: ElevatedButton.styleFrom(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 8,
-                                      vertical: 4,
-                                    ),
-                                    backgroundColor: Colors.blue,
-                                  ),
-                                  child: const Text(
-                                    'Unblock All',
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      color: Colors.white,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
+                              ])
+                            : _buildComputersList(),
                       ),
-                      const SizedBox(height: 12),
                     ],
-                    // Computers List - takes remaining space
-                    Expanded(child: _buildComputersList()),
-                  ],
+                  ),
                 ),
-              ),
-            ),
     );
   }
 }

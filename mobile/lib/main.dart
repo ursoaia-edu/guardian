@@ -45,7 +45,8 @@ class MainNavigation extends StatefulWidget {
 class _MainNavigationState extends State<MainNavigation> with WidgetsBindingObserver {
   int _currentIndex = 0;
   final SettingsService _settingsService = SettingsService();
-  bool _powerEnabled = true; // Default to true (green)
+  bool _powerEnabled = true;
+  bool _isConnected = false;
   Timer? _statusTimer;
 
   final List<Widget> _screens = [
@@ -59,17 +60,16 @@ class _MainNavigationState extends State<MainNavigation> with WidgetsBindingObse
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _settingsService.addListener(_checkPowerStatus);
-    _checkPowerStatus();
-    // Check power status every 10 seconds
+    _settingsService.addListener(_checkStatus);
+    _checkStatus();
     _statusTimer = Timer.periodic(const Duration(seconds: 10), (_) {
-      _checkPowerStatus();
+      _checkStatus();
     });
   }
 
   @override
   void dispose() {
-    _settingsService.removeListener(_checkPowerStatus);
+    _settingsService.removeListener(_checkStatus);
     WidgetsBinding.instance.removeObserver(this);
     _statusTimer?.cancel();
     super.dispose();
@@ -78,28 +78,35 @@ class _MainNavigationState extends State<MainNavigation> with WidgetsBindingObse
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      // Refresh power status when app comes to foreground
-      _checkPowerStatus();
+      _checkStatus();
     }
   }
 
-  Future<void> _checkPowerStatus() async {
+  Future<void> _checkStatus() async {
     try {
-      final systems = await _settingsService.getClientData();
-      final powerSystem = systems.firstWhere(
-        (system) => system['name'] == 'power',
-        orElse: () => {'name': 'power', 'status': true},
-      );
+      final serverAddress = await _settingsService.getServerAddress();
+      final connected = await _settingsService.testConnection(serverAddress);
+
+      bool power = true;
+      if (connected) {
+        final systems = await _settingsService.getClientData();
+        final powerSystem = systems.firstWhere(
+          (system) => system['name'] == 'power',
+          orElse: () => {'name': 'power', 'status': true},
+        );
+        power = powerSystem['status'] ?? true;
+      }
 
       if (mounted) {
         setState(() {
-          _powerEnabled = powerSystem['status'] ?? true;
+          _isConnected = connected;
+          _powerEnabled = power;
         });
       }
     } catch (e) {
-      // If there's an error, default to enabled (green)
       if (mounted) {
         setState(() {
+          _isConnected = false;
           _powerEnabled = true;
         });
       }
@@ -117,14 +124,18 @@ class _MainNavigationState extends State<MainNavigation> with WidgetsBindingObse
           setState(() {
             _currentIndex = index;
           });
-          // Refresh power status when System tab is tapped
           if (index == 1) {
-            _checkPowerStatus();
+            _checkStatus();
           }
         },
         items: [
-          const BottomNavigationBarItem(
-            icon: Icon(Icons.security),
+          BottomNavigationBarItem(
+            icon: Icon(
+              _isConnected ? Icons.security : Icons.cloud_off,
+              color: _currentIndex == 0
+                  ? null
+                  : (_isConnected ? null : Colors.red.shade300),
+            ),
             label: 'Dashboard',
           ),
           BottomNavigationBarItem(
