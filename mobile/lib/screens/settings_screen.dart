@@ -33,7 +33,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            duration: const Duration(milliseconds: 500),
+            duration: const Duration(seconds: 3),
             content: Text('Error loading settings: $e'),
             backgroundColor: Colors.red,
           ),
@@ -57,7 +57,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       final serverAddress = _serverAddressController.text.trim();
       final token = _tokenController.text.trim();
 
-      // Basic validation
       if (serverAddress.isEmpty) {
         throw Exception('Server address cannot be empty');
       }
@@ -73,7 +72,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            duration: Duration(milliseconds: 500),
+            duration: Duration(seconds: 2),
             content: Text('Settings saved'),
             backgroundColor: Colors.green,
           ),
@@ -83,8 +82,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            duration: const Duration(milliseconds: 500),
-            content: Text('Error saving settings: $e'),
+            duration: const Duration(seconds: 3),
+            content: Text('$e'),
             backgroundColor: Colors.red,
           ),
         );
@@ -104,7 +103,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (serverAddress.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          duration: Duration(milliseconds: 500),
+          duration: Duration(seconds: 2),
           content: Text('Please enter a server address first'),
           backgroundColor: Colors.orange,
         ),
@@ -122,11 +121,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            duration: const Duration(milliseconds: 500),
+            duration: const Duration(seconds: 2),
             content: Text(
               isConnected
                   ? 'Connection successful!'
-                  : 'Connection failed. Please check the server address.',
+                  : 'Connection failed. Check the server address.',
             ),
             backgroundColor: isConnected ? Colors.green : Colors.red,
           ),
@@ -136,7 +135,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            duration: const Duration(milliseconds: 500),
+            duration: const Duration(seconds: 3),
             content: Text('Connection test failed: $e'),
             backgroundColor: Colors.red,
           ),
@@ -198,7 +197,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                 hintText: 'http://192.168.1.10:8080',
                                 prefixIcon: Icon(Icons.link),
                                 border: OutlineInputBorder(),
-                                helperText: 'Enter the Guardian server URL',
                               ),
                               keyboardType: TextInputType.url,
                               enabled: !_isSaving,
@@ -218,7 +216,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                 hintText: 'Token',
                                 prefixIcon: Icon(Icons.security),
                                 border: OutlineInputBorder(),
-                                helperText: 'Enter the authentication token',
                               ),
                               obscureText: true,
                               enabled: !_isSaving,
@@ -240,7 +237,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                             ),
                                           )
                                         : const Icon(Icons.wifi_tethering),
-                                    label: const Text('Test Connection'),
+                                    label: const Text('Test'),
                                     style: ElevatedButton.styleFrom(
                                       backgroundColor: Colors.blue,
                                       foregroundColor: Colors.white,
@@ -273,68 +270,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         ),
                       ),
                     ),
-                    const SizedBox(height: 24),
-                    const Text(
-                      'About',
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    Card(
-                      child: Padding(
-                        padding: const EdgeInsets.all(16.0),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Row(
-                              children: [
-                                Icon(Icons.security, size: 32),
-                                SizedBox(width: 12),
-                                Text(
-                                  'Guardian Mobile',
-                                  style: TextStyle(
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 12),
-                            const Text(
-                              'Mobile client for managing blocked applications in the Guardian process monitoring system.',
-                              style: TextStyle(
-                                fontSize: 14,
-                                color: Colors.grey,
-                              ),
-                            ),
-                            const SizedBox(height: 12),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 4,
-                              ),
-                              decoration: BoxDecoration(
-                                color: Colors.green.shade50,
-                                borderRadius: BorderRadius.circular(4),
-                                border: Border.all(
-                                  color: Colors.green.shade300,
-                                ),
-                              ),
-                              child: const Text(
-                                'Version 1.2.1',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: Colors.green,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ),
-                          ],
+                    const SizedBox(height: 32),
+                    // Compact about footer
+                    Center(
+                      child: Text(
+                        'Guardian Mobile v1.2.1',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: Colors.grey.shade500,
                         ),
                       ),
                     ),
+                    const SizedBox(height: 8),
                   ],
                 ),
               ),
