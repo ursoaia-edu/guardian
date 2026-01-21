@@ -209,6 +209,8 @@ func runConsole() {
 		serverAddress = "http://localhost:8080" // Default fallback
 	}
 
+	initWhitelist()
+
 	log.Printf("ProcSentinel Agent started on %s", runtime.GOOS)
 	log.Printf("Server address: %s", serverAddress)
 	log.Println("Press Ctrl+C to stop.")
@@ -240,7 +242,12 @@ func runConsole() {
 
 	// Main process monitoring loop
 	for {
-		if state == nil || len(state.Applications) == 0 {
+		if state == nil {
+			time.Sleep(1 * time.Second)
+			continue
+		}
+
+		if len(state.Applications) == 0 && state.Mode != "whitelist" {
 			time.Sleep(1 * time.Second)
 			continue
 		}
@@ -312,11 +319,16 @@ func runConsole() {
 func extractProcessName(line string) string {
 	switch runtime.GOOS {
 	case "windows":
-		// tasklist format: "firefox.exe    1234 Console  1  100,000 K"
-		fields := strings.Fields(line)
-		if len(fields) > 0 {
-			return fields[0]
+		// tasklist /FO CSV /NH format: "chrome.exe","1234","Console","1","100,000 K"
+		line = strings.TrimSpace(line)
+		if len(line) == 0 || line[0] != '"' {
+			return ""
 		}
+		end := strings.Index(line[1:], "\"")
+		if end < 0 {
+			return ""
+		}
+		return line[1 : end+1]
 	case "linux", "darwin":
 		// ps aux format: "user  PID %CPU %MEM VSZ RSS TTY STAT START TIME COMMAND"
 		fields := strings.Fields(line)
@@ -327,27 +339,120 @@ func extractProcessName(line string) string {
 	return ""
 }
 
+// userWhitelist holds process names loaded from whitelist.txt
+var userWhitelist map[string]bool
+
+const whitelistFile = "whitelist.txt"
+
+// generateWhitelist creates whitelist.txt from currently running processes
+func generateWhitelist() error {
+	processes, err := getProcessList()
+	if err != nil {
+		return fmt.Errorf("failed to get process list: %v", err)
+	}
+
+	seen := make(map[string]bool)
+	var names []string
+	for _, line := range strings.Split(processes, "\n") {
+		name := extractProcessName(strings.TrimSpace(line))
+		if name == "" {
+			continue
+		}
+		lower := strings.ToLower(name)
+		if !seen[lower] {
+			seen[lower] = true
+			names = append(names, lower)
+		}
+	}
+
+	content := strings.Join(names, "\n") + "\n"
+	return os.WriteFile(whitelistFile, []byte(content), 0644)
+}
+
+// loadWhitelist loads process names from whitelist.txt into userWhitelist
+func loadWhitelist() {
+	userWhitelist = make(map[string]bool)
+
+	data, err := os.ReadFile(whitelistFile)
+	if err != nil {
+		return
+	}
+
+	for _, line := range strings.Split(string(data), "\n") {
+		name := strings.TrimSpace(line)
+		if name != "" && !strings.HasPrefix(name, "#") {
+			userWhitelist[strings.ToLower(name)] = true
+		}
+	}
+}
+
+// initWhitelist generates whitelist.txt on first run, then loads it
+func initWhitelist() {
+	if _, err := os.Stat(whitelistFile); os.IsNotExist(err) {
+		log.Println("First run: generating whitelist.txt from running processes...")
+		if err := generateWhitelist(); err != nil {
+			log.Printf("Failed to generate whitelist.txt: %v", err)
+		} else {
+			log.Println("whitelist.txt created. Review and edit it if needed.")
+		}
+	}
+	loadWhitelist()
+	log.Printf("Loaded %d processes from whitelist.txt", len(userWhitelist))
+}
+
 // isSystemProcess returns true for processes that should never be killed
 func isSystemProcess(name string) bool {
 	lower := strings.ToLower(name)
+
+	// Check user whitelist first
+	if userWhitelist[lower] {
+		return true
+	}
+
 	systemProcs := []string{
-		// Windows
-		"system", "system idle process", "registry", "smss.exe", "csrss.exe",
-		"wininit.exe", "services.exe", "lsass.exe", "svchost.exe", "explorer.exe",
-		"dwm.exe", "winlogon.exe", "fontdrvhost.exe", "sihost.exe", "taskhostw.exe",
-		"runtimebroker.exe", "shellexperiencehost.exe", "searchui.exe",
-		"conhost.exe", "ctfmon.exe", "tasklist.exe", "cmd.exe", "powershell.exe",
+		// Windows: kernel & session
+		"system", "system idle process", "secure system", "registry",
+		"smss.exe", "csrss.exe", "wininit.exe", "winlogon.exe",
+		"services.exe", "lsass.exe", "lsaiso.exe",
+
+		// Windows: core services
+		"svchost.exe", "dwm.exe", "fontdrvhost.exe", "conhost.exe",
+		"wudfhost.exe", "wmiprvse.exe", "dllhost.exe", "spoolsv.exe",
+		"audiodg.exe", "dashost.exe", "searchindexer.exe",
+		"searchprotocolhost.exe", "searchfilterhost.exe",
+
+		// Windows: shell & UWP
+		"explorer.exe", "sihost.exe", "taskhostw.exe",
+		"runtimebroker.exe", "applicationframehost.exe",
+		"shellexperiencehost.exe", "startmenuexperiencehost.exe",
+		"searchhost.exe", "searchui.exe", "searchapp.exe",
+		"textinputhost.exe", "lockapp.exe", "widgets.exe",
+		"widgetservice.exe", "comppkgsrv.exe",
+
+		// Windows: Settings & system apps
+		// "systemsettings.exe", "systemsettingsbroker.exe",
+		"userinit.exe", "logonui.exe",
+
+		// Windows: security
+		"securityhealthservice.exe", "securityhealthsystray.exe",
+		"securityhealthhost.exe", "smartscreen.exe",
+		"msmpeng.exe", "nissrv.exe", "mpcmdrun.exe",
+
+		// Windows: input & accessibility
+		"ctfmon.exe", "tabletinputservice.exe",
+
+		// Windows: networking
+		"lsm.exe", "networkservice.exe", "localservice.exe",
+
+		// Windows: tools & shells
+		"tasklist.exe", "cmd.exe", "powershell.exe", "pwsh.exe",
+		"windowsterminal.exe", "wt.exe", "openssh.exe", "sshd.exe",
+
+		// ProcSentinel
 		"procsentinel-agent64.exe", "procsentinel-agent32.exe",
-		// Linux/macOS
-		"init", "systemd", "kthreadd", "bash", "zsh", "sh", "sshd", "login",
-		"getty", "cron", "dbus-daemon", "NetworkManager", "pulseaudio",
-		"Xorg", "xdg-desktop-portal", "gnome-shell", "gdm", "lightdm",
-		"procsentinel-agent", "ps", "pkill",
-		// macOS
-		"launchd", "WindowServer", "kernel_task", "loginwindow", "Finder", "Dock",
 	}
 	for _, sys := range systemProcs {
-		if lower == strings.ToLower(sys) {
+		if lower == sys {
 			return true
 		}
 	}
@@ -358,7 +463,7 @@ func isSystemProcess(name string) bool {
 func getProcessList() (string, error) {
 	switch runtime.GOOS {
 	case "windows":
-		out, err := exec.Command("tasklist").Output()
+		out, err := exec.Command("tasklist", "/FO", "CSV", "/NH").Output()
 		return string(out), err
 	case "linux", "darwin":
 		out, err := exec.Command("ps", "aux").Output()
@@ -368,9 +473,16 @@ func getProcessList() (string, error) {
 	}
 }
 
-// saveSyncToFile saves the sync response to sync.json
+// saveSyncToFile saves the sync response to sync.json (excludes client entries)
 func saveSyncToFile(resp *SyncResponse) error {
-	data, err := json.Marshal(resp)
+	toSave := struct {
+		Applications []ClientApplication `json:"applications"`
+		Mode         string              `json:"mode"`
+	}{
+		Applications: resp.Applications,
+		Mode:         resp.Mode,
+	}
+	data, err := json.Marshal(toSave)
 	if err != nil {
 		return err
 	}

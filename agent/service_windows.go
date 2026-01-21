@@ -115,6 +115,8 @@ func runAgent(stopCh <-chan bool) {
 		serverAddress = "http://localhost:8080" // Default fallback
 	}
 
+	initWhitelist()
+
 	elog.Info(1, fmt.Sprintf("ProcSentinel Agent service started"))
 	elog.Info(1, fmt.Sprintf("Server address: %s", serverAddress))
 
@@ -153,7 +155,11 @@ func runAgent(stopCh <-chan bool) {
 			elog.Info(1, "Agent stopping")
 			return
 		case <-ticker.C:
-			if state == nil || len(state.Applications) == 0 {
+			if state == nil {
+				continue
+			}
+
+			if len(state.Applications) == 0 && state.Mode != "whitelist" {
 				continue
 			}
 
