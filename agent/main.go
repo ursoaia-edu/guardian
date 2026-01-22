@@ -445,7 +445,7 @@ func isSystemProcess(name string) bool {
 		"lsm.exe", "networkservice.exe", "localservice.exe",
 
 		// Windows: tools & shells
-		"tasklist.exe", "cmd.exe", "powershell.exe", "pwsh.exe",
+		"tasklist.exe", "taskmgr.exe", "cmd.exe", "powershell.exe", "pwsh.exe",
 		"windowsterminal.exe", "wt.exe", "openssh.exe", "sshd.exe",
 
 		// ProcSentinel
