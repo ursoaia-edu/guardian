@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 import '../services/settings_service.dart';
 
@@ -16,6 +17,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final SettingsService _settingsService = SettingsService();
   bool _isLoading = true;
   bool _isSaving = false;
+  String _version = '';
 
   @override
   void initState() {
@@ -27,8 +29,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     try {
       final serverAddress = await _settingsService.getServerAddress();
       final token = await _settingsService.getToken();
+      final info = await PackageInfo.fromPlatform();
       _serverAddressController.text = serverAddress;
       _tokenController.text = token ?? '';
+      _version = info.version;
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -274,7 +278,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     // Compact about footer
                     Center(
                       child: Text(
-                        'Guardian Mobile v1.2.1',
+                        'Guardian Mobile v$_version',
                         style: TextStyle(
                           fontSize: 13,
                           color: Colors.grey.shade500,

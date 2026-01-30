@@ -176,7 +176,7 @@ class SettingsService extends ChangeNotifier {
   }
 
   /// Removes a blocked application
-  Future<bool> removeBlockedApplication(String applicationName) async {
+  Future<bool> removeBlockedApplication(String applicationName, {String? mode}) async {
     final client = http.Client();
     try {
       final serverAddress = await getServerAddress();
@@ -185,11 +185,16 @@ class SettingsService extends ChangeNotifier {
         additionalHeaders: {'Content-Type': 'application/json'},
       );
 
+      final payload = <String, dynamic>{'name': applicationName};
+      if (mode != null) {
+        payload['mode'] = mode;
+      }
+
       final response = await client
           .delete(
             uri,
             headers: headers,
-            body: json.encode({'name': applicationName}),
+            body: json.encode(payload),
           )
           .timeout(const Duration(seconds: 10));
 
