@@ -45,9 +45,6 @@ func NewServer() (*Server, error) {
 	if err := s.loadFromDatabase(); err != nil {
 		return nil, fmt.Errorf("failed to load data: %v", err)
 	}
-	if err := s.forceDisableOnStartup(); err != nil {
-		return nil, fmt.Errorf("failed to disable on startup: %v", err)
-	}
 
 	return s, nil
 }
@@ -97,8 +94,7 @@ func main() {
 
 	go func() {
 		fmt.Printf("ProcSentinel Server starting on %s\n", addr)
-		fmt.Printf("Web Interface: %s\n", displayAddr)
-		fmt.Printf("Static Files: %s\n", getWebDir())
+		fmt.Printf("API: %s\n", displayAddr)
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Error("server failed", "error", err)
 			os.Exit(1)

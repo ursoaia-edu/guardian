@@ -49,8 +49,5 @@ func (s *Server) setupRoutes() *chi.Mux {
 		r.Put("/manage/computers/block_all", s.handleBlockAllComputers)
 	})
 
-	// Static files (catch-all, must be last)
-	r.Handle("/*", serveStaticFiles())
-
 	return r
 }
