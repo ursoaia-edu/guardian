@@ -45,10 +45,15 @@ func (s *Server) handleClientSync(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	slog.Info("client sync request", "count", len(apps), "mode", s.modeCache)
+	responseMode := s.modeCache
+	if !s.enabledCache || (identityStr != "" && !isComputerBlocked) {
+		responseMode = "free"
+	}
+
+	slog.Info("client sync request", "count", len(apps), "mode", responseMode)
 	writeJSON(w, http.StatusOK, ClientSyncResponse{
 		Applications: apps,
-		Mode:         s.modeCache,
+		Mode:         responseMode,
 		Client:       entries,
 	})
 }
