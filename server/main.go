@@ -27,7 +27,7 @@ type Server struct {
 }
 
 func NewServer() (*Server, error) {
-	db, err := openDatabase("./procsentinel.db")
+	db, err := openDatabase("./guardian.db")
 	if err != nil {
 		return nil, err
 	}
