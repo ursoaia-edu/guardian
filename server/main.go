@@ -16,7 +16,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// Server holds the state of the procsentinel server
+// Server holds the state of the guardian server
 type Server struct {
 	mu           sync.RWMutex
 	db           *sql.DB
@@ -59,7 +59,7 @@ func (s *Server) Close() error {
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
 
-	if err := loadEnvFile(".env"); err != nil {
+	if err := loadEnvFile(".env"); err != nil && !os.IsNotExist(err) {
 		slog.Warn("could not load .env file", "error", err)
 	}
 
@@ -93,7 +93,7 @@ func main() {
 	signal.Notify(done, os.Interrupt, syscall.SIGTERM)
 
 	go func() {
-		fmt.Printf("ProcSentinel Server starting on %s\n", addr)
+		fmt.Printf("Guardian Server starting on %s\n", addr)
 		fmt.Printf("API: %s\n", displayAddr)
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Error("server failed", "error", err)
