@@ -106,7 +106,7 @@ Add a new application.
 }
 ```
 
-`mode` is optional, defaults to `"blacklist"`. Accepted values: `"blacklist"`, `"whitelist"`.
+`mode` is optional, defaults to `"blacklist"`. Accepted values: `"blacklist"`, `"whitelist"`. The same app name can exist in both modes independently (`UNIQUE(name, mode)`).
 
 **Response** `201`
 ```json
@@ -137,7 +137,7 @@ Update an application's enabled state and/or mode.
 }
 ```
 
-`enabled` accepts `true`, `false`, `0`, or `1`. `mode` is optional — only updated if provided.
+`enabled` accepts `true`, `false`, `0`, or `1`. `mode` is optional — used to identify the specific entry. If omitted, matches any entry with that name.
 
 **Response** `200`
 ```json
@@ -157,12 +157,13 @@ Update an application's enabled state and/or mode.
 
 ### `DELETE /manage/applications`
 
-Remove an application.
+Remove an application. If `mode` is provided, removes only that specific name+mode entry. If `mode` is omitted, removes all entries with that name (across all modes).
 
 **Request**
 ```json
 {
-  "name": "firefox"
+  "name": "firefox",
+  "mode": "blacklist"
 }
 ```
 

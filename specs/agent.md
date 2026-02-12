@@ -49,7 +49,7 @@ type SyncResponse struct {
 ```
 
 - `Applications` — list of apps with name and mode, pre-filtered by the server to match current mode
-- `Mode` — `"blacklist"` or `"whitelist"`
+- `Mode` — `"blacklist"`, `"whitelist"`, or `"free"`
 - `Client` — key-value entries (e.g. `power` status)
 
 ## Polling Loop
@@ -97,6 +97,9 @@ In whitelist mode, the agent maintains a hardcoded list of system-critical proce
 - **Linux:** `init`, `systemd`, `bash`, `zsh`, `sh`, `sshd`, `cron`, `dbus-daemon`, `procsentinel-agent`, `ps`, `pkill`, etc.
 - **macOS:** `launchd`, `WindowServer`, `kernel_task`, `loginwindow`, `Finder`, `Dock`, etc.
 
+### Whitelist File
+On first run in whitelist mode, the agent generates `whitelist.txt` from currently running processes. This file is loaded once at startup into a `userWhitelist` map and used alongside the system process list to determine which processes are safe.
+
 ## Client Entries
 
 The agent reads client entries from the sync response to handle system-level commands:
@@ -126,7 +129,7 @@ Loaded from `.env` file in working directory (or executable directory for Window
 
 ## Offline Persistence
 
-The agent saves the full sync response to `sync.json` in the working directory every time it successfully syncs with the server. When the server is unreachable:
+The agent saves the sync response to `sync.json` in the working directory every time it successfully syncs with the server. When the server is unreachable:
 
 1. On initial startup: loads from `sync.json`. If the file doesn't exist, starts with empty state.
 2. During polling: loads from `sync.json`, preserving the last known state.
@@ -141,7 +144,7 @@ This ensures the agent continues enforcing rules even when the PC is offline, in
 
 ## Build
 
-| Script            | Output                                        |
-|-------------------|-----------------------------------------------|
-| `agent/build64.ps1` | `dist/bin/agent/procsentinel-agent64.exe`   |
-| `agent/build32.ps1` | `dist/bin/agent/procsentinel-agent32.exe`   |
+| Script            | Output                                              |
+|-------------------|-----------------------------------------------------|
+| `agent/build64.ps1` | `dist/agent/bin/agent/procsentinel-agent64.exe`   |
+| `agent/build32.ps1` | `dist/agent/bin/agent/procsentinel-agent32.exe`   |
