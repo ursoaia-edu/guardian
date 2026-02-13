@@ -20,7 +20,13 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isConnected = false;
 
   List<Map<String, dynamic>> get _filteredApps =>
-      _allApps.where((app) => (app['mode'] ?? 'blacklist') == _serverMode).toList();
+      _allApps.where((app) => (app['mode'] ?? 'blacklist') == _serverMode).toList()
+        ..sort((a, b) {
+          final aEnabled = a['enabled'] as bool;
+          final bEnabled = b['enabled'] as bool;
+          if (aEnabled == bEnabled) return 0;
+          return aEnabled ? 1 : -1;
+        });
 
   @override
   void initState() {
@@ -418,6 +424,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildAppList() {
     final apps = _filteredApps;
     return ListView.builder(
+      padding: const EdgeInsets.only(bottom: 80),
       itemCount: apps.length,
       itemBuilder: (context, index) {
         final app = apps[index];
