@@ -88,6 +88,10 @@ dist/
 
 Server installs to `/usr/local/bin/procsentinel/` as a systemd service. Agent and server both read `.env` files for configuration (`SERVER_ADDRESS`, `TOKEN`, `ADMIN_TOKEN`).
 
+## Rules
+
+- **Always update specs on code changes:** After any code change, update the corresponding files in `specs/` (`server.md`, `agent.md`, `api.md`) and this `CLAUDE.md` to keep documentation in sync. This includes API changes, schema changes, config changes, file structure changes, and build output paths.
+
 ## Notes
 
 - No automated tests exist yet
