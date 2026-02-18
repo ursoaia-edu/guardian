@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../services/settings_service.dart';
+import '../utils/snackbar_helper.dart';
 
 class ComputersScreen extends StatefulWidget {
   const ComputersScreen({super.key});
@@ -17,6 +18,7 @@ class _ComputersScreenState extends State<ComputersScreen> {
   List<Map<String, dynamic>> _computers = [];
   bool _isLoading = true;
   bool _isConnected = false;
+  bool _serverEnabled = false;
   DateTime? _currentServerTime;
   Timer? _refreshTimer;
 
@@ -51,15 +53,22 @@ class _ComputersScreenState extends State<ComputersScreen> {
       _isConnected = await _settingsService.testConnection(serverAddress);
 
       if (_isConnected) {
-        final result = await _settingsService.getComputersData();
+        final results = await Future.wait([
+          _settingsService.getComputersData(),
+          _settingsService.getServerStatus(),
+        ]);
+        final result = results[0] as Map<String, dynamic>;
+        final status = results[1] as Map<String, dynamic>;
         setState(() {
           _computers = result['computers'] ?? [];
           _currentServerTime = result['current_time'];
+          _serverEnabled = status['enabled'] as bool;
         });
       } else {
         setState(() {
           _computers = [];
           _currentServerTime = null;
+          _serverEnabled = false;
         });
       }
     } catch (e) {
@@ -67,15 +76,15 @@ class _ComputersScreenState extends State<ComputersScreen> {
         _isConnected = false;
         _computers = [];
         _currentServerTime = null;
+        _serverEnabled = false;
       });
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            duration: const Duration(seconds: 3),
-            content: Text('Error loading computers: $e'),
-            backgroundColor: Colors.red,
-          ),
+        showTopSnackBar(
+          context,
+          message: 'Error loading computers: $e',
+          backgroundColor: Colors.red,
+
         );
       }
     } finally {
@@ -124,24 +133,19 @@ class _ComputersScreenState extends State<ComputersScreen> {
       });
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            duration: const Duration(seconds: 2),
-            content: Text(
-              'Computer #$computerId ${newBlocked ? 'blocked' : 'unblocked'}',
-            ),
-            backgroundColor: Colors.green,
-          ),
+        showTopSnackBar(
+          context,
+          message: 'Computer #$computerId ${newBlocked ? 'blocked' : 'unblocked'}',
+          backgroundColor: Colors.green,
         );
       }
     } else {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            duration: Duration(seconds: 3),
-            content: Text('Failed to update computer status'),
-            backgroundColor: Colors.red,
-          ),
+        showTopSnackBar(
+          context,
+          message: 'Failed to update computer status',
+          backgroundColor: Colors.red,
+
         );
       }
     }
@@ -172,22 +176,19 @@ class _ComputersScreenState extends State<ComputersScreen> {
     if (success) {
       await _updateServerTime();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            duration: Duration(seconds: 2),
-            content: Text('All computers unblocked'),
-            backgroundColor: Colors.green,
-          ),
+        showTopSnackBar(
+          context,
+          message: 'All computers unblocked',
+          backgroundColor: Colors.green,
         );
       }
     } else {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            duration: Duration(seconds: 3),
-            content: Text('Failed to unblock computers'),
-            backgroundColor: Colors.red,
-          ),
+        showTopSnackBar(
+          context,
+          message: 'Failed to unblock computers',
+          backgroundColor: Colors.red,
+
         );
       }
     }
@@ -219,22 +220,38 @@ class _ComputersScreenState extends State<ComputersScreen> {
     if (success) {
       await _updateServerTime();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            duration: Duration(seconds: 2),
-            content: Text('All computers blocked'),
-            backgroundColor: Colors.green,
-          ),
+        showTopSnackBar(
+          context,
+          message: 'All computers blocked',
+          backgroundColor: Colors.green,
         );
       }
     } else {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            duration: Duration(seconds: 3),
-            content: Text('Failed to block computers'),
-            backgroundColor: Colors.red,
-          ),
+        showTopSnackBar(
+          context,
+          message: 'Failed to block computers',
+          backgroundColor: Colors.red,
+
+        );
+      }
+    }
+  }
+
+  Future<void> _toggleServerStatus() async {
+    final newStatus = !_serverEnabled;
+    final success = await _settingsService.toggleServerStatus(newStatus);
+
+    if (success) {
+      setState(() {
+        _serverEnabled = newStatus;
+      });
+    } else {
+      if (mounted) {
+        showTopSnackBar(
+          context,
+          message: 'Failed to update server status',
+          backgroundColor: Colors.red,
         );
       }
     }
@@ -420,6 +437,15 @@ class _ComputersScreenState extends State<ComputersScreen> {
             ),
           ],
           IconButton(onPressed: _loadData, icon: const Icon(Icons.refresh)),
+          if (_isConnected)
+            IconButton(
+              onPressed: _toggleServerStatus,
+              icon: Icon(
+                _serverEnabled ? Icons.shield : Icons.shield_outlined,
+                color: _serverEnabled ? Colors.green : Colors.orange,
+              ),
+              tooltip: _serverEnabled ? 'Disable server' : 'Enable server',
+            ),
         ],
       ),
       body: _isLoading
