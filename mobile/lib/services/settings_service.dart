@@ -13,6 +13,11 @@ class SettingsService extends ChangeNotifier {
   static const String _tokenKey = 'auth_token';
   static const String _defaultServerAddress = 'http://192.168.1.10:8080';
 
+  final ValueNotifier<bool> serverEnabledNotifier = ValueNotifier(false);
+
+  bool get serverEnabled => serverEnabledNotifier.value;
+  set serverEnabled(bool value) => serverEnabledNotifier.value = value;
+
   /// Gets the server address from persistent storage
   Future<String> getServerAddress() async {
     final prefs = await SharedPreferences.getInstance();
@@ -135,8 +140,9 @@ class SettingsService extends ChangeNotifier {
 
       if (response.statusCode == 200) {
         final body = json.decode(response.body);
+        serverEnabled = body['enabled'] ?? false;
         return {
-          'enabled': body['enabled'] ?? false,
+          'enabled': serverEnabled,
           'mode': body['mode'] ?? 'blacklist',
         };
       }
@@ -247,7 +253,11 @@ class SettingsService extends ChangeNotifier {
           .put(uri, headers: headers, body: json.encode(payload))
           .timeout(const Duration(seconds: 10));
 
-      return response.statusCode == 200;
+      final success = response.statusCode == 200;
+      if (success) {
+        serverEnabled = enabled;
+      }
+      return success;
     } catch (e) {
       return false;
     } finally {

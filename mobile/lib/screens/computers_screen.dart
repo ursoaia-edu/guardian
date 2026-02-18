@@ -18,7 +18,6 @@ class _ComputersScreenState extends State<ComputersScreen> {
   List<Map<String, dynamic>> _computers = [];
   bool _isLoading = true;
   bool _isConnected = false;
-  bool _serverEnabled = false;
   DateTime? _currentServerTime;
   Timer? _refreshTimer;
 
@@ -26,6 +25,7 @@ class _ComputersScreenState extends State<ComputersScreen> {
   void initState() {
     super.initState();
     _settingsService.addListener(_onSettingsChanged);
+    _settingsService.serverEnabledNotifier.addListener(_onServerEnabledChanged);
     _loadData();
     _refreshTimer = Timer.periodic(const Duration(seconds: 10), (_) {
       _updateServerTime();
@@ -36,9 +36,14 @@ class _ComputersScreenState extends State<ComputersScreen> {
     _loadData();
   }
 
+  void _onServerEnabledChanged() {
+    if (mounted) setState(() {});
+  }
+
   @override
   void dispose() {
     _settingsService.removeListener(_onSettingsChanged);
+    _settingsService.serverEnabledNotifier.removeListener(_onServerEnabledChanged);
     _refreshTimer?.cancel();
     super.dispose();
   }
@@ -58,17 +63,14 @@ class _ComputersScreenState extends State<ComputersScreen> {
           _settingsService.getServerStatus(),
         ]);
         final result = results[0] as Map<String, dynamic>;
-        final status = results[1] as Map<String, dynamic>;
         setState(() {
           _computers = result['computers'] ?? [];
           _currentServerTime = result['current_time'];
-          _serverEnabled = status['enabled'] as bool;
         });
       } else {
         setState(() {
           _computers = [];
           _currentServerTime = null;
-          _serverEnabled = false;
         });
       }
     } catch (e) {
@@ -76,11 +78,10 @@ class _ComputersScreenState extends State<ComputersScreen> {
         _isConnected = false;
         _computers = [];
         _currentServerTime = null;
-        _serverEnabled = false;
       });
 
       if (mounted) {
-        showTopSnackBar(
+        showSnackBarMessage(
           context,
           message: 'Error loading computers: $e',
           backgroundColor: Colors.red,
@@ -133,7 +134,7 @@ class _ComputersScreenState extends State<ComputersScreen> {
       });
 
       if (mounted) {
-        showTopSnackBar(
+        showSnackBarMessage(
           context,
           message: 'Computer #$computerId ${newBlocked ? 'blocked' : 'unblocked'}',
           backgroundColor: Colors.green,
@@ -141,7 +142,7 @@ class _ComputersScreenState extends State<ComputersScreen> {
       }
     } else {
       if (mounted) {
-        showTopSnackBar(
+        showSnackBarMessage(
           context,
           message: 'Failed to update computer status',
           backgroundColor: Colors.red,
@@ -176,7 +177,7 @@ class _ComputersScreenState extends State<ComputersScreen> {
     if (success) {
       await _updateServerTime();
       if (mounted) {
-        showTopSnackBar(
+        showSnackBarMessage(
           context,
           message: 'All computers unblocked',
           backgroundColor: Colors.green,
@@ -184,7 +185,7 @@ class _ComputersScreenState extends State<ComputersScreen> {
       }
     } else {
       if (mounted) {
-        showTopSnackBar(
+        showSnackBarMessage(
           context,
           message: 'Failed to unblock computers',
           backgroundColor: Colors.red,
@@ -220,7 +221,7 @@ class _ComputersScreenState extends State<ComputersScreen> {
     if (success) {
       await _updateServerTime();
       if (mounted) {
-        showTopSnackBar(
+        showSnackBarMessage(
           context,
           message: 'All computers blocked',
           backgroundColor: Colors.green,
@@ -228,7 +229,7 @@ class _ComputersScreenState extends State<ComputersScreen> {
       }
     } else {
       if (mounted) {
-        showTopSnackBar(
+        showSnackBarMessage(
           context,
           message: 'Failed to block computers',
           backgroundColor: Colors.red,
@@ -239,21 +240,15 @@ class _ComputersScreenState extends State<ComputersScreen> {
   }
 
   Future<void> _toggleServerStatus() async {
-    final newStatus = !_serverEnabled;
+    final newStatus = !_settingsService.serverEnabled;
     final success = await _settingsService.toggleServerStatus(newStatus);
 
-    if (success) {
-      setState(() {
-        _serverEnabled = newStatus;
-      });
-    } else {
-      if (mounted) {
-        showTopSnackBar(
-          context,
-          message: 'Failed to update server status',
-          backgroundColor: Colors.red,
-        );
-      }
+    if (!success && mounted) {
+      showSnackBarMessage(
+        context,
+        message: 'Failed to update server status',
+        backgroundColor: Colors.red,
+      );
     }
   }
 
@@ -441,10 +436,10 @@ class _ComputersScreenState extends State<ComputersScreen> {
             IconButton(
               onPressed: _toggleServerStatus,
               icon: Icon(
-                _serverEnabled ? Icons.shield : Icons.shield_outlined,
-                color: _serverEnabled ? Colors.green : Colors.orange,
+                _settingsService.serverEnabled ? Icons.shield : Icons.shield_outlined,
+                color: _settingsService.serverEnabled ? Colors.green : Colors.orange,
               ),
-              tooltip: _serverEnabled ? 'Disable server' : 'Enable server',
+              tooltip: _settingsService.serverEnabled ? 'Disable server' : 'Enable server',
             ),
         ],
       ),

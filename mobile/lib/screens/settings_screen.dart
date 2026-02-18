@@ -36,7 +36,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _version = info.version;
     } catch (e) {
       if (mounted) {
-        showTopSnackBar(
+        showSnackBarMessage(
           context,
           message: 'Error loading settings: $e',
           backgroundColor: Colors.red,
@@ -74,7 +74,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       await _settingsService.setToken(token.isEmpty ? null : token);
 
       if (mounted) {
-        showTopSnackBar(
+        showSnackBarMessage(
           context,
           message: 'Settings saved',
           backgroundColor: Colors.green,
@@ -82,7 +82,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       }
     } catch (e) {
       if (mounted) {
-        showTopSnackBar(
+        showSnackBarMessage(
           context,
           message: '$e',
           backgroundColor: Colors.red,
@@ -102,7 +102,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final serverAddress = _serverAddressController.text.trim();
 
     if (serverAddress.isEmpty) {
-      showTopSnackBar(
+      showSnackBarMessage(
         context,
         message: 'Please enter a server address first',
         backgroundColor: Colors.orange,
@@ -118,7 +118,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       final isConnected = await _settingsService.testConnection(serverAddress);
 
       if (mounted) {
-        showTopSnackBar(
+        showSnackBarMessage(
           context,
           message: isConnected
               ? 'Connection successful!'
@@ -128,7 +128,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       }
     } catch (e) {
       if (mounted) {
-        showTopSnackBar(
+        showSnackBarMessage(
           context,
           message: 'Connection test failed: $e',
           backgroundColor: Colors.red,

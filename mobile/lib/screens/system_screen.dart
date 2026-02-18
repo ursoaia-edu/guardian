@@ -16,12 +16,12 @@ class _SystemScreenState extends State<SystemScreen> {
   List<Map<String, dynamic>> _systems = [];
   bool _isLoading = true;
   bool _isConnected = false;
-  bool _serverEnabled = false;
 
   @override
   void initState() {
     super.initState();
     _settingsService.addListener(_onSettingsChanged);
+    _settingsService.serverEnabledNotifier.addListener(_onServerEnabledChanged);
     _loadData();
   }
 
@@ -29,9 +29,14 @@ class _SystemScreenState extends State<SystemScreen> {
     _loadData();
   }
 
+  void _onServerEnabledChanged() {
+    if (mounted) setState(() {});
+  }
+
   @override
   void dispose() {
     _settingsService.removeListener(_onSettingsChanged);
+    _settingsService.serverEnabledNotifier.removeListener(_onServerEnabledChanged);
     super.dispose();
   }
 
@@ -51,24 +56,20 @@ class _SystemScreenState extends State<SystemScreen> {
         ]);
         setState(() {
           _systems = results[0] as List<Map<String, dynamic>>;
-          final status = results[1] as Map<String, dynamic>;
-          _serverEnabled = status['enabled'] as bool;
         });
       } else {
         setState(() {
           _systems = [];
-          _serverEnabled = false;
         });
       }
     } catch (e) {
       setState(() {
         _isConnected = false;
         _systems = [];
-        _serverEnabled = false;
       });
 
       if (mounted) {
-        showTopSnackBar(
+        showSnackBarMessage(
           context,
           message: 'Error loading data: $e',
           backgroundColor: Colors.red,
@@ -123,7 +124,7 @@ class _SystemScreenState extends State<SystemScreen> {
       });
 
       if (mounted) {
-        showTopSnackBar(
+        showSnackBarMessage(
           context,
           message: '$name ${newStatus ? 'enabled' : 'disabled'}',
           backgroundColor: Colors.green,
@@ -131,7 +132,7 @@ class _SystemScreenState extends State<SystemScreen> {
       }
     } else {
       if (mounted) {
-        showTopSnackBar(
+        showSnackBarMessage(
           context,
           message: 'Failed to update status',
           backgroundColor: Colors.red,
@@ -244,21 +245,15 @@ class _SystemScreenState extends State<SystemScreen> {
   }
 
   Future<void> _toggleServerStatus() async {
-    final newStatus = !_serverEnabled;
+    final newStatus = !_settingsService.serverEnabled;
     final success = await _settingsService.toggleServerStatus(newStatus);
 
-    if (success) {
-      setState(() {
-        _serverEnabled = newStatus;
-      });
-    } else {
-      if (mounted) {
-        showTopSnackBar(
-          context,
-          message: 'Failed to update server status',
-          backgroundColor: Colors.red,
-        );
-      }
+    if (!success && mounted) {
+      showSnackBarMessage(
+        context,
+        message: 'Failed to update server status',
+        backgroundColor: Colors.red,
+      );
     }
   }
 
@@ -288,10 +283,10 @@ class _SystemScreenState extends State<SystemScreen> {
             IconButton(
               onPressed: _toggleServerStatus,
               icon: Icon(
-                _serverEnabled ? Icons.shield : Icons.shield_outlined,
-                color: _serverEnabled ? Colors.green : Colors.orange,
+                _settingsService.serverEnabled ? Icons.shield : Icons.shield_outlined,
+                color: _settingsService.serverEnabled ? Colors.green : Colors.orange,
               ),
-              tooltip: _serverEnabled ? 'Disable server' : 'Enable server',
+              tooltip: _settingsService.serverEnabled ? 'Disable server' : 'Enable server',
             ),
         ],
       ),

@@ -15,7 +15,6 @@ class _HomeScreenState extends State<HomeScreen> {
   final TextEditingController _addAppController = TextEditingController();
 
   List<Map<String, dynamic>> _allApps = [];
-  bool _serverEnabled = false;
   String _serverMode = 'blacklist';
   bool _isLoading = true;
   bool _isConnected = false;
@@ -33,11 +32,16 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _settingsService.addListener(_onSettingsChanged);
+    _settingsService.serverEnabledNotifier.addListener(_onServerEnabledChanged);
     _loadData();
   }
 
   void _onSettingsChanged() {
     _loadData();
+  }
+
+  void _onServerEnabledChanged() {
+    if (mounted) setState(() {});
   }
 
   Future<void> _loadData() async {
@@ -58,13 +62,11 @@ class _HomeScreenState extends State<HomeScreen> {
         setState(() {
           _allApps = results[0] as List<Map<String, dynamic>>;
           final status = results[1] as Map<String, dynamic>;
-          _serverEnabled = status['enabled'] as bool;
           _serverMode = status['mode'] as String;
         });
       } else {
         setState(() {
           _allApps = [];
-          _serverEnabled = false;
           _serverMode = 'blacklist';
         });
       }
@@ -72,12 +74,11 @@ class _HomeScreenState extends State<HomeScreen> {
       setState(() {
         _isConnected = false;
         _allApps = [];
-        _serverEnabled = false;
         _serverMode = 'blacklist';
       });
 
       if (mounted) {
-        showTopSnackBar(
+        showSnackBarMessage(
           context,
           message: 'Error loading data: $e',
           backgroundColor: Colors.red,
@@ -156,7 +157,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final appName = _addAppController.text.trim();
 
     if (appName.isEmpty) {
-      showTopSnackBar(
+      showSnackBarMessage(
         context,
         message: 'Please enter an application name',
         backgroundColor: Colors.orange,
@@ -165,7 +166,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     if (_allApps.any((app) => app['name'] == appName && app['mode'] == _serverMode)) {
-      showTopSnackBar(
+      showSnackBarMessage(
         context,
         message: 'Application is already in this mode',
         backgroundColor: Colors.orange,
@@ -184,7 +185,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     } else {
       if (mounted) {
-        showTopSnackBar(
+        showSnackBarMessage(
           context,
           message: 'Failed to add application',
           backgroundColor: Colors.red,
@@ -203,7 +204,7 @@ class _HomeScreenState extends State<HomeScreen> {
       });
 
       if (mounted) {
-        showTopSnackBar(
+        showSnackBarMessage(
           context,
           message: 'Removed "$appName"',
           backgroundColor: Colors.green,
@@ -211,7 +212,7 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     } else {
       if (mounted) {
-        showTopSnackBar(
+        showSnackBarMessage(
           context,
           message: 'Failed to remove application',
           backgroundColor: Colors.red,
@@ -237,7 +238,7 @@ class _HomeScreenState extends State<HomeScreen> {
       });
     } else {
       if (mounted) {
-        showTopSnackBar(
+        showSnackBarMessage(
           context,
           message: 'Failed to update application',
           backgroundColor: Colors.red,
@@ -278,7 +279,7 @@ class _HomeScreenState extends State<HomeScreen> {
         });
 
         if (mounted) {
-          showTopSnackBar(
+          showSnackBarMessage(
             context,
             message: 'All applications removed',
             backgroundColor: Colors.green,
@@ -286,7 +287,7 @@ class _HomeScreenState extends State<HomeScreen> {
         }
       } else {
         if (mounted) {
-          showTopSnackBar(
+          showSnackBarMessage(
             context,
             message: 'Failed to reset applications',
             backgroundColor: Colors.red,
@@ -298,29 +299,22 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _toggleServerStatus() async {
-    final newStatus = !_serverEnabled;
+    final newStatus = !_settingsService.serverEnabled;
     final success = await _settingsService.toggleServerStatus(newStatus);
 
-    if (success) {
-      setState(() {
-        _serverEnabled = newStatus;
-      });
-    } else {
-      if (mounted) {
-        showTopSnackBar(
-          context,
-          message: 'Failed to update server status',
-          backgroundColor: Colors.red,
-
-        );
-      }
+    if (!success && mounted) {
+      showSnackBarMessage(
+        context,
+        message: 'Failed to update server status',
+        backgroundColor: Colors.red,
+      );
     }
   }
 
   Future<void> _setMode(String mode) async {
     if (mode == _serverMode) return;
 
-    final success = await _settingsService.toggleServerStatus(_serverEnabled, mode: mode);
+    final success = await _settingsService.toggleServerStatus(_settingsService.serverEnabled, mode: mode);
 
     if (success) {
       setState(() {
@@ -328,7 +322,7 @@ class _HomeScreenState extends State<HomeScreen> {
       });
     } else {
       if (mounted) {
-        showTopSnackBar(
+        showSnackBarMessage(
           context,
           message: 'Failed to change mode',
           backgroundColor: Colors.red,
@@ -462,6 +456,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void dispose() {
     _settingsService.removeListener(_onSettingsChanged);
+    _settingsService.serverEnabledNotifier.removeListener(_onServerEnabledChanged);
     _addAppController.dispose();
     super.dispose();
   }
@@ -483,10 +478,10 @@ class _HomeScreenState extends State<HomeScreen> {
             IconButton(
               onPressed: _toggleServerStatus,
               icon: Icon(
-                _serverEnabled ? Icons.shield : Icons.shield_outlined,
-                color: _serverEnabled ? Colors.green : Colors.orange,
+                _settingsService.serverEnabled ? Icons.shield : Icons.shield_outlined,
+                color: _settingsService.serverEnabled ? Colors.green : Colors.orange,
               ),
-              tooltip: _serverEnabled ? 'Disable server' : 'Enable server',
+              tooltip: _settingsService.serverEnabled ? 'Disable server' : 'Enable server',
             ),
         ],
       ),
