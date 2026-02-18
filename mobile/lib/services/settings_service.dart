@@ -284,7 +284,7 @@ class SettingsService extends ChangeNotifier {
   }
 
   /// Updates an application's enabled status
-  Future<bool> updateApplicationStatus(String name, bool enabled) async {
+  Future<bool> updateApplicationStatus(String name, bool enabled, {String? mode}) async {
     final client = http.Client();
     try {
       final serverAddress = await getServerAddress();
@@ -293,11 +293,14 @@ class SettingsService extends ChangeNotifier {
         additionalHeaders: {'Content-Type': 'application/json'},
       );
 
+      final body = <String, dynamic>{'name': name, 'enabled': enabled};
+      if (mode != null) body['mode'] = mode;
+
       final response = await client
           .put(
             uri,
             headers: headers,
-            body: json.encode({'name': name, 'enabled': enabled}),
+            body: json.encode(body),
           )
           .timeout(const Duration(seconds: 10));
 
