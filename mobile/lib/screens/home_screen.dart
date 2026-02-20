@@ -467,11 +467,17 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppBar(
         title: const Text('Dashboard'),
         actions: [
-          if (_isConnected && _filteredApps.isNotEmpty)
-            IconButton(
-              onPressed: _resetApplications,
-              icon: const Icon(Icons.clear_all),
-              tooltip: 'Remove all',
+          if (_isConnected)
+            PopupMenuButton<String>(
+              onSelected: (value) {
+                if (value == 'remove_all') _resetApplications();
+              },
+              itemBuilder: (context) => [
+                const PopupMenuItem(
+                  value: 'remove_all',
+                  child: Text('Remove All'),
+                ),
+              ],
             ),
           IconButton(onPressed: _loadData, icon: const Icon(Icons.refresh)),
           if (_isConnected)
