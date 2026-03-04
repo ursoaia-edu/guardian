@@ -1,10 +1,10 @@
 <div align="center">
 
 <p align="center">
-  <img src="docs/guardian-mark.png" alt="Guardian" width="130">
+  <img src="docs/assets/guardian-mark.png" alt="Guardian" width="130">
 </p>
 
-<img src="docs/guardian-banner.png" alt="Guardian shield" />
+<img src="docs/assets/guardian-banner.png" alt="Guardian shield" />
 
 
 **Process monitoring and control system — block or whitelist applications across Windows machines, manage them remotely from an Android app, all coordinated through a central server.**

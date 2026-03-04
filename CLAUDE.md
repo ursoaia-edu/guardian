@@ -58,12 +58,12 @@ cd mobile && flutter pub run flutter_launcher_icons
 - 4 screens: `HomeScreen` (blocked apps), `SystemScreen`, `ComputersScreen`, `SettingsScreen`
 - `SettingsService` handles all HTTP calls and local persistence via `shared_preferences`
 
-### Landing page (`site/`)
-- Static marketing landing page — single self-contained `site/index.html`
+### Landing page (`docs/`)
+- Static marketing landing page — single self-contained `docs/index.html`
 - Styled with Tailwind via CDN (config inlined in a `<script>`), fonts from Google Fonts (Space Grotesk / Inter / JetBrains Mono)
 - Dark "terminal" aesthetic with an animated "fleet console" hero (vanilla JS, respects `prefers-reduced-motion`)
-- Brand assets in `site/assets/` (copied from `docs/`); ready to deploy on GitHub Pages or any static host
-- Preview locally: `cd site && python3 -m http.server 8099` → http://localhost:8099
+- Brand assets in `docs/assets/` (also used by `README.md`); served directly via GitHub Pages from the `docs/` folder
+- Preview locally: `cd docs && python3 -m http.server 8099` → http://localhost:8099
 
 ### API Endpoints
 - `/client/sync` — agent fetches apps, mode, and client entries (TOKEN auth)
