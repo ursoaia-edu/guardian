@@ -97,10 +97,18 @@ func updateBlockedApplications(serverAddress string, blocked *[]string) {
 	for {
 		apps, err := fetchBlockedApplications(serverAddress)
 		if err != nil {
-			log.Printf("Failed to fetch blocked applications: %v. Using empty list.", err)
-			*blocked = []string{} // Use empty list when server is unavailable
+			log.Printf("Failed to fetch blocked applications: %v. Loading from apps.txt.", err)
+			if cached, loadErr := loadAppsFromFile(); loadErr == nil {
+				*blocked = cached
+				log.Printf("Loaded %d applications from apps.txt", len(cached))
+			} else {
+				log.Printf("Could not load apps.txt: %v", loadErr)
+			}
 		} else {
 			*blocked = apps
+			if err := saveAppsToFile(apps); err != nil {
+				log.Printf("Failed to save apps.txt: %v", err)
+			}
 			if len(apps) > 0 {
 				log.Printf("Updated blocked applications: %v", apps)
 			} else {
@@ -205,10 +213,19 @@ func runConsole() {
 	// Initial fetch (don't wait 60 seconds for first fetch)
 	apps, err := fetchBlockedApplications(serverAddress)
 	if err != nil {
-		log.Printf("Initial fetch failed: %v. Starting with empty list.", err)
-		blocked = []string{}
+		log.Printf("Initial fetch failed: %v. Loading from apps.txt.", err)
+		if cached, loadErr := loadAppsFromFile(); loadErr == nil {
+			blocked = cached
+			log.Printf("Loaded %d applications from apps.txt", len(cached))
+		} else {
+			log.Printf("Could not load apps.txt: %v. Starting with empty list.", loadErr)
+			blocked = []string{}
+		}
 	} else {
 		blocked = apps
+		if err := saveAppsToFile(apps); err != nil {
+			log.Printf("Failed to save apps.txt: %v", err)
+		}
 		if len(apps) > 0 {
 			log.Printf("Initial blocked applications: %v", apps)
 		} else {
@@ -267,6 +284,24 @@ func getProcessList() (string, error) {
 	default:
 		return "", fmt.Errorf("unsupported operating system: %s", runtime.GOOS)
 	}
+}
+
+// saveAppsToFile saves the blocked applications list to apps.txt
+func saveAppsToFile(apps []string) error {
+	return os.WriteFile("apps.txt", []byte(strings.Join(apps, "\n")), 0644)
+}
+
+// loadAppsFromFile loads the blocked applications list from apps.txt
+func loadAppsFromFile() ([]string, error) {
+	data, err := os.ReadFile("apps.txt")
+	if err != nil {
+		return nil, err
+	}
+	content := strings.TrimSpace(string(data))
+	if content == "" {
+		return []string{}, nil
+	}
+	return strings.Split(content, "\n"), nil
 }
 
 // killProcess terminates a process by name based on the operating system
