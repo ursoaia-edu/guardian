@@ -59,6 +59,7 @@ class _MainNavigationState extends State<MainNavigation> with WidgetsBindingObse
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _settingsService.addListener(_checkPowerStatus);
     _checkPowerStatus();
     // Check power status every 10 seconds
     _statusTimer = Timer.periodic(const Duration(seconds: 10), (_) {
@@ -68,6 +69,7 @@ class _MainNavigationState extends State<MainNavigation> with WidgetsBindingObse
 
   @override
   void dispose() {
+    _settingsService.removeListener(_checkPowerStatus);
     WidgetsBinding.instance.removeObserver(this);
     _statusTimer?.cancel();
     super.dispose();
@@ -83,7 +85,7 @@ class _MainNavigationState extends State<MainNavigation> with WidgetsBindingObse
 
   Future<void> _checkPowerStatus() async {
     try {
-      final systems = await _settingsService.getSystemData();
+      final systems = await _settingsService.getClientData();
       final powerSystem = systems.firstWhere(
         (system) => system['name'] == 'power',
         orElse: () => {'name': 'power', 'status': true},

@@ -74,7 +74,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             duration: Duration(milliseconds: 500),
-            content: Text('Settings saved successfully'),
+            content: Text('Settings saved'),
             backgroundColor: Colors.green,
           ),
         );
