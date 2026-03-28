@@ -15,7 +15,6 @@ class _SystemScreenState extends State<SystemScreen> {
   List<Map<String, dynamic>> _systems = [];
   bool _isLoading = true;
   bool _isConnected = false;
-  String _serverAddress = '';
 
   @override
   void initState() {
@@ -40,16 +39,11 @@ class _SystemScreenState extends State<SystemScreen> {
     });
 
     try {
-      // Load server address
-      _serverAddress = await _settingsService.getServerAddress();
-
-      // Test connection
-      _isConnected = await _settingsService.testConnection(_serverAddress);
+      final serverAddress = await _settingsService.getServerAddress();
+      _isConnected = await _settingsService.testConnection(serverAddress);
 
       if (_isConnected) {
-        // Load client data
         final systems = await _settingsService.getClientData();
-
         setState(() {
           _systems = systems;
         });
@@ -67,7 +61,8 @@ class _SystemScreenState extends State<SystemScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error loading client data: $e'),
+            duration: const Duration(seconds: 3),
+            content: Text('Error loading data: $e'),
             backgroundColor: Colors.red,
           ),
         );
@@ -82,10 +77,34 @@ class _SystemScreenState extends State<SystemScreen> {
   Future<void> _toggleSystemStatus(String name, bool currentStatus) async {
     final newStatus = !currentStatus;
 
+    // Confirmation for dangerous actions (e.g. disabling power)
+    if (name == 'power' && !newStatus) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Disable Power?'),
+          content: const Text(
+            'This will trigger a shutdown on connected computers.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              style: TextButton.styleFrom(foregroundColor: Colors.red),
+              child: const Text('Disable'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true) return;
+    }
+
     final success = await _settingsService.updateClientStatus(name, newStatus);
 
     if (success) {
-      // Update local state
       setState(() {
         final systemIndex = _systems.indexWhere(
           (system) => system['name'] == name,
@@ -98,7 +117,7 @@ class _SystemScreenState extends State<SystemScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            duration: const Duration(milliseconds: 500),
+            duration: const Duration(seconds: 2),
             content: Text('$name ${newStatus ? 'enabled' : 'disabled'}'),
             backgroundColor: Colors.green,
           ),
@@ -108,10 +127,8 @@ class _SystemScreenState extends State<SystemScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            duration: Duration(milliseconds: 500),
-            content: Text(
-              'Failed to update status. Check server connection.',
-            ),
+            duration: Duration(seconds: 3),
+            content: Text('Failed to update status'),
             backgroundColor: Colors.red,
           ),
         );
@@ -119,64 +136,65 @@ class _SystemScreenState extends State<SystemScreen> {
     }
   }
 
-  Widget _buildSystemsList() {
-    if (!_isConnected) {
-      return Card(
-        child: SizedBox(
-          width: double.infinity,
-          child: Padding(
-            padding: const EdgeInsets.all(24.0),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.cloud_off, size: 64, color: Colors.grey.shade400),
-                const SizedBox(height: 16),
-                const Text(
-                  'Server Not Connected',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  'Please check your server settings and connection',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.grey),
-                ),
-              ],
-            ),
+  Widget _buildDisconnected() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.cloud_off, size: 72, color: Colors.grey.shade400),
+          const SizedBox(height: 16),
+          const Text(
+            'Server Not Connected',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
           ),
-        ),
-      );
-    }
-
-    if (_systems.isEmpty) {
-      return Card(
-        child: SizedBox(
-          width: double.infinity,
-          child: Padding(
-            padding: const EdgeInsets.all(24.0),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.settings, size: 64, color: Colors.blue.shade400),
-                const SizedBox(height: 16),
-                const Text(
-                  'No Client Entries',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  'No client entries available on the server',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.grey),
-                ),
-              ],
-            ),
+          const SizedBox(height: 8),
+          const Text(
+            'Check your server settings and connection',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.grey),
           ),
-        ),
-      );
-    }
+          const SizedBox(height: 24),
+          OutlinedButton.icon(
+            onPressed: _loadData,
+            icon: const Icon(Icons.refresh),
+            label: const Text('Retry'),
+          ),
+        ],
+      ),
+    );
+  }
 
-    return ListView.builder(
+  Widget _buildEmpty() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.settings, size: 72, color: Colors.grey.shade300),
+          const SizedBox(height: 16),
+          const Text(
+            'No Client Entries',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'No entries available on the server',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.grey),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSystemGrid() {
+    return GridView.builder(
+      padding: const EdgeInsets.all(16),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2,
+        crossAxisSpacing: 12,
+        mainAxisSpacing: 12,
+        childAspectRatio: 1.2,
+      ),
       itemCount: _systems.length,
       itemBuilder: (context, index) {
         final system = _systems[index];
@@ -186,17 +204,30 @@ class _SystemScreenState extends State<SystemScreen> {
         return GestureDetector(
           onTap: () => _toggleSystemStatus(name, status),
           child: Card(
+            elevation: 2,
             color: status ? Colors.green.shade600 : Colors.red.shade600,
             child: Padding(
-              padding: const EdgeInsets.all(24.0),
+              padding: const EdgeInsets.all(16.0),
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(_getSystemIcon(name), size: 48, color: Colors.white),
-                  const SizedBox(height: 8),
+                  Icon(_getSystemIcon(name), size: 40, color: Colors.white),
+                  const SizedBox(height: 10),
+                  Text(
+                    name[0].toUpperCase() + name.substring(1),
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.white,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
                   Text(
                     status ? 'Enabled' : 'Disabled',
-                    style: const TextStyle(fontSize: 14, color: Colors.white),
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.white.withValues(alpha: 0.8),
+                    ),
                   ),
                 ],
               ),
@@ -233,79 +264,19 @@ class _SystemScreenState extends State<SystemScreen> {
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
-          : RefreshIndicator(
-              onRefresh: _loadData,
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Connection Status Card
-                    Card(
-                      color: _isConnected
-                          ? Colors.green.shade50
-                          : Colors.red.shade50,
-                      child: Padding(
-                        padding: const EdgeInsets.all(16.0),
-                        child: Row(
-                          children: [
-                            Icon(
-                              _isConnected ? Icons.wifi : Icons.wifi_off,
-                              color: _isConnected ? Colors.green : Colors.red,
-                              size: 32,
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    _isConnected
-                                        ? 'Server Connected'
-                                        : 'Server Disconnected',
-                                    style: TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.bold,
-                                      color: _isConnected
-                                          ? Colors.green.shade700
-                                          : Colors.red.shade700,
-                                    ),
-                                  ),
-                                  Text(
-                                    _serverAddress,
-                                    style: const TextStyle(
-                                      fontSize: 14,
-                                      color: Colors.grey,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-
-                    const SizedBox(height: 24),
-
-                    // System Controls Header
-                    if (_isConnected) ...[
-                      const Text(
-                        'System Controls',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                    ],
-
-                    // Systems List - takes remaining space
-                    Expanded(child: _buildSystemsList()),
-                  ],
+          : !_isConnected
+              ? _buildDisconnected()
+              : RefreshIndicator(
+                  onRefresh: _loadData,
+                  child: _systems.isEmpty
+                      ? ListView(children: [
+                          SizedBox(
+                            height: MediaQuery.of(context).size.height * 0.6,
+                            child: _buildEmpty(),
+                          ),
+                        ])
+                      : _buildSystemGrid(),
                 ),
-              ),
-            ),
     );
   }
 }
