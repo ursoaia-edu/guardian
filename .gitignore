@@ -3,9 +3,5 @@ release/
 .idea/
 deploy.sh
 build/
-procsentinel.db
-procsentinel
-procsentinel-server
 guardian.db
-guardian
-guardian-server
+
