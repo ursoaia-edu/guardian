@@ -15,4 +15,4 @@ cp guardian-server ../dist/
 # mkdir -p ../dist
 # cp install.sh ../dist/
 # mv "$TAR_FILE" ../dist/
-# rm guardian-server
+rm guardian-server
