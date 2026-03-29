@@ -157,11 +157,11 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
 
-    if (_allApps.any((app) => app['name'] == appName)) {
+    if (_allApps.any((app) => app['name'] == appName && app['mode'] == _serverMode)) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           duration: Duration(seconds: 2),
-          content: Text('Application is already in the list'),
+          content: Text('Application is already in this mode'),
           backgroundColor: Colors.orange,
         ),
       );
@@ -199,12 +199,13 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<void> _removeApplication(String appName) async {
-    final success = await _settingsService.removeBlockedApplication(appName);
+  Future<void> _removeApplication(String appName, {String? mode}) async {
+    final success = await _settingsService.removeBlockedApplication(appName, mode: mode);
 
     if (success) {
       setState(() {
-        _allApps.removeWhere((app) => app['name'] == appName);
+        _allApps.removeWhere((app) =>
+            app['name'] == appName && (mode == null || app['mode'] == mode));
       });
 
       if (mounted) {
@@ -424,7 +425,7 @@ class _HomeScreenState extends State<HomeScreen> {
         final enabled = app['enabled'] as bool;
         final mode = (app['mode'] as String?) ?? 'blacklist';
         return Dismissible(
-          key: Key(appName),
+          key: Key('$appName:$mode'),
           direction: DismissDirection.endToStart,
           confirmDismiss: (_) async {
             return await showDialog<bool>(
@@ -445,7 +446,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             );
           },
-          onDismissed: (_) => _removeApplication(appName),
+          onDismissed: (_) => _removeApplication(appName, mode: mode),
           background: Container(
             alignment: Alignment.centerRight,
             padding: const EdgeInsets.only(right: 20),
