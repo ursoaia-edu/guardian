@@ -99,14 +99,14 @@ func (s *Server) handleAddApplication(w http.ResponseWriter, r *http.Request) {
 
 	// Reload from DB to get the ID
 	var app Application
-	err := s.db.QueryRow("SELECT id, name, enabled, mode FROM applications WHERE name = ?", req.Name).
+	err := s.db.QueryRow("SELECT id, name, enabled, mode FROM applications WHERE name = ? AND mode = ?", req.Name, req.Mode).
 		Scan(&app.ID, &app.Name, &app.Enabled, &app.Mode)
 	if err != nil {
 		slog.Error("failed to read back application", "name", req.Name, "error", err)
 		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "Failed to read back application"})
 		return
 	}
-	s.appsCache[app.Name] = app
+	s.appsCache[appCacheKey(app.Name, app.Mode)] = app
 
 	slog.Info("application added", "name", req.Name, "mode", req.Mode)
 	writeJSON(w, http.StatusCreated, map[string]string{"message": fmt.Sprintf("Application '%s' added", req.Name)})
@@ -149,17 +149,31 @@ func (s *Server) handleUpdateApplication(w http.ResponseWriter, r *http.Request)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if _, exists := s.appsCache[req.Name]; !exists {
+	// Find the app by name — if mode is specified, match exactly; otherwise find any
+	var cacheKey string
+	if req.Mode != "" {
+		cacheKey = appCacheKey(req.Name, req.Mode)
+	} else {
+		// Search for any app with this name
+		for key, app := range s.appsCache {
+			if app.Name == req.Name {
+				cacheKey = key
+				break
+			}
+		}
+	}
+	if cacheKey == "" {
+		writeJSON(w, http.StatusNotFound, ErrorResponse{Error: fmt.Sprintf("Application '%s' not found", req.Name)})
+		return
+	}
+	if _, exists := s.appsCache[cacheKey]; !exists {
 		writeJSON(w, http.StatusNotFound, ErrorResponse{Error: fmt.Sprintf("Application '%s' not found", req.Name)})
 		return
 	}
 
+	app := s.appsCache[cacheKey]
 	var err error
-	if req.Mode != "" {
-		_, err = s.db.Exec("UPDATE applications SET enabled = ?, mode = ? WHERE name = ?", enabledInt, req.Mode, req.Name)
-	} else {
-		_, err = s.db.Exec("UPDATE applications SET enabled = ? WHERE name = ?", enabledInt, req.Name)
-	}
+	_, err = s.db.Exec("UPDATE applications SET enabled = ? WHERE name = ? AND mode = ?", enabledInt, app.Name, app.Mode)
 	if err != nil {
 		slog.Error("failed to update application", "name", req.Name, "error", err)
 		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "Failed to update database"})
@@ -167,12 +181,8 @@ func (s *Server) handleUpdateApplication(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Update cache
-	app := s.appsCache[req.Name]
 	app.Enabled = enabledInt == 1
-	if req.Mode != "" {
-		app.Mode = req.Mode
-	}
-	s.appsCache[req.Name] = app
+	s.appsCache[cacheKey] = app
 
 	slog.Info("application updated", "name", req.Name, "enabled", enabledInt, "mode", req.Mode)
 	writeJSON(w, http.StatusOK, map[string]string{"message": fmt.Sprintf("Application '%s' updated", req.Name)})
@@ -181,6 +191,7 @@ func (s *Server) handleUpdateApplication(w http.ResponseWriter, r *http.Request)
 func (s *Server) handleRemoveApplication(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name string `json:"name"`
+		Mode string `json:"mode"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "Invalid JSON"})
@@ -195,19 +206,40 @@ func (s *Server) handleRemoveApplication(w http.ResponseWriter, r *http.Request)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if _, exists := s.appsCache[req.Name]; !exists {
-		writeJSON(w, http.StatusNotFound, ErrorResponse{Error: fmt.Sprintf("Application '%s' not found", req.Name)})
-		return
+	if req.Mode != "" {
+		// Remove specific name+mode entry
+		key := appCacheKey(req.Name, req.Mode)
+		if _, exists := s.appsCache[key]; !exists {
+			writeJSON(w, http.StatusNotFound, ErrorResponse{Error: fmt.Sprintf("Application '%s' not found", req.Name)})
+			return
+		}
+		if _, err := s.db.Exec("DELETE FROM applications WHERE name = ? AND mode = ?", req.Name, req.Mode); err != nil {
+			slog.Error("failed to remove application", "name", req.Name, "error", err)
+			writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "Failed to remove from database"})
+			return
+		}
+		delete(s.appsCache, key)
+	} else {
+		// Remove all entries with this name (any mode)
+		found := false
+		for key, app := range s.appsCache {
+			if app.Name == req.Name {
+				delete(s.appsCache, key)
+				found = true
+			}
+		}
+		if !found {
+			writeJSON(w, http.StatusNotFound, ErrorResponse{Error: fmt.Sprintf("Application '%s' not found", req.Name)})
+			return
+		}
+		if _, err := s.db.Exec("DELETE FROM applications WHERE name = ?", req.Name); err != nil {
+			slog.Error("failed to remove application", "name", req.Name, "error", err)
+			writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "Failed to remove from database"})
+			return
+		}
 	}
 
-	if err := s.removeApplicationFromDatabase(req.Name); err != nil {
-		slog.Error("failed to remove application", "name", req.Name, "error", err)
-		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "Failed to remove from database"})
-		return
-	}
-	delete(s.appsCache, req.Name)
-
-	slog.Info("application removed", "name", req.Name)
+	slog.Info("application removed", "name", req.Name, "mode", req.Mode)
 	writeJSON(w, http.StatusOK, map[string]string{"message": fmt.Sprintf("Application '%s' removed", req.Name)})
 }
 

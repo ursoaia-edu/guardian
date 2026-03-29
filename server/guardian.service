@@ -1,0 +1,13 @@
+[Unit]
+Description=Guardian Server
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/guardian/guardian-server
+WorkingDirectory=/usr/local/bin/guardian
+Restart=always
+RestartSec=5
+User=root
+
+[Install]
+WantedBy=multi-user.target

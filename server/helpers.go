@@ -4,14 +4,16 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 )
+
+func appCacheKey(name, mode string) string {
+	return name + ":" + mode
+}
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
@@ -80,38 +82,3 @@ func loadEnvFile(filename string) error {
 	return scanner.Err()
 }
 
-func getWebDir() string {
-	if dir := os.Getenv("WEB_DIR"); dir != "" {
-		return dir
-	}
-	return "web"
-}
-
-func serveStaticFiles() http.Handler {
-	webDir := getWebDir()
-	absWebDir, err := filepath.Abs(webDir)
-	if err != nil {
-		log.Printf("Warning: Could not resolve absolute path for web directory: %v", err)
-		absWebDir = webDir
-	}
-
-	if _, err := os.Stat(absWebDir); os.IsNotExist(err) {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "text/html")
-			w.WriteHeader(http.StatusNotFound)
-			w.Write([]byte(`<!DOCTYPE html><html><head><title>ProcSentinel</title></head><body>
-				<h1>ProcSentinel Server</h1>
-				<p>Web interface not available. Build the Flutter web app first.</p>
-				<h2>API Endpoints:</h2>
-				<ul>
-					<li>/client/applications</li>
-					<li>/status</li>
-					<li>/info</li>
-					<li>/health</li>
-				</ul>
-			</body></html>`))
-		})
-	}
-
-	return http.FileServer(http.Dir(absWebDir))
-}

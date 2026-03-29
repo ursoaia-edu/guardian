@@ -22,12 +22,13 @@ func (s *Server) initDatabase() error {
 		{"applications", `
 			CREATE TABLE IF NOT EXISTS applications (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
-				name TEXT UNIQUE NOT NULL,
+				name TEXT NOT NULL,
 				enabled BOOLEAN NOT NULL DEFAULT 1,
 				mode TEXT NOT NULL DEFAULT 'blacklist',
-				created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+				created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+				UNIQUE(name, mode)
 			);
-			CREATE INDEX IF NOT EXISTS idx_apps_name ON applications(name, enabled);
+			CREATE INDEX IF NOT EXISTS idx_apps_name_mode ON applications(name, mode);
 		`},
 		{"server", `
 			CREATE TABLE IF NOT EXISTS server (
@@ -64,7 +65,61 @@ func (s *Server) initDatabase() error {
 			return fmt.Errorf("failed to create %s table: %v", stmt.label, err)
 		}
 	}
+
+	// Migrate: if applications table has old UNIQUE(name) constraint, recreate it
+	s.migrateApplicationsTable()
+
 	return nil
+}
+
+func (s *Server) migrateApplicationsTable() {
+	// Check if the old unique index on name only exists
+	var indexSQL string
+	err := s.db.QueryRow("SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_apps_name'").Scan(&indexSQL)
+	if err != nil {
+		// Old index doesn't exist — no migration needed
+		return
+	}
+
+	slog.Info("migrating applications table: UNIQUE(name) -> UNIQUE(name, mode)")
+
+	// Recreate table with new constraint
+	tx, err := s.db.Begin()
+	if err != nil {
+		slog.Error("migration: failed to begin transaction", "error", err)
+		return
+	}
+
+	migrations := []string{
+		"ALTER TABLE applications RENAME TO applications_old",
+		`CREATE TABLE applications (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			name TEXT NOT NULL,
+			enabled BOOLEAN NOT NULL DEFAULT 1,
+			mode TEXT NOT NULL DEFAULT 'blacklist',
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(name, mode)
+		)`,
+		"INSERT INTO applications (id, name, enabled, mode, created_at) SELECT id, name, enabled, mode, created_at FROM applications_old",
+		"DROP TABLE applications_old",
+		"DROP INDEX IF EXISTS idx_apps_name",
+		"CREATE INDEX IF NOT EXISTS idx_apps_name_mode ON applications(name, mode)",
+	}
+
+	for _, sql := range migrations {
+		if _, err := tx.Exec(sql); err != nil {
+			slog.Error("migration failed, rolling back", "sql", sql, "error", err)
+			tx.Rollback()
+			return
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		slog.Error("migration: failed to commit", "error", err)
+		return
+	}
+
+	slog.Info("migration complete: applications table updated")
 }
 
 func (s *Server) loadFromDatabase() error {
@@ -84,7 +139,7 @@ func (s *Server) loadFromDatabase() error {
 		if err := rows.Scan(&app.ID, &app.Name, &app.Enabled, &app.Mode); err != nil {
 			return fmt.Errorf("failed to scan application: %v", err)
 		}
-		s.appsCache[app.Name] = app
+		s.appsCache[appCacheKey(app.Name, app.Mode)] = app
 	}
 
 	// Load server status
@@ -119,19 +174,6 @@ func (s *Server) loadFromDatabase() error {
 		"client_entries", len(s.clientCache),
 		"enabled", s.enabledCache,
 	)
-	return nil
-}
-
-func (s *Server) forceDisableOnStartup() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	s.enabledCache = false
-	if err := s.saveStatusToDatabase(false, s.modeCache); err != nil {
-		return fmt.Errorf("failed to set startup status to disabled: %v", err)
-	}
-
-	slog.Info("server status forced to disabled on startup")
 	return nil
 }
 

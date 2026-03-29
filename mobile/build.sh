@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-mkdir -p ../release
+mkdir -p ../dist
 flutter clean
 
 flutter build apk --release
-cp build/app/outputs/flutter-apk/app-release.apk ../release/guardian.apk
+cp build/app/outputs/flutter-apk/app-release.apk ../dist/guardian.apk
 
 # flutter build web --release
 # cp -r build/web ../bin/web
