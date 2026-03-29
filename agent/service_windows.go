@@ -146,7 +146,7 @@ func runAgent(stopCh <-chan bool) {
 	}
 
 	// Main process monitoring loop
-	ticker := time.NewTicker(1 * time.Second)
+	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 
 	for {

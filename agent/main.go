@@ -243,12 +243,17 @@ func runConsole() {
 	// Main process monitoring loop
 	for {
 		if state == nil {
-			time.Sleep(1 * time.Second)
+			time.Sleep(time.Second)
+			continue
+		}
+
+		if state.Mode == "free" {
+			time.Sleep(time.Second)
 			continue
 		}
 
 		if len(state.Applications) == 0 && state.Mode != "whitelist" {
-			time.Sleep(1 * time.Second)
+			time.Sleep(time.Second)
 			continue
 		}
 
@@ -311,7 +316,7 @@ func runConsole() {
 			}
 		}
 
-		time.Sleep(1 * time.Second)
+		time.Sleep(time.Second)
 	}
 }
 
