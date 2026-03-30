@@ -1,0 +1,7 @@
+*.sh text eol=lf
+
+# Ensure scripts and binaries are executable on Linux
+server/build.sh filter= diff= merge= text eol=lf
+mobile/build.sh filter= diff= merge= text eol=lf
+dist/server/install.sh filter= diff= merge= text eol=lf
+dist/server/guardian-server binary
