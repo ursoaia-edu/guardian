@@ -4,6 +4,32 @@ Process monitoring and control system. Block or whitelist applications across Wi
 
 ## Quick Start
 
+Pre-built binaries are available in the `dist/` directory:
+
+```
+dist/
+├── server/
+│   ├── guardian-server              # Server binary (Linux)
+│   ├── server.env                   # Server config template
+│   ├── guardian-server.service      # Systemd unit file
+│   ├── install.sh                   # Install script
+│   ├── Dockerfile                   # Docker image
+│   └── docker-compose.yml           # Docker Compose config
+├── guardian.apk                     # Mobile app (Android)
+└── agent/
+    ├── agent.env                    # Agent config template
+    ├── Install-Guardian.bat         # Auto-detect arch and install agent
+    ├── Uninstall-Guardian.bat       # Auto-detect arch and uninstall agent
+    └── bin/
+        ├── Install-Agent64.ps1
+        ├── Install-Agent32.ps1
+        ├── Uninstall-Agent64.ps1
+        ├── Uninstall-Agent32.ps1
+        └── agent/
+            ├── procsentinel-agent64.exe
+            └── procsentinel-agent32.exe
+```
+
 ### 1. Server (Linux)
 
 Copy the `dist/server/` folder to your server. Rename the env file and configure it:
@@ -55,32 +81,6 @@ To uninstall, double-click `Uninstall-Guardian.bat`.
 ### 3. Mobile App (Android)
 
 Install `guardian.apk` on your Android device. Open the app, go to Settings, and configure the server address and admin token.
-
-Pre-built binaries are available in the `dist/` directory:
-
-```
-dist/
-├── server/
-│   ├── guardian-server              # Server binary (Linux)
-│   ├── server.env                  # Server config template
-│   ├── guardian-server.service      # Systemd unit file
-│   ├── install.sh                   # Install script
-│   ├── Dockerfile                   # Docker image
-│   └── docker-compose.yml           # Docker Compose config
-├── guardian.apk                     # Mobile app (Android)
-└── agent/
-    ├── agent.env                    # Agent config template
-    ├── Install-Guardian.bat         # Auto-detect arch and install agent
-    ├── Uninstall-Guardian.bat       # Auto-detect arch and uninstall agent
-    └── bin/
-        ├── Install-Agent64.ps1
-        ├── Install-Agent32.ps1
-        ├── Uninstall-Agent64.ps1
-        ├── Uninstall-Agent32.ps1
-        └── agent/
-            ├── procsentinel-agent64.exe
-            └── procsentinel-agent32.exe
-```
 
 ## Architecture
 
