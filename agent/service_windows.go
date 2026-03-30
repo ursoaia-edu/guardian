@@ -298,15 +298,21 @@ func installService() error {
 
 // shutdownPCService initiates shutdown with service event logging
 func shutdownPCService() error {
-	elog.Info(1, "start: attempting privilege enable + shutdown")
+	if elog != nil {
+		elog.Info(1, "start: attempting privilege enable + shutdown")
+	}
 
 	// Call the main shutdownPC function which does the actual work
 	if err := shutdownPC(); err != nil {
-		elog.Error(1, fmt.Sprintf("Shutdown failed: %v", err))
+		if elog != nil {
+			elog.Error(1, fmt.Sprintf("Shutdown failed: %v", err))
+		}
 		return err
 	}
 
-	elog.Info(1, "Shutdown initiated successfully")
+	if elog != nil {
+		elog.Info(1, "Shutdown initiated successfully")
+	}
 	return nil
 }
 
