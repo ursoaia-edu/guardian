@@ -1,6 +1,6 @@
 go build -o guardian-server
 
-cp guardian-server ../dist/
+cp guardian-server ../dist/server/
 
 
 # TAR_FILE="guardian-server.tar.gz"
