@@ -7,8 +7,9 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 mkdir -p /usr/local/bin/guardian
-cp server.env -C /usr/local/bin/guardian/.env
-cp /usr/local/bin/guardian/guardian-server.service /etc/systemd/system/guardian-server.service
+cp server.env /usr/local/bin/guardian/.env
+cp guardian-server /usr/local/bin/guardian/guardian-server
+cp guardian-server.service /etc/systemd/system/guardian-server.service
 systemctl daemon-reload
 systemctl enable guardian-server
 systemctl start guardian-server
