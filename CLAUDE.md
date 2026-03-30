@@ -18,8 +18,8 @@ cd server && ./build.sh        # Builds binary and creates ../release/procsentin
 
 ### Agent (Windows, requires PowerShell)
 ```powershell
-./agent/build64.ps1            # 64-bit build → dist/bin/agent/procsentinel-agent64.exe
-./agent/build32.ps1            # 32-bit build → dist/bin/agent/procsentinel-agent32.exe
+./agent/build64.ps1            # 64-bit build → dist/agent/bin/agent/procsentinel-agent64.exe
+./agent/build32.ps1            # 32-bit build → dist/agent/bin/agent/procsentinel-agent32.exe
 ```
 
 ### Mobile
@@ -34,15 +34,21 @@ cd mobile && flutter pub run flutter_launcher_icons
 
 ## Architecture
 
-### Server (`server/main.go` — single-file monolith)
-- All logic in one ~1200-line file: HTTP handlers, SQLite schema, caching, auth
-- `Server` struct holds DB connection, in-memory caches (`blockedAppsCache`, `enabledCache`, `systemCache`), and a `sync.RWMutex`
+### Server (`server/` — multi-file Go package, ~1000 lines total)
+- `main.go` — Server struct, startup, graceful shutdown
+- `routes.go` — chi router setup with CORS, route groups (unauthenticated, client auth, admin auth)
+- `handlers.go` — all HTTP handler methods
+- `db.go` — SQLite database init, migrations, CRUD operations, cache loading
+- `models.go` — request/response structs (Application, Computer, ClientEntry, etc.)
+- `middleware.go` — Bearer token auth middleware (ClientAuth, AdminAuth)
+- `helpers.go` — utility functions (JSON writing, env file loading, IP detection)
+- `Server` struct holds DB connection and in-memory caches (`appsCache`, `enabledCache`, `modeCache`, `clientCache`) with a `sync.RWMutex`
+- Uses `go-chi/chi` router and `modernc.org/sqlite` (pure Go, no CGO required)
 - Two auth tiers via Bearer tokens: `TOKEN` (client/agent endpoints) and `ADMIN_TOKEN` (management endpoints)
-- Server auto-disables itself on startup (safety measure)
-- SQLite tables: `blocked_applications`, `server_status`, `system`, `computers`
+- SQLite tables: `applications`, `server`, `client`, `computers`
 
 ### Agent (`agent/main.go` + platform-specific files)
-- Polls server every 10s for blocked app list, checks processes every 1s
+- Polls server via `/client/sync` (10s console mode, 20s service mode configurable via `CHECK_INTERVAL`), checks processes every 1s
 - Platform-specific process listing/killing: `tasklist`/`taskkill` on Windows, `ps`/`pkill` on Unix
 - Windows service support via `service_windows.go`, `shutdown_windows.go`, `main_windows.go`
 - Non-Windows stubs: `main_stub.go`, `service_stub.go`
@@ -52,26 +58,39 @@ cd mobile && flutter pub run flutter_launcher_icons
 - 4 screens: `HomeScreen` (blocked apps), `SystemScreen`, `ComputersScreen`, `SettingsScreen`
 - `SettingsService` handles all HTTP calls and local persistence via `shared_preferences`
 
-### API Structure
-- `/client/applications` — agent fetches its blocked list (TOKEN auth)
+### API Endpoints
+- `/client/sync` — agent fetches apps, mode, and client entries (TOKEN auth)
 - `/manage/applications` — CRUD for blocked apps (ADMIN_TOKEN auth)
-- `/status` — get/set server enabled state
-- `/system` — get/set system entries (e.g., power)
-- `/manage/computers` — computer management
-- `/health` — health check
-- `/info` — server info
+- `/manage/applications/reset` — clear all applications (ADMIN_TOKEN auth)
+- `/status` — get/set server enabled state and mode (ADMIN_TOKEN auth)
+- `/info` — server info (ADMIN_TOKEN auth)
+- `/client` — get/set client entries like power (ADMIN_TOKEN auth)
+- `/manage/computers` — computer management (ADMIN_TOKEN auth)
+- `/manage/computers/reset` — unblock all computers (ADMIN_TOKEN auth)
+- `/manage/computers/block_all` — block all computers (ADMIN_TOKEN auth)
+- `/health` — health check (unauthenticated)
 
 ## Key Dependencies
 
-- **Go:** `github.com/mattn/go-sqlite3` (CGO required), `golang.org/x/sys` (Windows APIs)
+- **Server Go:** `go-chi/chi` (router), `go-chi/cors`, `modernc.org/sqlite` (pure Go SQLite)
+- **Agent Go:** `golang.org/x/sys` (Windows APIs)
 - **Flutter:** `http`, `shared_preferences`
 
 ## Deployment
+
+### Dist structure
+```
+dist/
+├── server/          # Server binary, .env template, systemd service, install.sh, Docker files
+├── guardian.apk     # Mobile app
+└── agent/           # Agent .env template, Install/Uninstall .bat files, PowerShell scripts, binaries
+```
 
 Server installs to `/usr/local/bin/procsentinel/` as a systemd service. Agent and server both read `.env` files for configuration (`SERVER_ADDRESS`, `TOKEN`, `ADMIN_TOKEN`).
 
 ## Notes
 
 - No automated tests exist yet
+- Server and agent have separate `go.mod` files (modules `server` and `agent`)
+- Server uses pure Go SQLite (`modernc.org/sqlite`) — CGO is NOT required for server builds
 - Agent builds require `CGO_ENABLED=1`
-- The Go module is `procsentinel` (root `go.mod`), but server and agent have separate `go.mod` files

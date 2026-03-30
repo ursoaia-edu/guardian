@@ -4,31 +4,6 @@ Process monitoring and control system. Block or whitelist applications across Wi
 
 ## Quick Start
 
-Pre-built binaries are available in the `dist/` directory:
-
-```
-dist/
-├── server/
-│   ├── guardian-server              # Server binary (Linux)
-│   ├── server.env                  # Server config template
-│   ├── guardian-server.service      # Systemd unit file
-│   ├── guardian-server-install.sh   # Install script
-│   ├── Dockerfile                   # Docker image
-│   └── docker-compose.yml           # Docker Compose config
-├── guardian.apk                     # Mobile app (Android)
-├── agent.env                        # Agent config template
-├── Install-Guardian.bat             # Auto-detect arch and install agent
-├── Uninstall-Guardian.bat           # Auto-detect arch and uninstall agent
-└── bin/
-    ├── Install-Agent64.ps1
-    ├── Install-Agent32.ps1
-    ├── Uninstall-Agent64.ps1
-    ├── Uninstall-Agent32.ps1
-    └── agent/
-        ├── procsentinel-agent64.exe
-        └── procsentinel-agent32.exe
-```
-
 ### 1. Server (Linux)
 
 Copy the `dist/server/` folder to your server. Rename the env file and configure it:
@@ -42,6 +17,7 @@ SERVER_ADDRESS=http://0.0.0.0:8080
 TOKEN=your_token_here
 ADMIN_TOKEN=your_admin_token_here
 ```
+## Running the Server
 
 **Option A: Run directly**
 
@@ -65,12 +41,11 @@ The `.env` file is optional with Docker — you can pass environment variables d
 
 ### 2. Agent (Windows)
 
-Rename `dist/bin/agent/agent.env` to `.env`. Edit `.env` with your server details:
+Edit `agent.env` with your server details:
 
 ```env
 SERVER_ADDRESS=your_server_address
 TOKEN=your_token_here
-CHECK_INTERVAL=30
 ```
 
 Double-click `Install-Guardian.bat` (auto-detects 32/64-bit and runs the appropriate installer as admin). The installer will prompt for an optional `IDENTITY` number to register the computer with the server.
@@ -80,6 +55,32 @@ To uninstall, double-click `Uninstall-Guardian.bat`.
 ### 3. Mobile App (Android)
 
 Install `guardian.apk` on your Android device. Open the app, go to Settings, and configure the server address and admin token.
+
+Pre-built binaries are available in the `dist/` directory:
+
+```
+dist/
+├── server/
+│   ├── guardian-server              # Server binary (Linux)
+│   ├── server.env                  # Server config template
+│   ├── guardian-server.service      # Systemd unit file
+│   ├── install.sh                   # Install script
+│   ├── Dockerfile                   # Docker image
+│   └── docker-compose.yml           # Docker Compose config
+├── guardian.apk                     # Mobile app (Android)
+└── agent/
+    ├── agent.env                    # Agent config template
+    ├── Install-Guardian.bat         # Auto-detect arch and install agent
+    ├── Uninstall-Guardian.bat       # Auto-detect arch and uninstall agent
+    └── bin/
+        ├── Install-Agent64.ps1
+        ├── Install-Agent32.ps1
+        ├── Uninstall-Agent64.ps1
+        ├── Uninstall-Agent32.ps1
+        └── agent/
+            ├── procsentinel-agent64.exe
+            └── procsentinel-agent32.exe
+```
 
 ## Architecture
 
@@ -176,10 +177,9 @@ Setting the `power` client entry to `false` via the `/client` endpoint triggers 
 |---|---|---|
 | `SERVER_ADDRESS` | Server URL | `http://192.168.1.10:8080` |
 | `TOKEN` | Client auth token (must match server) | `your_token_here` |
-| `CHECK_INTERVAL` | Server poll interval in seconds | `30` |
 
 ## Build Requirements
 
-- **Go 1.21+** with `CGO_ENABLED=1` (required for SQLite)
+- **Go 1.25+** for server and agent
 - **Flutter 3.x** for the mobile app
-- Agent Windows builds require PowerShell
+- Agent Windows builds require PowerShell and `CGO_ENABLED=1`

@@ -10,7 +10,7 @@ The ProcSentinel server is a Go REST API for managing applications, computer sta
 |-----------------|-------------------------------------------------|
 | `main.go`       | Server struct, startup, graceful shutdown       |
 | `models.go`     | Request/response structs                        |
-| `db.go`         | Database init, schema, cache loading, queries   |
+| `db.go`         | Database init, schema, migrations, cache loading, queries |
 | `handlers.go`   | HTTP handler functions                          |
 | `routes.go`     | Chi router setup, middleware wiring             |
 | `middleware.go`  | Auth middleware (constant-time token compare)   |
@@ -33,18 +33,19 @@ All state access is serialized through `sync.RWMutex`. Reads acquire `RLock`, wr
 
 ## Database Schema
 
-**SQLite file:** `./procsentinel.db`
+**SQLite file:** `./guardian.db`
 
 ### `applications`
 | Column     | Type     | Notes                          |
 |------------|----------|--------------------------------|
 | id         | INTEGER  | PRIMARY KEY AUTOINCREMENT      |
-| name       | TEXT     | UNIQUE NOT NULL                |
+| name       | TEXT     | NOT NULL                       |
 | enabled    | BOOLEAN  | DEFAULT 1                      |
 | mode       | TEXT     | NOT NULL, DEFAULT 'blacklist'  |
 | created_at | DATETIME | DEFAULT CURRENT_TIMESTAMP      |
 
-Index: `idx_apps_name` on `(name, enabled)`
+Constraint: `UNIQUE(name, mode)` — same app name can exist in both blacklist and whitelist modes.
+Index: `idx_apps_name_mode` on `(name, mode)`
 
 Mode values: `blacklist` (kill matching processes) or `whitelist` (kill everything except matching processes).
 
@@ -79,10 +80,14 @@ Seeded with `('power', 1)` on init.
 
 Index: `idx_computers_identity` on `(identity)`
 
+## Database Migration
+
+On startup, the server checks for an old `idx_apps_name` index (from the previous `UNIQUE(name)` constraint). If found, it recreates the `applications` table with the new `UNIQUE(name, mode)` constraint in a transaction.
+
 ## Caching Strategy
 
 On startup, the server loads all data from SQLite into in-memory structures:
-- `appsCache` — full `Application` structs keyed by name (id, name, enabled, mode)
+- `appsCache` — full `Application` structs keyed by `"name:mode"` (id, name, enabled, mode)
 - `enabledCache` — server enabled/disabled flag
 - `modeCache` — server mode (blacklist/whitelist)
 - `clientCache` — client entry name-to-status map
@@ -91,10 +96,14 @@ On startup, the server loads all data from SQLite into in-memory structures:
 
 ## Startup Behavior
 
-1. Open SQLite database
-2. Create tables if not exist (idempotent)
-3. Load all data into caches
-4. **Force-disable server** — `enabledCache` set to `false`, database updated. This is a safety measure ensuring the server never starts in an "active" state.
+1. Load `.env` file if present
+2. Open SQLite database (`./guardian.db`)
+3. Create tables if not exist (idempotent)
+4. Run migrations if needed
+5. Load all data into caches
+6. Start HTTP server with graceful shutdown support
+
+The server preserves its enabled/disabled state across restarts (reads from database). The database defaults to `enabled = 0` on first run.
 
 ## Graceful Shutdown
 
@@ -138,9 +147,9 @@ Returns the full state an agent needs: applications filtered by current mode, se
 ```
 
 **Logic:**
-- If server is disabled OR computer has `blocked: false` → `applications` and `client` arrays are empty
+- If server is disabled OR computer has `blocked: false` → `applications` and `client` arrays are empty, mode is `"free"`
 - If active → returns only enabled applications whose `mode` matches the server's current mode
-- `mode` — the server's current mode (blacklist or whitelist)
+- `mode` — the server's current mode, or `"free"` if disabled/unblocked
 - `client` — client entries (e.g. power status) for the agent to act on
 
 ### Management Endpoints (ADMIN_TOKEN auth)
@@ -152,10 +161,10 @@ Returns all applications with full details (id, name, enabled, mode). Always ret
 Add a new application. Body: `{"name": "app.exe", "mode": "blacklist"}`. Mode defaults to `blacklist` if omitted. Returns 201 on success.
 
 #### `PUT /manage/applications`
-Update an application's enabled state and/or mode. Body: `{"name": "app.exe", "enabled": true|false|0|1, "mode": "whitelist"}`. The `enabled` field accepts both boolean and numeric types. Mode is optional — only updated if provided.
+Update an application's enabled state. Body: `{"name": "app.exe", "enabled": true|false|0|1, "mode": "whitelist"}`. The `enabled` field accepts both boolean and numeric types. Mode is optional — used to find the specific entry.
 
 #### `DELETE /manage/applications`
-Remove an application. Body: `{"name": "app.exe"}`.
+Remove an application. Body: `{"name": "app.exe", "mode": "blacklist"}`. If mode is omitted, removes all entries with that name.
 
 #### `DELETE /manage/applications/reset`
 Remove all applications.
@@ -187,10 +196,6 @@ Unblock all computers (set `blocked = 0`).
 #### `PUT /manage/computers/block_all`
 Block all computers (set `blocked = 1`).
 
-### Static Files
-
-`GET /` serves static files from the web directory (env `WEB_DIR`, default `web`). This is a catch-all route registered last. If the directory doesn't exist, a fallback HTML page listing API endpoints is served.
-
 ## Configuration
 
 Loaded from `.env` file in working directory. Environment variables take precedence over `.env` values.
@@ -200,7 +205,6 @@ Loaded from `.env` file in working directory. Environment variables take precede
 | `SERVER_ADDRESS` | Listen address (full URL or `host:port`)     | `0.0.0.0:8080`             |
 | `TOKEN`          | Client/agent auth token                      | hardcoded fallback          |
 | `ADMIN_TOKEN`    | Management auth token                        | hardcoded fallback          |
-| `WEB_DIR`        | Path to static web files                     | `web`                       |
 
 ## HTTP Server Settings
 
@@ -213,7 +217,7 @@ Loaded from `.env` file in working directory. Environment variables take precede
 ## Deployment
 
 - Installs to `/usr/local/bin/procsentinel/` as a systemd service
-- Database file created in working directory (`./procsentinel.db`)
+- Database file created in working directory (`./guardian.db`)
 - Listens on port 8080 by default
 - No CGO required (`modernc.org/sqlite` is pure Go)
 
@@ -230,12 +234,12 @@ Loaded from `.env` file in working directory. Environment variables take precede
 
 1. **Multi-file layout** — split by concern: models, db, handlers, routes, middleware, helpers
 2. **Write-through cache** — mutations update both cache and DB under lock; reads served from cache
-3. **Force-disable on startup** — prevents accidental enforcement after restart
-4. **Dual auth tiers** — agents use a simpler token; management uses an admin token
-5. **Constant-time token comparison** — prevents timing side-channel attacks
-6. **Unauthenticated health check** — for load balancer and monitoring probes
-7. **CORS enabled** — allows cross-origin requests from web and mobile clients
-8. **Graceful shutdown** — clean connection drain on SIGINT/SIGTERM
-9. **Computer heartbeat** — agents report identity on each poll, server tracks last-seen time
-10. **Mode-filtered sync** — `/client/sync` only returns apps matching the server's current mode
-11. **Computer-gated sync** — unblocked computers (`blocked: false`) receive empty applications and client arrays
+3. **Dual auth tiers** — agents use a simpler token; management uses an admin token
+4. **Constant-time token comparison** — prevents timing side-channel attacks
+5. **Unauthenticated health check** — for load balancer and monitoring probes
+6. **CORS enabled** — allows cross-origin requests from web and mobile clients
+7. **Graceful shutdown** — clean connection drain on SIGINT/SIGTERM
+8. **Computer heartbeat** — agents report identity on each poll, server tracks last-seen time
+9. **Mode-filtered sync** — `/client/sync` only returns apps matching the server's current mode
+10. **Computer-gated sync** — unblocked computers (`blocked: false`) receive empty applications and client arrays
+11. **UNIQUE(name, mode)** — same app can exist in both blacklist and whitelist lists independently
