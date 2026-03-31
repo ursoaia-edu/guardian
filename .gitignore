@@ -6,3 +6,4 @@ build/
 guardian.db
 .DS_Store
 
+.superpowers/
