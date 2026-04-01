@@ -7,3 +7,4 @@ guardian.db
 .DS_Store
 
 .superpowers/
+.claude/worktrees/
