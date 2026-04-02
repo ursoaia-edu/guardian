@@ -541,13 +541,37 @@ CREATE POLICY account_members_isolation ON account_members
     USING (account_id = current_account_id())
     WITH CHECK (account_id = current_account_id());
 
+-- Two operations legitimately happen before any account scope exists:
+-- registration creates the very first account, and a signed-in user asks which
+-- accounts they may enter. Both are keyed on a user id the caller already
+-- proved. Postgres ORs permissive policies, so an unscoped connection reads
+-- these two tables freely while every scoped one stays confined by the
+-- isolation policies above. This exception applies to these two tables ONLY —
+-- nothing else in the schema is ever readable without a scope.
+CREATE POLICY accounts_prescope ON accounts
+    FOR SELECT USING (current_account_id() IS NULL);
+CREATE POLICY accounts_insert ON accounts
+    FOR INSERT WITH CHECK (current_account_id() IS NULL);
+CREATE POLICY account_members_prescope ON account_members
+    FOR SELECT USING (current_account_id() IS NULL);
+CREATE POLICY account_members_insert ON account_members
+    FOR INSERT WITH CHECK (current_account_id() IS NULL);
+
 -- +goose Down
+DROP POLICY account_members_insert ON account_members;
+DROP POLICY account_members_prescope ON account_members;
+DROP POLICY accounts_insert ON accounts;
+DROP POLICY accounts_prescope ON accounts;
 DROP POLICY account_members_isolation ON account_members;
 ALTER TABLE account_members DISABLE ROW LEVEL SECURITY;
 DROP POLICY accounts_isolation ON accounts;
 ALTER TABLE accounts DISABLE ROW LEVEL SECURITY;
 DROP FUNCTION current_account_id();
 ```
+
+The pre-scope policies live here, in the same migration as the RLS they qualify, because this
+task's own `seedAccount` helper inserts an account with no scope set. Without them, the
+`WITH CHECK` above rejects that insert and neither test in this task can run.
 
 - [ ] **Step 4: Write the tenant wrapper**
 
@@ -782,32 +806,21 @@ SELECT role FROM account_members
 WHERE account_id = $1 AND user_id = $2;
 ```
 
-- [ ] **Step 4: Add the pre-scope policy**
+- [ ] **Step 4: Confirm the pre-scope policies are already in place**
 
-`ListAccountsForUser` and `CreateAccount` run before any account scope exists, so RLS must permit them. Add `server/db/migrations/00004_prescope.sql`:
+`ListAccountsForUser` and `CreateAccount` run before any account scope exists, so RLS must
+permit them. Those policies ship with Task 3's migration `00003_rls.sql` — no new migration is
+needed here. Verify they exist before continuing:
 
-```sql
--- +goose Up
--- A user must be able to discover which accounts they belong to before any
--- account scope exists, and registration must be able to create the first row.
--- Both are keyed on a user id the caller already proved they are.
-CREATE POLICY accounts_prescope ON accounts
-    FOR SELECT USING (current_account_id() IS NULL);
-CREATE POLICY accounts_insert ON accounts
-    FOR INSERT WITH CHECK (current_account_id() IS NULL);
-CREATE POLICY account_members_prescope ON account_members
-    FOR SELECT USING (current_account_id() IS NULL);
-CREATE POLICY account_members_insert ON account_members
-    FOR INSERT WITH CHECK (current_account_id() IS NULL);
-
--- +goose Down
-DROP POLICY account_members_insert ON account_members;
-DROP POLICY account_members_prescope ON account_members;
-DROP POLICY accounts_insert ON accounts;
-DROP POLICY accounts_prescope ON accounts;
+```bash
+docker compose -f docker-compose.dev.yml exec -T postgres \
+  psql -U guardian_owner -d guardian -c "\dp accounts" | grep -c prescope
 ```
 
-Postgres ORs multiple permissive policies, so an unscoped connection reads `accounts` and `account_members` freely; every scoped one is still confined by Task 3's policy. **This exception applies only to these two tables** — nothing else in the schema is ever readable without a scope. The `WHERE m.user_id = $1` filter is what confines the unscoped read, which is why the isolation suite in Task 13 covers this query explicitly.
+Expected: a non-zero count. If it is zero, Task 3 was not applied — re-run `go run . migrate`.
+
+The `WHERE m.user_id = $1` filter is what confines the unscoped read, which is why the
+isolation suite in Task 13 covers this query explicitly.
 
 - [ ] **Step 5: Generate and run**
 
@@ -822,7 +835,7 @@ Expected: PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add server/sqlc.yaml server/db/queries server/internal/db server/db/migrations/00004_prescope.sql server/queries_test.go
+git add server/sqlc.yaml server/db/queries server/internal/db server/queries_test.go
 git commit -m "feat(server): generate account queries with sqlc"
 ```
 
@@ -2659,17 +2672,13 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 		if len(hardware) == 0 {
 			hardware = json.RawMessage("{}")
 		}
-		computer, err := q.UpsertComputerByGUID(ctx, db.UpsertComputerByGUIDParams{
+		_, err = q.UpsertComputerByGUID(ctx, db.UpsertComputerByGUIDParams{
 			AccountID: binding.AccountID, MachineGuid: req.MachineGUID,
 			Hostname: req.Hostname, OsName: req.OSName, OsBuild: req.OSBuild,
 			Arch: req.Arch, AgentVersion: req.AgentVersion,
 			Hardware: hardware, TokenHash: agentHash,
 		})
-		if err != nil {
-			return err
-		}
-		_ = computer // Task 12 records an event here
-		return nil
+		return err
 	})
 	if err != nil {
 		slog.Error("enroll", "error", err)
@@ -3209,10 +3218,31 @@ func (s *Server) handleListEvents(w http.ResponseWriter, r *http.Request) {
 }
 ```
 
-In `handleEnroll` (Task 10), replace the `_ = computer // Task 12 records an event here`
-placeholder line that follows the upsert with the recording call:
+In `handleEnroll` (Task 10), the upsert currently discards its result and returns. Capture the
+row and record the event instead — replace:
 
 ```go
+		_, err = q.UpsertComputerByGUID(ctx, db.UpsertComputerByGUIDParams{
+			AccountID: binding.AccountID, MachineGuid: req.MachineGUID,
+			Hostname: req.Hostname, OsName: req.OSName, OsBuild: req.OSBuild,
+			Arch: req.Arch, AgentVersion: req.AgentVersion,
+			Hardware: hardware, TokenHash: agentHash,
+		})
+		return err
+```
+
+with:
+
+```go
+		computer, err := q.UpsertComputerByGUID(ctx, db.UpsertComputerByGUIDParams{
+			AccountID: binding.AccountID, MachineGuid: req.MachineGUID,
+			Hostname: req.Hostname, OsName: req.OSName, OsBuild: req.OSBuild,
+			Arch: req.Arch, AgentVersion: req.AgentVersion,
+			Hardware: hardware, TokenHash: agentHash,
+		})
+		if err != nil {
+			return err
+		}
 		return s.recordEvent(ctx, tx, eventInput{
 			AccountID:  binding.AccountID,
 			ComputerID: &computer.ID,
