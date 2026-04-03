@@ -244,10 +244,28 @@ CREATE TABLE users (
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- The application role owns nothing and creates nothing; it is granted DML and
+-- no more. These two statements live in a migration rather than in
+-- db/init/01-roles.sql because init scripts run only when Docker initialises a
+-- fresh volume — production creates the role by hand and would silently end up
+-- with an application that cannot read its own tables.
+--
+-- ALTER DEFAULT PRIVILEGES is a persistent catalogue change: every table
+-- created later by this same owner role (that is, by every later migration)
+-- inherits the grant, so no migration after this one needs to think about it.
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO guardian_app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO guardian_app;
+
 -- +goose Down
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+    REVOKE SELECT, INSERT, UPDATE, DELETE ON TABLES FROM guardian_app;
 DROP TABLE users;
 DROP EXTENSION IF EXISTS pgcrypto;
 ```
+
+`information_schema.tables` only lists tables the querying role holds some privilege on, so
+without these grants Task 1's own acceptance test sees zero rows even though the table exists.
 
 - [ ] **Step 6: Write the migration runner**
 
@@ -402,9 +420,8 @@ CREATE TABLE account_members (
 
 CREATE INDEX idx_account_members_user ON account_members(user_id);
 
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO guardian_app;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public
-    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO guardian_app;
+-- No GRANT here: migration 00001 set ALTER DEFAULT PRIVILEGES for this schema,
+-- so both tables above are already granted to guardian_app on creation.
 
 -- +goose Down
 DROP TABLE account_members;
