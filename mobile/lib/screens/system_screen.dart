@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../services/settings_service.dart';
+import '../utils/snackbar_helper.dart';
 
 class SystemScreen extends StatefulWidget {
   const SystemScreen({super.key});
@@ -15,6 +16,7 @@ class _SystemScreenState extends State<SystemScreen> {
   List<Map<String, dynamic>> _systems = [];
   bool _isLoading = true;
   bool _isConnected = false;
+  bool _serverEnabled = false;
 
   @override
   void initState() {
@@ -43,28 +45,34 @@ class _SystemScreenState extends State<SystemScreen> {
       _isConnected = await _settingsService.testConnection(serverAddress);
 
       if (_isConnected) {
-        final systems = await _settingsService.getClientData();
+        final results = await Future.wait([
+          _settingsService.getClientData(),
+          _settingsService.getServerStatus(),
+        ]);
         setState(() {
-          _systems = systems;
+          _systems = results[0] as List<Map<String, dynamic>>;
+          final status = results[1] as Map<String, dynamic>;
+          _serverEnabled = status['enabled'] as bool;
         });
       } else {
         setState(() {
           _systems = [];
+          _serverEnabled = false;
         });
       }
     } catch (e) {
       setState(() {
         _isConnected = false;
         _systems = [];
+        _serverEnabled = false;
       });
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            duration: const Duration(seconds: 3),
-            content: Text('Error loading data: $e'),
-            backgroundColor: Colors.red,
-          ),
+        showTopSnackBar(
+          context,
+          message: 'Error loading data: $e',
+          backgroundColor: Colors.red,
+
         );
       }
     } finally {
@@ -115,22 +123,19 @@ class _SystemScreenState extends State<SystemScreen> {
       });
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            duration: const Duration(seconds: 2),
-            content: Text('$name ${newStatus ? 'enabled' : 'disabled'}'),
-            backgroundColor: Colors.green,
-          ),
+        showTopSnackBar(
+          context,
+          message: '$name ${newStatus ? 'enabled' : 'disabled'}',
+          backgroundColor: Colors.green,
         );
       }
     } else {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            duration: Duration(seconds: 3),
-            content: Text('Failed to update status'),
-            backgroundColor: Colors.red,
-          ),
+        showTopSnackBar(
+          context,
+          message: 'Failed to update status',
+          backgroundColor: Colors.red,
+
         );
       }
     }
@@ -238,6 +243,25 @@ class _SystemScreenState extends State<SystemScreen> {
     );
   }
 
+  Future<void> _toggleServerStatus() async {
+    final newStatus = !_serverEnabled;
+    final success = await _settingsService.toggleServerStatus(newStatus);
+
+    if (success) {
+      setState(() {
+        _serverEnabled = newStatus;
+      });
+    } else {
+      if (mounted) {
+        showTopSnackBar(
+          context,
+          message: 'Failed to update server status',
+          backgroundColor: Colors.red,
+        );
+      }
+    }
+  }
+
   IconData _getSystemIcon(String systemName) {
     switch (systemName.toLowerCase()) {
       case 'power':
@@ -260,6 +284,15 @@ class _SystemScreenState extends State<SystemScreen> {
         title: const Text('System Control'),
         actions: [
           IconButton(onPressed: _loadData, icon: const Icon(Icons.refresh)),
+          if (_isConnected)
+            IconButton(
+              onPressed: _toggleServerStatus,
+              icon: Icon(
+                _serverEnabled ? Icons.shield : Icons.shield_outlined,
+                color: _serverEnabled ? Colors.green : Colors.orange,
+              ),
+              tooltip: _serverEnabled ? 'Disable server' : 'Enable server',
+            ),
         ],
       ),
       body: _isLoading

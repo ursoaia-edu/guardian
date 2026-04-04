@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 import '../services/settings_service.dart';
+import '../utils/snackbar_helper.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -35,12 +36,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _version = info.version;
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            duration: const Duration(seconds: 3),
-            content: Text('Error loading settings: $e'),
-            backgroundColor: Colors.red,
-          ),
+        showTopSnackBar(
+          context,
+          message: 'Error loading settings: $e',
+          backgroundColor: Colors.red,
+
         );
       }
     } finally {
@@ -74,22 +74,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
       await _settingsService.setToken(token.isEmpty ? null : token);
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            duration: Duration(seconds: 2),
-            content: Text('Settings saved'),
-            backgroundColor: Colors.green,
-          ),
+        showTopSnackBar(
+          context,
+          message: 'Settings saved',
+          backgroundColor: Colors.green,
         );
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            duration: const Duration(seconds: 3),
-            content: Text('$e'),
-            backgroundColor: Colors.red,
-          ),
+        showTopSnackBar(
+          context,
+          message: '$e',
+          backgroundColor: Colors.red,
+
         );
       }
     } finally {
@@ -105,12 +102,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final serverAddress = _serverAddressController.text.trim();
 
     if (serverAddress.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          duration: Duration(seconds: 2),
-          content: Text('Please enter a server address first'),
-          backgroundColor: Colors.orange,
-        ),
+      showTopSnackBar(
+        context,
+        message: 'Please enter a server address first',
+        backgroundColor: Colors.orange,
       );
       return;
     }
@@ -123,26 +118,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
       final isConnected = await _settingsService.testConnection(serverAddress);
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            duration: const Duration(seconds: 2),
-            content: Text(
-              isConnected
-                  ? 'Connection successful!'
-                  : 'Connection failed. Check the server address.',
-            ),
-            backgroundColor: isConnected ? Colors.green : Colors.red,
-          ),
+        showTopSnackBar(
+          context,
+          message: isConnected
+              ? 'Connection successful!'
+              : 'Connection failed. Check the server address.',
+          backgroundColor: isConnected ? Colors.green : Colors.red,
         );
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            duration: const Duration(seconds: 3),
-            content: Text('Connection test failed: $e'),
-            backgroundColor: Colors.red,
-          ),
+        showTopSnackBar(
+          context,
+          message: 'Connection test failed: $e',
+          backgroundColor: Colors.red,
+
         );
       }
     } finally {

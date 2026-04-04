@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../services/settings_service.dart';
+import '../utils/snackbar_helper.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -24,8 +25,8 @@ class _HomeScreenState extends State<HomeScreen> {
         ..sort((a, b) {
           final aEnabled = a['enabled'] as bool;
           final bEnabled = b['enabled'] as bool;
-          if (aEnabled == bEnabled) return 0;
-          return aEnabled ? 1 : -1;
+          if (aEnabled != bEnabled) return aEnabled ? 1 : -1;
+          return (a['name'] as String).compareTo(b['name'] as String);
         });
 
   @override
@@ -49,11 +50,14 @@ class _HomeScreenState extends State<HomeScreen> {
       _isConnected = await _settingsService.testConnection(serverAddress);
 
       if (_isConnected) {
-        final apps = await _settingsService.getBlockedApplications();
-        final status = await _settingsService.getServerStatus();
+        final results = await Future.wait([
+          _settingsService.getBlockedApplications(),
+          _settingsService.getServerStatus(),
+        ]);
 
         setState(() {
-          _allApps = apps;
+          _allApps = results[0] as List<Map<String, dynamic>>;
+          final status = results[1] as Map<String, dynamic>;
           _serverEnabled = status['enabled'] as bool;
           _serverMode = status['mode'] as String;
         });
@@ -73,12 +77,11 @@ class _HomeScreenState extends State<HomeScreen> {
       });
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            duration: const Duration(seconds: 3),
-            content: Text('Error loading data: $e'),
-            backgroundColor: Colors.red,
-          ),
+        showTopSnackBar(
+          context,
+          message: 'Error loading data: $e',
+          backgroundColor: Colors.red,
+
         );
       }
     } finally {
@@ -153,23 +156,19 @@ class _HomeScreenState extends State<HomeScreen> {
     final appName = _addAppController.text.trim();
 
     if (appName.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          duration: Duration(seconds: 2),
-          content: Text('Please enter an application name'),
-          backgroundColor: Colors.orange,
-        ),
+      showTopSnackBar(
+        context,
+        message: 'Please enter an application name',
+        backgroundColor: Colors.orange,
       );
       return;
     }
 
     if (_allApps.any((app) => app['name'] == appName && app['mode'] == _serverMode)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          duration: Duration(seconds: 2),
-          content: Text('Application is already in this mode'),
-          backgroundColor: Colors.orange,
-        ),
+      showTopSnackBar(
+        context,
+        message: 'Application is already in this mode',
+        backgroundColor: Colors.orange,
       );
       return;
     }
@@ -183,23 +182,12 @@ class _HomeScreenState extends State<HomeScreen> {
       });
       _addAppController.clear();
 
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            duration: const Duration(seconds: 2),
-            content: Text('Added "$appName" ($_serverMode)'),
-            backgroundColor: Colors.green,
-          ),
-        );
-      }
     } else {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            duration: Duration(seconds: 3),
-            content: Text('Failed to add application'),
-            backgroundColor: Colors.red,
-          ),
+        showTopSnackBar(
+          context,
+          message: 'Failed to add application',
+          backgroundColor: Colors.red,
         );
       }
     }
@@ -215,48 +203,45 @@ class _HomeScreenState extends State<HomeScreen> {
       });
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            duration: const Duration(seconds: 2),
-            content: Text('Removed "$appName"'),
-            backgroundColor: Colors.green,
-          ),
+        showTopSnackBar(
+          context,
+          message: 'Removed "$appName"',
+          backgroundColor: Colors.green,
         );
       }
     } else {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            duration: Duration(seconds: 3),
-            content: Text('Failed to remove application'),
-            backgroundColor: Colors.red,
-          ),
+        showTopSnackBar(
+          context,
+          message: 'Failed to remove application',
+          backgroundColor: Colors.red,
+
         );
       }
     }
   }
 
-  Future<void> _updateApplicationStatus(String name, bool enabled) async {
+  Future<void> _updateApplicationStatus(String name, bool enabled, {String? mode}) async {
     final success = await _settingsService.updateApplicationStatus(
       name,
       enabled,
+      mode: mode,
     );
 
     if (success) {
       setState(() {
-        final index = _allApps.indexWhere((app) => app['name'] == name);
+        final index = _allApps.indexWhere((app) => app['name'] == name && (mode == null || app['mode'] == mode));
         if (index != -1) {
           _allApps[index]['enabled'] = enabled;
         }
       });
     } else {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            duration: Duration(seconds: 3),
-            content: Text('Failed to update application'),
-            backgroundColor: Colors.red,
-          ),
+        showTopSnackBar(
+          context,
+          message: 'Failed to update application',
+          backgroundColor: Colors.red,
+
         );
       }
     }
@@ -293,22 +278,19 @@ class _HomeScreenState extends State<HomeScreen> {
         });
 
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              duration: Duration(seconds: 2),
-              content: Text('All applications removed'),
-              backgroundColor: Colors.green,
-            ),
+          showTopSnackBar(
+            context,
+            message: 'All applications removed',
+            backgroundColor: Colors.green,
           );
         }
       } else {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              duration: Duration(seconds: 3),
-              content: Text('Failed to reset applications'),
-              backgroundColor: Colors.red,
-            ),
+          showTopSnackBar(
+            context,
+            message: 'Failed to reset applications',
+            backgroundColor: Colors.red,
+  
           );
         }
       }
@@ -323,24 +305,13 @@ class _HomeScreenState extends State<HomeScreen> {
       setState(() {
         _serverEnabled = newStatus;
       });
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            duration: const Duration(seconds: 2),
-            content: Text('Server ${newStatus ? 'enabled' : 'disabled'}'),
-            backgroundColor: Colors.green,
-          ),
-        );
-      }
     } else {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            duration: Duration(seconds: 3),
-            content: Text('Failed to update server status'),
-            backgroundColor: Colors.red,
-          ),
+        showTopSnackBar(
+          context,
+          message: 'Failed to update server status',
+          backgroundColor: Colors.red,
+
         );
       }
     }
@@ -357,12 +328,11 @@ class _HomeScreenState extends State<HomeScreen> {
       });
     } else {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            duration: Duration(seconds: 3),
-            content: Text('Failed to change mode'),
-            backgroundColor: Colors.red,
-          ),
+        showTopSnackBar(
+          context,
+          message: 'Failed to change mode',
+          backgroundColor: Colors.red,
+
         );
       }
     }
@@ -478,7 +448,7 @@ class _HomeScreenState extends State<HomeScreen> {
               trailing: Switch(
                 value: enabled,
                 onChanged: (newValue) =>
-                    _updateApplicationStatus(appName, newValue),
+                    _updateApplicationStatus(appName, newValue, mode: mode),
                 inactiveThumbColor: Colors.grey,
                 inactiveTrackColor: Colors.grey.shade300,
               ),
@@ -509,6 +479,15 @@ class _HomeScreenState extends State<HomeScreen> {
               tooltip: 'Remove all',
             ),
           IconButton(onPressed: _loadData, icon: const Icon(Icons.refresh)),
+          if (_isConnected)
+            IconButton(
+              onPressed: _toggleServerStatus,
+              icon: Icon(
+                _serverEnabled ? Icons.shield : Icons.shield_outlined,
+                color: _serverEnabled ? Colors.green : Colors.orange,
+              ),
+              tooltip: _serverEnabled ? 'Disable server' : 'Enable server',
+            ),
         ],
       ),
       floatingActionButton: _isConnected
@@ -527,49 +506,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   onRefresh: _loadData,
                   child: Column(
                     children: [
-                      // Compact status bar
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 10,
-                        ),
-                        color: _serverEnabled
-                            ? Colors.green.shade50
-                            : Colors.orange.shade50,
-                        child: Row(
-                          children: [
-                            Icon(
-                              _serverEnabled
-                                  ? Icons.shield
-                                  : Icons.shield_outlined,
-                              size: 18,
-                              color: _serverEnabled
-                                  ? Colors.green.shade700
-                                  : Colors.orange.shade700,
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              _serverEnabled ? 'Active' : 'Inactive',
-                              style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w600,
-                                color: _serverEnabled
-                                    ? Colors.green.shade700
-                                    : Colors.orange.shade700,
-                              ),
-                            ),
-                            const Spacer(),
-                            Switch(
-                              value: _serverEnabled,
-                              onChanged: (_) => _toggleServerStatus(),
-                              materialTapTargetSize:
-                                  MaterialTapTargetSize.shrinkWrap,
-                            ),
-                          ],
-                        ),
-                      ),
-
                       // Mode toggle
                       Padding(
                         padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
