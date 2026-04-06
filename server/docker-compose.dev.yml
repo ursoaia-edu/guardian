@@ -1,0 +1,11 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: guardian_owner
+      POSTGRES_PASSWORD: guardian_owner
+      POSTGRES_DB: guardian
+    ports:
+      - "5433:5432"
+    volumes:
+      - ./db/init:/docker-entrypoint-initdb.d:ro
