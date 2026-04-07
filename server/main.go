@@ -59,6 +59,20 @@ func (s *Server) Close() error {
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
 
+	if len(os.Args) > 1 && os.Args[1] == "migrate" {
+		dsn := os.Getenv("MIGRATE_DATABASE_URL")
+		if dsn == "" {
+			slog.Error("MIGRATE_DATABASE_URL is required for migrate")
+			os.Exit(1)
+		}
+		if err := runMigrations(context.Background(), dsn); err != nil {
+			slog.Error("migration failed", "error", err)
+			os.Exit(1)
+		}
+		slog.Info("migrations applied")
+		return
+	}
+
 	if err := loadEnvFile(".env"); err != nil && !os.IsNotExist(err) {
 		slog.Warn("could not load .env file", "error", err)
 	}
