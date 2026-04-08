@@ -80,7 +80,7 @@ email verification, and the account switcher for users who belong to more than o
 - Modify: `server/go.mod`
 
 **Interfaces:**
-- Produces: `runMigrations(ctx context.Context, dsn string) error` in `migrate.go`; `testPool(t *testing.T) *pgxpool.Pool` and `truncateAll(t *testing.T)` in `testsupport_test.go`.
+- Produces: `runMigrations(ctx context.Context, dsn string) error` in `migrate.go`; `testPool(t *testing.T) *pgxpool.Pool` and `truncateAll(t *testing.T, ownerDSN string)` in `testsupport_test.go`. `truncateAll` takes the owner DSN because `guardian_app` deliberately holds no TRUNCATE privilege.
 
 - [ ] **Step 1: Add dependencies**
 
