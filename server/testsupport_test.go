@@ -87,3 +87,27 @@ func TestMigrationsCreateUsersTable(t *testing.T) {
 		t.Fatal("users table was not created")
 	}
 }
+
+func TestAppRoleCanInsertAccount(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+
+	var userID string
+	err := pool.QueryRow(ctx,
+		`INSERT INTO users (email, password_hash) VALUES ($1, $2) RETURNING id`,
+		"owner@example.com", "x").Scan(&userID)
+	if err != nil {
+		t.Fatalf("insert user: %v", err)
+	}
+
+	var accountID string
+	err = pool.QueryRow(ctx,
+		`INSERT INTO accounts (name, owner_user_id) VALUES ($1, $2) RETURNING id`,
+		"Acme", userID).Scan(&accountID)
+	if err != nil {
+		t.Fatalf("insert account: %v", err)
+	}
+	if accountID == "" {
+		t.Fatal("expected an account id")
+	}
+}
