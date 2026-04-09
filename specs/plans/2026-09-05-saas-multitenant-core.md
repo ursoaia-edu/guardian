@@ -349,7 +349,7 @@ git commit -m "feat(server): add Postgres, goose migrations and the test harness
 
 **Files:**
 - Create: `server/db/migrations/00002_accounts.sql`
-- Test: `server/testsupport_test.go` (add `TestAccountTablesExist`)
+- Test: `server/testsupport_test.go` (add `TestAppRoleCanInsertAccount`)
 
 **Interfaces:**
 - Produces: tables `accounts`, `account_members`; the `guardian_app` role holds DML rights on all present and future tables.
