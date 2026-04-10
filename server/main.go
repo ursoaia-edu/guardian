@@ -13,11 +13,18 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	_ "modernc.org/sqlite"
 )
 
 // Server holds the state of the guardian server
 type Server struct {
+	pool *pgxpool.Pool
+
+	// Legacy single-tenant state, unpopulated from this task onward. The
+	// methods in db.go and handlers.go still reference these fields, so they
+	// must exist for the package to compile; Task 15 deletes them together
+	// with those files.
 	mu           sync.RWMutex
 	db           *sql.DB
 	appsCache    map[string]Application
@@ -26,33 +33,23 @@ type Server struct {
 	clientCache  map[string]bool
 }
 
-func NewServer() (*Server, error) {
-	db, err := openDatabase("./guardian.db")
+func NewServer(ctx context.Context) (*Server, error) {
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		return nil, fmt.Errorf("DATABASE_URL is required")
+	}
+	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("connect: %w", err)
 	}
-
-	s := &Server{
-		db:          db,
-		appsCache:   make(map[string]Application),
-		modeCache:   "blacklist",
-		clientCache: make(map[string]bool),
+	if err := pool.Ping(ctx); err != nil {
+		return nil, fmt.Errorf("ping: %w", err)
 	}
-
-	if err := s.initDatabase(); err != nil {
-		return nil, fmt.Errorf("failed to initialize database: %v", err)
-	}
-	if err := s.loadFromDatabase(); err != nil {
-		return nil, fmt.Errorf("failed to load data: %v", err)
-	}
-
-	return s, nil
+	return &Server{pool: pool}, nil
 }
 
 func (s *Server) Close() error {
-	if s.db != nil {
-		return s.db.Close()
-	}
+	s.pool.Close()
 	return nil
 }
 
@@ -77,7 +74,7 @@ func main() {
 		slog.Warn("could not load .env file", "error", err)
 	}
 
-	server, err := NewServer()
+	server, err := NewServer(context.Background())
 	if err != nil {
 		slog.Error("failed to create server", "error", err)
 		os.Exit(1)
