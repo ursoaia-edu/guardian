@@ -646,13 +646,28 @@ func (s *Server) inAccount(ctx context.Context, accountID uuid.UUID, fn func(pgx
 }
 ```
 
-- [ ] **Step 5: Replace the `Server` database field**
+- [ ] **Step 5: Add the pool to `Server`, leaving the legacy fields in place**
 
-In `server/main.go`, change the struct and constructor. The caches go in Task 15; here only the connection changes:
+In `server/main.go`, change the struct and constructor. **Add** `pool`; do not remove `db` or the
+caches. `server/db.go` and `server/handlers.go` are full of methods that read `s.db`,
+`s.appsCache` and friends, and Go compiles every method in the package whether or not anything
+calls it — deleting those fields now breaks the build in a dozen places that Task 15 is meant to
+clean up in one sweep. They stay, unpopulated, until then:
 
 ```go
 type Server struct {
 	pool *pgxpool.Pool
+
+	// Legacy single-tenant state, unpopulated from this task onward. The
+	// methods in db.go and handlers.go still reference these fields, so they
+	// must exist for the package to compile; Task 15 deletes them together
+	// with those files.
+	mu           sync.RWMutex
+	db           *sql.DB
+	appsCache    map[string]Application
+	enabledCache bool
+	modeCache    string
+	clientCache  map[string]bool
 }
 
 func NewServer(ctx context.Context) (*Server, error) {
@@ -676,7 +691,14 @@ func (s *Server) Close() error {
 }
 ```
 
-Handlers that still reference `s.db` or the caches will not compile. Comment out the offending route registrations in `routes.go` for now — Tasks 7 through 12 replace them, and Task 15 deletes the leftovers. Keep `/health` registered.
+`NewServer` no longer calls `initDatabase` or `loadFromDatabase`, so `s.db` stays nil. That makes
+every legacy handler a nil-pointer panic waiting for a request, so **unregister them**: in
+`routes.go`, comment out the `ClientAuth` and `AdminAuth` route groups entirely. Keep `/health`
+registered. Tasks 5 through 12 add the new routes; Task 15 deletes the commented-out block along
+with `db.go` and the legacy handlers.
+
+Leave `openDatabase` and the rest of `db.go` untouched — unused functions compile fine, and
+removing them piecemeal here would collide with Task 15.
 
 - [ ] **Step 6: Run the tests — they must pass**
 
