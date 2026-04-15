@@ -42,14 +42,19 @@ func NewServer(ctx context.Context) (*Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("connect: %w", err)
 	}
-	if err := pool.Ping(ctx); err != nil {
+	pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := pool.Ping(pingCtx); err != nil {
+		pool.Close()
 		return nil, fmt.Errorf("ping: %w", err)
 	}
 	return &Server{pool: pool}, nil
 }
 
 func (s *Server) Close() error {
-	s.pool.Close()
+	if s.pool != nil {
+		s.pool.Close()
+	}
 	return nil
 }
 
