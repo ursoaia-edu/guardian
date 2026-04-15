@@ -560,22 +560,29 @@ CREATE POLICY account_members_isolation ON account_members
 
 -- Two operations legitimately happen before any account scope exists:
 -- registration creates the very first account, and a signed-in user asks which
--- accounts they may enter. Both are keyed on a user id the caller already
--- proved. Postgres ORs permissive policies, so an unscoped connection reads
--- these two tables freely while every scoped one stays confined by the
--- isolation policies above. This exception applies to these two tables ONLY —
--- nothing else in the schema is ever readable without a scope.
+-- accounts they may enter. Postgres ORs permissive policies, so the three
+-- policies below are a deliberate hole in the isolation above, on these two
+-- tables ONLY. Be precise about how big it is: they key on nothing. Any
+-- connection that has not called inAccount() can read every row of both tables
+-- and insert any account row. That is why the ONLY unscoped statements the
+-- server is permitted to run against these tables are the ones in the
+-- registration handler and in SessionAuth, and why both filter by a user id the
+-- caller has already proved. Nothing else in the schema is readable without a
+-- scope at all.
+--
+-- There is deliberately NO unscoped INSERT policy on account_members: an
+-- unscoped membership insert would let any such code path make an arbitrary
+-- user the owner of an arbitrary account, which is privilege escalation
+-- written into the schema. Registration sets the account scope the moment it
+-- has the new account's id and inserts the owner row scoped.
 CREATE POLICY accounts_prescope ON accounts
     FOR SELECT USING (current_account_id() IS NULL);
 CREATE POLICY accounts_insert ON accounts
     FOR INSERT WITH CHECK (current_account_id() IS NULL);
 CREATE POLICY account_members_prescope ON account_members
     FOR SELECT USING (current_account_id() IS NULL);
-CREATE POLICY account_members_insert ON account_members
-    FOR INSERT WITH CHECK (current_account_id() IS NULL);
 
 -- +goose Down
-DROP POLICY account_members_insert ON account_members;
 DROP POLICY account_members_prescope ON account_members;
 DROP POLICY accounts_insert ON accounts;
 DROP POLICY accounts_prescope ON accounts;
@@ -1187,6 +1194,16 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	account, err := q.CreateAccount(ctx, db.CreateAccountParams{Name: accountName, OwnerUserID: user.ID})
 	if err != nil {
 		slog.Error("create account", "error", err)
+		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "Could not create the account"})
+		return
+	}
+	// The account now exists, so scope the rest of this transaction to it. There
+	// is no unscoped INSERT policy on account_members precisely so that no code
+	// path can make an arbitrary user the owner of an arbitrary account; this
+	// insert has to earn its scope like every other write.
+	if _, err := tx.Exec(ctx,
+		`SELECT set_config('app.account_id', $1, true)`, account.ID.String()); err != nil {
+		slog.Error("scope registration transaction", "error", err)
 		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "Could not create the account"})
 		return
 	}
