@@ -760,16 +760,32 @@ sql:
           # own test passes generated row ids straight into inAccount. Without
           # this override sqlc's pgx/v5 default (pgtype.UUID) makes those two
           # already-committed pieces of code mutually incompatible.
+          #
+          # Both entries are required. sqlc matches an override only when its
+          # `nullable` flag equals the column's nullability, and `nullable`
+          # defaults to false — so the first entry covers NOT NULL columns
+          # only. Without the second, a nullable uuid falls through to the
+          # pgx/v5 default, which is pgtype.UUID regardless of nullability.
+          # emit_pointers_for_null_types does not change this: it has no
+          # effect on types the pgx/v5 driver branch handles itself.
           - db_type: "uuid"
             go_type: "github.com/google/uuid.UUID"
+          - db_type: "uuid"
+            nullable: true
+            go_type:
+              type: "UUID"
+              import: "github.com/google/uuid"
+              pointer: true
 ```
 
 sqlc understands goose annotations and ignores the `-- +goose Down` half of each file, so migrations double as the schema source.
 
 The uuid override is load-bearing for every later task: it is what makes generated ids assignable
-to `uuid.UUID` parameters, and — combined with `emit_pointers_for_null_types` — what makes a
-nullable `uuid` column arrive as `*uuid.UUID`, which is the type Tasks 9 through 12 assume for
-`computers.room_id` and `events.room_id`.
+to `uuid.UUID` parameters, and the `nullable: true` entry is what makes a nullable `uuid` column
+arrive as `*uuid.UUID` — the type Tasks 9 through 12 assume for `computers.room_id` and
+`events.room_id`. Neither of those columns exists yet, which is exactly why the second entry has to
+go in now: with no nullable uuid column to fail against, its absence is invisible until the task
+that depends on it.
 
 **Generate with:** `go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.27.0 generate`, run from `server/`.
 (`go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.27.0 generate` does not work here — there is no tool directive in `go.mod`.) The
