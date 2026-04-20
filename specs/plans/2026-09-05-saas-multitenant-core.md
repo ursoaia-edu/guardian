@@ -754,9 +754,26 @@ sql:
         sql_package: pgx/v5
         emit_json_tags: true
         emit_pointers_for_null_types: true
+        overrides:
+          # Task 3's tenant.go (inAccount, Tenant) is fixed at
+          # github.com/google/uuid.UUID for account/user ids, and this task's
+          # own test passes generated row ids straight into inAccount. Without
+          # this override sqlc's pgx/v5 default (pgtype.UUID) makes those two
+          # already-committed pieces of code mutually incompatible.
+          - db_type: "uuid"
+            go_type: "github.com/google/uuid.UUID"
 ```
 
 sqlc understands goose annotations and ignores the `-- +goose Down` half of each file, so migrations double as the schema source.
+
+The uuid override is load-bearing for every later task: it is what makes generated ids assignable
+to `uuid.UUID` parameters, and — combined with `emit_pointers_for_null_types` — what makes a
+nullable `uuid` column arrive as `*uuid.UUID`, which is the type Tasks 9 through 12 assume for
+`computers.room_id` and `events.room_id`.
+
+**Generate with:** `go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.27.0 generate`, run from `server/`.
+(`go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.27.0 generate` does not work here — there is no tool directive in `go.mod`.) The
+generated code in `server/internal/db/` is committed, not treated as a build artifact.
 
 - [ ] **Step 2: Write the failing test**
 
@@ -872,7 +889,7 @@ isolation suite in Task 13 covers this query explicitly.
 
 ```bash
 cd server
-go tool sqlc generate   # or: go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.27.0 generate
+go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.27.0 generate   # or: go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.27.0 generate
 go test ./... -run TestCreateAccountWithOwner -v
 ```
 
@@ -1398,7 +1415,7 @@ UPDATE sessions SET last_used_at = now(), expires_at = $2 WHERE token_hash = $1;
 DELETE FROM sessions WHERE token_hash = $1;
 ```
 
-Regenerate: `go tool sqlc generate`
+Regenerate: `go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.27.0 generate`
 
 - [ ] **Step 4: Implement login, logout, me**
 
@@ -1730,7 +1747,7 @@ RETURNING *;
 DELETE FROM rooms WHERE id = $1;
 ```
 
-`ListRooms` has no `WHERE account_id`: inside `inAccount` the RLS policy already restricts it, and this is the shape every list query takes. Regenerate: `go tool sqlc generate`
+`ListRooms` has no `WHERE account_id`: inside `inAccount` the RLS policy already restricts it, and this is the shape every list query takes. Regenerate: `go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.27.0 generate`
 
 - [ ] **Step 5: Implement the handlers**
 
@@ -1994,7 +2011,7 @@ RETURNING *;
 DELETE FROM applications WHERE id = $1 AND room_id = $2;
 ```
 
-Regenerate: `go tool sqlc generate`
+Regenerate: `go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.27.0 generate`
 
 - [ ] **Step 5: Implement the handlers**
 
@@ -2309,7 +2326,7 @@ ON CONFLICT (account_id, machine_guid) DO UPDATE SET
 RETURNING *;
 ```
 
-Regenerate: `go tool sqlc generate`
+Regenerate: `go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.27.0 generate`
 
 - [ ] **Step 5: Implement the handlers**
 
@@ -2620,7 +2637,7 @@ SELECT * FROM binding_tokens
 WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > now();
 ```
 
-Regenerate: `go tool sqlc generate`
+Regenerate: `go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.27.0 generate`
 
 - [ ] **Step 4: Implement the handlers**
 
@@ -2775,7 +2792,7 @@ and inside `/api/v1`:
 		r.Post("/binding-tokens", s.handleCreateBindingToken)
 ```
 
-Regenerate and build: `go tool sqlc generate && go build ./...`
+Regenerate and build: `go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.27.0 generate && go build ./...`
 
 - [ ] **Step 5: Run the tests — they must pass**
 
@@ -2968,7 +2985,7 @@ CREATE POLICY computers_token_lookup ON computers
 DROP POLICY computers_token_lookup ON computers;
 ```
 
-Regenerate: `go tool sqlc generate`
+Regenerate: `go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.27.0 generate`
 
 - [ ] **Step 4: Implement AgentAuth and the sync handler**
 
@@ -3209,7 +3226,7 @@ VALUES ($1, $2, $3, $4, $5);
 SELECT * FROM events ORDER BY created_at DESC LIMIT $1;
 ```
 
-Regenerate: `go tool sqlc generate`
+Regenerate: `go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.27.0 generate`
 
 - [ ] **Step 4: Implement recording and the endpoint**
 
@@ -3800,7 +3817,7 @@ ORDER BY u.email;
 DELETE FROM room_members WHERE room_id = $1 AND user_id = $2;
 ```
 
-Regenerate: `go tool sqlc generate`
+Regenerate: `go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.27.0 generate`
 
 - [ ] **Step 5: Put the role in the Tenant**
 
