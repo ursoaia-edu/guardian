@@ -16,5 +16,19 @@ sql:
           # own test passes generated row ids straight into inAccount. Without
           # this override sqlc's pgx/v5 default (pgtype.UUID) makes those two
           # already-committed pieces of code mutually incompatible.
+          #
+          # Both entries are required. sqlc matches an override only when its
+          # `nullable` flag equals the column's nullability, and `nullable`
+          # defaults to false — so the first entry covers NOT NULL columns
+          # only. Without the second, a nullable uuid falls through to the
+          # pgx/v5 default, which is pgtype.UUID regardless of nullability.
+          # emit_pointers_for_null_types does not change this: it has no
+          # effect on types the pgx/v5 driver branch handles itself.
           - db_type: "uuid"
             go_type: "github.com/google/uuid.UUID"
+          - db_type: "uuid"
+            nullable: true
+            go_type:
+              type: "UUID"
+              import: "github.com/google/uuid"
+              pointer: true
