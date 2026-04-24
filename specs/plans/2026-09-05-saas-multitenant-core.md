@@ -905,7 +905,7 @@ isolation suite in Task 13 covers this query explicitly.
 
 ```bash
 cd server
-go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.27.0 generate   # or: go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.27.0 generate
+go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.27.0 generate
 go test ./... -run TestCreateAccountWithOwner -v
 ```
 
