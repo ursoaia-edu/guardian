@@ -1,6 +1,23 @@
+<div align="center">
+
+<img src="mobile/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_foreground.webp" alt="Guardian logo" width="160" />
+
 # Guardian
 
-Process monitoring and control system. Block or whitelist applications across Windows machines, manage them remotely from an Android app, all coordinated through a central server.
+**Process monitoring and control system — block or whitelist applications across Windows machines, manage them remotely from an Android app, all coordinated through a central server.**
+
+[![License](https://img.shields.io/badge/license-MIT-3b82f6?style=flat-square)](LICENSE)
+[![Server](https://img.shields.io/badge/server-Go-00ADD8?style=flat-square&logo=go&logoColor=white)](server/)
+[![Agent](https://img.shields.io/badge/agent-Windows-0078D6?style=flat-square&logo=windows&logoColor=white)](agent/)
+[![Mobile](https://img.shields.io/badge/mobile-Android-3DDC84?style=flat-square&logo=android&logoColor=white)](mobile/)
+[![Built with](https://img.shields.io/badge/built%20with-Go_%7C_Flutter-02569B?style=flat-square&logo=flutter&logoColor=white)](https://flutter.dev)
+
+[**Quick Start**](#quick-start) · [Architecture](#architecture) · [API Reference](#api-reference) · [Issues](../../issues)
+
+</div>
+
+<br />
+
 
 ## Quick Start
 
@@ -11,23 +28,13 @@ dist/
 ├── server/
 │   ├── guardian-server              # Server binary (Linux)
 │   ├── server.env                   # Server config template
-│   ├── guardian-server.service      # Systemd unit file
 │   ├── install.sh                   # Install script
-│   ├── Dockerfile                   # Docker image
 │   └── docker-compose.yml           # Docker Compose config
 ├── guardian.apk                     # Mobile app (Android)
 └── agent/
     ├── agent.env                    # Agent config template
     ├── Install-Guardian.bat         # Auto-detect arch and install agent
     ├── Uninstall-Guardian.bat       # Auto-detect arch and uninstall agent
-    └── bin/
-        ├── Install-Agent64.ps1
-        ├── Install-Agent32.ps1
-        ├── Uninstall-Agent64.ps1
-        ├── Uninstall-Agent32.ps1
-        └── agent/
-            ├── procsentinel-agent64.exe
-            └── procsentinel-agent32.exe
 ```
 
 ### 1. Server (Linux)
