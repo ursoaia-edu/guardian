@@ -34,7 +34,7 @@ dist/
 └── agent/
     ├── agent.env                    # Agent config template
     ├── Install-Guardian.bat         # Auto-detect arch and install agent
-    ├── Uninstall-Guardian.bat       # Auto-detect arch and uninstall agent
+    └── Uninstall-Guardian.bat       # Auto-detect arch and uninstall 
 ```
 
 ### 1. Server (Linux)
