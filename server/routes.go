@@ -19,6 +19,10 @@ func (s *Server) setupRoutes() *chi.Mux {
 	// Unauthenticated
 	r.Get("/health", handleHealth)
 
+	r.Route("/api/v1/auth", func(r chi.Router) {
+		r.Post("/register", s.handleRegister)
+	})
+
 	// Legacy single-tenant routes, disabled from Task 3 onward: NewServer no
 	// longer populates s.db, so any of these handlers would panic on a nil
 	// pointer at request time. Tasks 5 through 12 add the new, tenant-scoped

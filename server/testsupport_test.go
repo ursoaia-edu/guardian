@@ -1,7 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"sync"
 	"testing"
@@ -10,6 +15,29 @@ import (
 )
 
 var migrateOnce sync.Once
+
+// doJSON sends v as a JSON body and returns the recorded response. When
+// cookie is non-nil it is attached, which is how session-authenticated tests
+// call the API.
+func doJSON(t *testing.T, h http.Handler, method, path string, v any, cookie *http.Cookie) *httptest.ResponseRecorder {
+	t.Helper()
+	var body io.Reader
+	if v != nil {
+		raw, err := json.Marshal(v)
+		if err != nil {
+			t.Fatalf("marshal body: %v", err)
+		}
+		body = bytes.NewReader(raw)
+	}
+	req := httptest.NewRequest(method, path, body)
+	req.Header.Set("Content-Type", "application/json")
+	if cookie != nil {
+		req.AddCookie(cookie)
+	}
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	return rr
+}
 
 func ownerDSN(t *testing.T) string {
 	dsn := os.Getenv("TEST_DATABASE_URL")
