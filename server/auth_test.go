@@ -2,7 +2,11 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
+	"fmt"
 	"testing"
+
+	"golang.org/x/crypto/argon2"
 )
 
 func TestPasswordRoundTrip(t *testing.T) {
@@ -23,6 +27,49 @@ func TestPasswordHashesAreSalted(t *testing.T) {
 	b, _ := hashPassword("same")
 	if a == b {
 		t.Fatal("two hashes of the same password are identical; the salt is missing")
+	}
+}
+
+// A hash made with different cost parameters must still verify. This is the
+// property that lets the constants be retuned later without invalidating every
+// password already in the database; the hash below is deliberately made with
+// parameters that differ from the current constants.
+func TestPasswordVerifiesAgainstItsOwnParameters(t *testing.T) {
+	salt := []byte("0123456789abcdef")
+	const (
+		otherMemory  = 32 * 1024
+		otherTime    = 2
+		otherThreads = 1
+	)
+	key := argon2.IDKey([]byte("hunter2"), salt, otherTime, otherMemory, otherThreads, argonKeyLen)
+	encoded := fmt.Sprintf("$argon2id$v=%d$m=%d,t=%d,p=%d$%s$%s",
+		argon2.Version, otherMemory, otherTime, otherThreads,
+		base64.RawStdEncoding.EncodeToString(salt),
+		base64.RawStdEncoding.EncodeToString(key))
+
+	if !verifyPassword(encoded, "hunter2") {
+		t.Fatal("a hash carrying its own parameters did not verify; verifyPassword is using the package constants instead")
+	}
+	if verifyPassword(encoded, "wrong") {
+		t.Fatal("wrong password accepted")
+	}
+}
+
+func TestVerifyPasswordRejectsMalformedHashes(t *testing.T) {
+	for _, encoded := range []string{
+		"",
+		"not-a-hash",
+		"argon2id$c2FsdA$a2V5",                  // the old, parameterless shape
+		"$argon2id$v=19$m=65536,t=1,p=4$c2FsdA", // truncated
+		"$argon2i$v=19$m=65536,t=1,p=4$c2FsdA$a2V5", // wrong variant
+		"$argon2id$v=1$m=65536,t=1,p=4$c2FsdA$a2V5", // unsupported version
+		"$argon2id$v=19$m=0,t=0,p=0$c2FsdA$a2V5",    // degenerate parameters
+		"$argon2id$v=19$m=65536,t=1,p=4$!!!$a2V5",   // salt is not base64
+		"$argon2id$v=19$m=65536,t=1,p=4$c2FsdA$",    // empty key
+	} {
+		if verifyPassword(encoded, "anything") {
+			t.Fatalf("malformed hash %q verified", encoded)
+		}
 	}
 }
 
