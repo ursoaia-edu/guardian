@@ -28,6 +28,16 @@ type AccountMember struct {
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
+type Session struct {
+	TokenHash  string             `json:"token_hash"`
+	UserID     uuid.UUID          `json:"user_id"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	ExpiresAt  pgtype.Timestamptz `json:"expires_at"`
+	LastUsedAt pgtype.Timestamptz `json:"last_used_at"`
+	Ip         string             `json:"ip"`
+	UserAgent  string             `json:"user_agent"`
+}
+
 type User struct {
 	ID              uuid.UUID          `json:"id"`
 	Email           string             `json:"email"`

@@ -6,8 +6,10 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"server/internal/db"
 )
@@ -103,5 +105,70 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]string{
 		"account_id": account.ID.String(),
 		"user_id":    user.ID.String(),
+	})
+}
+
+const (
+	sessionCookieName = "guardian_session"
+	sessionTTL        = 30 * 24 * time.Hour
+)
+
+func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	var req registerRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "Invalid JSON"})
+		return
+	}
+	ctx := r.Context()
+	q := db.New(s.pool)
+
+	user, err := q.GetUserByEmail(ctx, strings.ToLower(strings.TrimSpace(req.Email)))
+	// The same response for an unknown email and a wrong password: anything
+	// else turns the login form into an account-enumeration oracle.
+	if err != nil || !verifyPassword(user.PasswordHash, req.Password) {
+		slog.Warn("failed login", "remote", r.RemoteAddr)
+		writeJSON(w, http.StatusUnauthorized, ErrorResponse{Error: "Invalid email or password"})
+		return
+	}
+
+	plain, hash := newToken()
+	expires := time.Now().Add(sessionTTL)
+	if err := q.CreateSession(ctx, db.CreateSessionParams{
+		TokenHash: hash, UserID: user.ID, ExpiresAt: pgtype.Timestamptz{Time: expires, Valid: true},
+		Ip: r.RemoteAddr, UserAgent: r.UserAgent(),
+	}); err != nil {
+		slog.Error("create session", "error", err)
+		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "Could not sign in"})
+		return
+	}
+
+	http.SetCookie(w, &http.Cookie{
+		Name: sessionCookieName, Value: plain, Path: "/",
+		Expires: expires, HttpOnly: true, Secure: true,
+		SameSite: http.SameSiteLaxMode,
+	})
+	// The mobile client cannot use a cookie jar comfortably, so the same token
+	// is also returned in the body for Bearer use.
+	writeJSON(w, http.StatusOK, map[string]string{"token": plain})
+}
+
+func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	if plain := sessionTokenFrom(r); plain != "" {
+		if err := db.New(s.pool).DeleteSession(r.Context(), hashToken(plain)); err != nil {
+			slog.Error("delete session", "error", err)
+		}
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name: sessionCookieName, Value: "", Path: "/", MaxAge: -1,
+		HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode,
+	})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
+	t, _ := tenantFrom(r.Context())
+	writeJSON(w, http.StatusOK, map[string]string{
+		"user_id":    t.UserID.String(),
+		"account_id": t.AccountID.String(),
 	})
 }
