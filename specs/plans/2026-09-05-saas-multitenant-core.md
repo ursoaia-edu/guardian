@@ -1538,7 +1538,10 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	plain, hash := newToken()
 	expires := time.Now().Add(sessionTTL)
 	if err := q.CreateSession(ctx, db.CreateSessionParams{
-		TokenHash: hash, UserID: user.ID, ExpiresAt: expires,
+		// sqlc generates pgtype.Timestamptz for timestamptz columns, so every
+		// time.Time handed to a generated param is wrapped this way.
+		TokenHash: hash, UserID: user.ID,
+		ExpiresAt: pgtype.Timestamptz{Time: expires, Valid: true},
 		Ip: r.RemoteAddr, UserAgent: r.UserAgent(),
 	}); err != nil {
 		slog.Error("create session", "error", err)
@@ -1634,7 +1637,7 @@ func (s *Server) SessionAuth(next http.Handler) http.Handler {
 		// Sliding renewal: an active parent is never signed out mid-use.
 		if err := q.TouchSession(ctx, db.TouchSessionParams{
 			TokenHash: session.TokenHash,
-			ExpiresAt: time.Now().Add(sessionTTL),
+			ExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(sessionTTL), Valid: true},
 		}); err != nil {
 			slog.Error("touch session", "error", err)
 		}
@@ -2756,7 +2759,7 @@ func (s *Server) handleCreateBindingToken(w http.ResponseWriter, r *http.Request
 	err := s.inAccount(r.Context(), t.AccountID, func(tx pgx.Tx) error {
 		_, err := db.New(tx).CreateBindingToken(r.Context(), db.CreateBindingTokenParams{
 			AccountID: t.AccountID, TokenHash: hash,
-			ExpiresAt: time.Now().Add(bindingTokenTTL),
+			ExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(bindingTokenTTL), Valid: true},
 		})
 		return err
 	})
