@@ -1,40 +1,60 @@
 package main
 
 import (
-	"crypto/subtle"
 	"log/slog"
 	"net/http"
-	"os"
+	"strings"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
+
+	"server/internal/db"
 )
 
-func getToken(envVar, fallback string) string {
-	if t := os.Getenv(envVar); t != "" {
-		return t
+// sessionTokenFrom reads the session token from the cookie (browser) or the
+// Authorization header (mobile). One token, two delivery forms.
+func sessionTokenFrom(r *http.Request) string {
+	if c, err := r.Cookie(sessionCookieName); err == nil && c.Value != "" {
+		return c.Value
 	}
-	return fallback
-}
-
-func authMiddleware(envVar, fallback string) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			token := getToken(envVar, fallback)
-			expected := "Bearer " + token
-			actual := r.Header.Get("Authorization")
-
-			if subtle.ConstantTimeCompare([]byte(actual), []byte(expected)) != 1 {
-				slog.Warn("unauthorized access attempt", "remote", r.RemoteAddr, "path", r.URL.Path)
-				http.Error(w, "Unauthorized", http.StatusUnauthorized)
-				return
-			}
-			next.ServeHTTP(w, r)
-		})
+	if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
+		return strings.TrimPrefix(h, "Bearer ")
 	}
+	return ""
 }
 
-func AdminAuth(next http.Handler) http.Handler {
-	return authMiddleware("ADMIN_TOKEN", "mILp9n6shk3G9SGSaS2nmP6YlLHwsP1Z")(next)
-}
+// SessionAuth resolves the session, picks the account the user belongs to, and
+// puts a Tenant in the context. account_id is derived here and nowhere else.
+func (s *Server) SessionAuth(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		plain := sessionTokenFrom(r)
+		if plain == "" {
+			writeJSON(w, http.StatusUnauthorized, ErrorResponse{Error: "Not signed in"})
+			return
+		}
+		ctx := r.Context()
+		q := db.New(s.pool)
 
-func ClientAuth(next http.Handler) http.Handler {
-	return authMiddleware("TOKEN", "mILp9n6shk3G9SGSaS2nmP6YlLHwsP1Z")(next)
+		session, err := q.GetSession(ctx, hashToken(plain))
+		if err != nil {
+			writeJSON(w, http.StatusUnauthorized, ErrorResponse{Error: "Session expired"})
+			return
+		}
+		accounts, err := q.ListAccountsForUser(ctx, session.UserID)
+		if err != nil || len(accounts) == 0 {
+			slog.Warn("session without an account", "user_id", session.UserID, "error", err)
+			writeJSON(w, http.StatusForbidden, ErrorResponse{Error: "No account"})
+			return
+		}
+		// Sliding renewal: an active parent is never signed out mid-use.
+		if err := q.TouchSession(ctx, db.TouchSessionParams{
+			TokenHash: session.TokenHash,
+			ExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(sessionTTL), Valid: true},
+		}); err != nil {
+			slog.Error("touch session", "error", err)
+		}
+
+		ctx = withTenant(ctx, Tenant{AccountID: accounts[0].ID, UserID: session.UserID})
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
 }
