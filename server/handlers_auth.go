@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
@@ -113,6 +114,18 @@ const (
 	sessionTTL        = 30 * 24 * time.Hour
 )
 
+// dummyPasswordHash is what a login attempt for an unknown email is verified
+// against, so that a miss costs the same argon2 work as a hit. Built once at
+// startup; the password it encodes is unreachable because no registration path
+// can produce it.
+var dummyPasswordHash = func() string {
+	h, err := hashPassword("no user has this password")
+	if err != nil {
+		panic("hashing the dummy password failed: " + err.Error())
+	}
+	return h
+}()
+
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	var req registerRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -123,9 +136,26 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	q := db.New(s.pool)
 
 	user, err := q.GetUserByEmail(ctx, strings.ToLower(strings.TrimSpace(req.Email)))
-	// The same response for an unknown email and a wrong password: anything
-	// else turns the login form into an account-enumeration oracle.
-	if err != nil || !verifyPassword(user.PasswordHash, req.Password) {
+	// A database failure is not a rejected password. Reporting it as one tells
+	// every parent their password is wrong during an outage, and hides the
+	// outage in the logs behind what looks like credential stuffing.
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		slog.Error("look up user for login", "error", err)
+		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "Could not sign in"})
+		return
+	}
+
+	// Unknown email and wrong password must be indistinguishable on the time
+	// axis as well as in the response. Short-circuiting past verifyPassword on
+	// a miss answers in ~1ms where a real password costs ~100ms, which is an
+	// account-enumeration oracle measurable over the internet without
+	// statistics. So the argon2 work is always spent, against a dummy hash when
+	// there is no user.
+	stored := dummyPasswordHash
+	if err == nil {
+		stored = user.PasswordHash
+	}
+	if !verifyPassword(stored, req.Password) || err != nil {
 		slog.Warn("failed login", "remote", r.RemoteAddr)
 		writeJSON(w, http.StatusUnauthorized, ErrorResponse{Error: "Invalid email or password"})
 		return
@@ -166,7 +196,10 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
-	t, _ := tenantFrom(r.Context())
+	t, ok := mustTenant(w, r)
+	if !ok {
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]string{
 		"user_id":    t.UserID.String(),
 		"account_id": t.AccountID.String(),

@@ -39,6 +39,13 @@ func doJSON(t *testing.T, h http.Handler, method, path string, v any, cookie *ht
 	return rr
 }
 
+func decodeInto(t *testing.T, rr *httptest.ResponseRecorder, v any) {
+	t.Helper()
+	if err := json.Unmarshal(rr.Body.Bytes(), v); err != nil {
+		t.Fatalf("decode %s: %v", rr.Body.String(), err)
+	}
+}
+
 func ownerDSN(t *testing.T) string {
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {

@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"net/http"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -26,6 +28,20 @@ func withTenant(ctx context.Context, t Tenant) context.Context {
 func tenantFrom(ctx context.Context) (Tenant, bool) {
 	t, ok := ctx.Value(tenantKey).(Tenant)
 	return t, ok
+}
+
+// mustTenant returns the tenant a SessionAuth-protected handler is running for.
+// Reaching such a handler without one is a routing mistake, not a client error:
+// discarding the ok and proceeding would serve a zero account id — the nil
+// UUID — as if it were a real account. It fails loudly instead.
+func mustTenant(w http.ResponseWriter, r *http.Request) (Tenant, bool) {
+	t, ok := tenantFrom(r.Context())
+	if !ok {
+		slog.Error("handler reached without a tenant in context", "path", r.URL.Path)
+		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "Internal error"})
+		return Tenant{}, false
+	}
+	return t, true
 }
 
 // inAccount runs fn inside a transaction scoped to one account. The GUC is set
