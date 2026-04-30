@@ -37,6 +37,7 @@ email verification, and the account switcher for users who belong to more than o
 - The application connects as the `guardian_app` role, which is **not** the table owner and has no `BYPASSRLS`. Migrations connect as the owner role.
 - Tokens (session, agent, binding, invitation) are 32 random bytes hex-encoded; only their SHA-256 hex digest is stored.
 - Timestamps are `timestamptz`, always UTC.
+- **Migration `00004` is permanently retired.** Ruling R1 folded its policies into `00003_rls.sql`, leaving a gap in the sequence. `runMigrations` calls `goose.UpContext` without `WithAllowMissing`, so goose refuses out-of-order versions: a `00004_*.sql` added later would be rejected on every database that has already applied `00005`. Never reuse the number.
 - Tests require a live Postgres. `TEST_DATABASE_URL` (owner) and `TEST_APP_DATABASE_URL` (`guardian_app`) must be set; `server/docker-compose.dev.yml` provides both.
 - Server code is English throughout — identifiers, comments, log messages, API error strings.
 
@@ -1455,6 +1456,102 @@ func TestLogoutRevokesTheSession(t *testing.T) {
 		t.Fatalf("revoked session still works: %d", rr.Code)
 	}
 }
+
+// Expiry is enforced by `AND expires_at > now()` in GetSession, and nothing
+// else guards it. Without this test that clause can be deleted and every other
+// test still passes.
+func TestExpiredSessionIsRejected(t *testing.T) {
+	s := &Server{pool: testPool(t)}
+	c := registerAndLogin(t, s, "parent@example.com")
+
+	// Back-date the session through the owner connection: guardian_app can
+	// update sessions, but doing it here keeps the test honest about what it
+	// is simulating — the passage of time, not an application action.
+	pool, err := pgxpool.New(context.Background(), os.Getenv("TEST_DATABASE_URL"))
+	if err != nil {
+		t.Fatalf("connect as owner: %v", err)
+	}
+	defer pool.Close()
+	if _, err := pool.Exec(context.Background(),
+		`UPDATE sessions SET expires_at = now() - interval '1 minute'`); err != nil {
+		t.Fatalf("expire the session: %v", err)
+	}
+
+	if rr := doJSON(t, s.setupRoutes(), "GET", "/api/v1/me", nil, c); rr.Code != 401 {
+		t.Fatalf("expired session was accepted: %d", rr.Code)
+	}
+}
+
+// The Authorization header is a second, independent delivery path for the same
+// session, and it is the one the mobile client uses.
+func TestBearerTokenAuthenticates(t *testing.T) {
+	s := &Server{pool: testPool(t)}
+	h := s.setupRoutes()
+	body := map[string]string{"email": "parent@example.com", "password": "a-long-enough-password"}
+	if rr := doJSON(t, h, "POST", "/api/v1/auth/register", body, nil); rr.Code != 201 {
+		t.Fatalf("register: %d %s", rr.Code, rr.Body.String())
+	}
+	rr := doJSON(t, h, "POST", "/api/v1/auth/login", body, nil)
+	var out struct {
+		Token string `json:"token"`
+	}
+	decodeInto(t, rr, &out)
+	if out.Token == "" {
+		t.Fatal("login returned no bearer token")
+	}
+
+	req := httptest.NewRequest("GET", "/api/v1/me", nil)
+	req.Header.Set("Authorization", "Bearer "+out.Token)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("bearer token rejected: %d %s", rec.Code, rec.Body.String())
+	}
+
+	req = httptest.NewRequest("GET", "/api/v1/me", nil)
+	req.Header.Set("Authorization", "Bearer "+strings.Repeat("0", 64))
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != 401 {
+		t.Fatalf("forged bearer token accepted: %d", rec.Code)
+	}
+}
+
+// The property every remaining task depends on: a session resolves to its own
+// user's account and to no one else's.
+func TestSessionResolvesToItsOwnAccount(t *testing.T) {
+	s := &Server{pool: testPool(t)}
+	h := s.setupRoutes()
+	ca := registerAndLogin(t, s, "a@example.com")
+	cb := registerAndLogin(t, s, "b@example.com")
+
+	var a, b struct {
+		AccountID string `json:"account_id"`
+	}
+	decodeInto(t, doJSON(t, h, "GET", "/api/v1/me", nil, ca), &a)
+	decodeInto(t, doJSON(t, h, "GET", "/api/v1/me", nil, cb), &b)
+
+	if a.AccountID == "" || b.AccountID == "" {
+		t.Fatalf("missing account id: %q %q", a.AccountID, b.AccountID)
+	}
+	if a.AccountID == b.AccountID {
+		t.Fatalf("two accounts resolved to the same id %s", a.AccountID)
+	}
+}
+```
+
+These three tests need `context`, `os`, `strings`, `net/http/httptest` and
+`github.com/jackc/pgx/v5/pgxpool` in `session_test.go`, plus the `decodeInto` helper. `decodeInto`
+is introduced by Task 13; add it to `server/testsupport_test.go` now instead, exactly as Task 13
+specifies it, and Task 13 will find it already present:
+
+```go
+func decodeInto(t *testing.T, rr *httptest.ResponseRecorder, v any) {
+	t.Helper()
+	if err := json.Unmarshal(rr.Body.Bytes(), v); err != nil {
+		t.Fatalf("decode %s: %v", rr.Body.String(), err)
+	}
+}
 ```
 
 - [ ] **Step 2: Run it and watch it fail**
@@ -1499,7 +1596,12 @@ VALUES ($1, $2, $3, $4, $5);
 SELECT * FROM sessions WHERE token_hash = $1 AND expires_at > now();
 
 -- name: TouchSession :exec
-UPDATE sessions SET last_used_at = now(), expires_at = $2 WHERE token_hash = $1;
+-- Sliding renewal, self-throttled. Renewing on every authenticated request
+-- turns every GET into a write: WAL traffic proportional to all API traffic,
+-- and a row lock that serialises concurrent requests sharing one session. At a
+-- 30-day TTL, renewing at most hourly is indistinguishable to the user.
+UPDATE sessions SET last_used_at = now(), expires_at = $2
+WHERE token_hash = $1 AND last_used_at < now() - interval '1 hour';
 
 -- name: DeleteSession :exec
 DELETE FROM sessions WHERE token_hash = $1;
@@ -1517,6 +1619,18 @@ const (
 	sessionTTL        = 30 * 24 * time.Hour
 )
 
+// dummyPasswordHash is what a login attempt for an unknown email is verified
+// against, so that a miss costs the same argon2 work as a hit. Built once at
+// startup; the password it encodes is unreachable because no registration path
+// can produce it.
+var dummyPasswordHash = func() string {
+	h, err := hashPassword("no user has this password")
+	if err != nil {
+		panic("hashing the dummy password failed: " + err.Error())
+	}
+	return h
+}()
+
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	var req registerRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1527,9 +1641,26 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	q := db.New(s.pool)
 
 	user, err := q.GetUserByEmail(ctx, strings.ToLower(strings.TrimSpace(req.Email)))
-	// The same response for an unknown email and a wrong password: anything
-	// else turns the login form into an account-enumeration oracle.
-	if err != nil || !verifyPassword(user.PasswordHash, req.Password) {
+	// A database failure is not a rejected password. Reporting it as one tells
+	// every parent their password is wrong during an outage, and hides the
+	// outage in the logs behind what looks like credential stuffing.
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		slog.Error("look up user for login", "error", err)
+		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "Could not sign in"})
+		return
+	}
+
+	// Unknown email and wrong password must be indistinguishable on the time
+	// axis as well as in the response. Short-circuiting past verifyPassword on
+	// a miss answers in ~1ms where a real password costs ~100ms, which is an
+	// account-enumeration oracle measurable over the internet without
+	// statistics. So the argon2 work is always spent, against a dummy hash when
+	// there is no user.
+	stored := dummyPasswordHash
+	if err == nil {
+		stored = user.PasswordHash
+	}
+	if !verifyPassword(stored, req.Password) || err != nil {
 		slog.Warn("failed login", "remote", r.RemoteAddr)
 		writeJSON(w, http.StatusUnauthorized, ErrorResponse{Error: "Invalid email or password"})
 		return
@@ -1573,7 +1704,10 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
-	t, _ := tenantFrom(r.Context())
+	t, ok := mustTenant(w, r)
+	if !ok {
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]string{
 		"user_id":    t.UserID.String(),
 		"account_id": t.AccountID.String(),
@@ -1649,6 +1783,27 @@ func (s *Server) SessionAuth(next http.Handler) http.Handler {
 ```
 
 Multi-account users pick an account explicitly in a later plan; until then the first membership is used, which is exactly right while every user has one account.
+
+Add this helper to `server/tenant.go`. Every cabinet handler from here on reads its tenant through
+it rather than through `tenantFrom` directly:
+
+```go
+// mustTenant returns the tenant a SessionAuth-protected handler is running for.
+// Reaching such a handler without one is a routing mistake, not a client error:
+// discarding the ok and proceeding would serve a zero account id — the nil
+// UUID — as if it were a real account. It fails loudly instead.
+func mustTenant(w http.ResponseWriter, r *http.Request) (Tenant, bool) {
+	t, ok := tenantFrom(r.Context())
+	if !ok {
+		slog.Error("handler reached without a tenant in context", "path", r.URL.Path)
+		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "Internal error"})
+		return Tenant{}, false
+	}
+	return t, true
+}
+```
+
+(imports to add to `tenant.go`: `log/slog`, `net/http`)
 
 Wire it in `routes.go`:
 
@@ -1863,7 +2018,10 @@ import (
 )
 
 func (s *Server) handleListRooms(w http.ResponseWriter, r *http.Request) {
-	t, _ := tenantFrom(r.Context())
+	t, ok := mustTenant(w, r)
+	if !ok {
+		return
+	}
 	var rooms []db.Room
 	err := s.inAccount(r.Context(), t.AccountID, func(tx pgx.Tx) error {
 		var err error
@@ -1891,7 +2049,10 @@ func (s *Server) handleCreateRoom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	t, _ := tenantFrom(r.Context())
+	t, ok := mustTenant(w, r)
+	if !ok {
+		return
+	}
 	var room db.Room
 	err := s.inAccount(r.Context(), t.AccountID, func(tx pgx.Tx) error {
 		var err error
@@ -1921,7 +2082,10 @@ func (s *Server) handleGetRoom(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, ErrorResponse{Error: "Room not found"})
 		return
 	}
-	t, _ := tenantFrom(r.Context())
+	t, ok := mustTenant(w, r)
+	if !ok {
+		return
+	}
 	var room db.Room
 	err := s.inAccount(r.Context(), t.AccountID, func(tx pgx.Tx) error {
 		var err error
@@ -1943,7 +2107,10 @@ func (s *Server) handleDeleteRoom(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, ErrorResponse{Error: "Room not found"})
 		return
 	}
-	t, _ := tenantFrom(r.Context())
+	t, ok := mustTenant(w, r)
+	if !ok {
+		return
+	}
 	var affected int64
 	err := s.inAccount(r.Context(), t.AccountID, func(tx pgx.Tx) error {
 		var err error
@@ -2117,7 +2284,10 @@ func (s *Server) handleListRoomApplications(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusNotFound, ErrorResponse{Error: "Room not found"})
 		return
 	}
-	t, _ := tenantFrom(r.Context())
+	t, ok := mustTenant(w, r)
+	if !ok {
+		return
+	}
 	var apps []db.Application
 	err := s.inAccount(r.Context(), t.AccountID, func(tx pgx.Tx) error {
 		q := db.New(tx)
@@ -2162,7 +2332,10 @@ func (s *Server) handleAddRoomApplication(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	t, _ := tenantFrom(r.Context())
+	t, ok := mustTenant(w, r)
+	if !ok {
+		return
+	}
 	var app db.Application
 	err := s.inAccount(r.Context(), t.AccountID, func(tx pgx.Tx) error {
 		q := db.New(tx)
@@ -2441,7 +2614,10 @@ import (
 )
 
 func (s *Server) handleListComputers(w http.ResponseWriter, r *http.Request) {
-	t, _ := tenantFrom(r.Context())
+	t, ok := mustTenant(w, r)
+	if !ok {
+		return
+	}
 	var computers []db.Computer
 	err := s.inAccount(r.Context(), t.AccountID, func(tx pgx.Tx) error {
 		var err error
@@ -2503,7 +2679,10 @@ func (s *Server) handlePatchComputer(w http.ResponseWriter, r *http.Request) {
 		req.Blocked = &blocked
 	}
 
-	t, _ := tenantFrom(r.Context())
+	t, ok := mustTenant(w, r)
+	if !ok {
+		return
+	}
 	var computer db.Computer
 	err = s.inAccount(r.Context(), t.AccountID, func(tx pgx.Tx) error {
 		q := db.New(tx)
@@ -2754,7 +2933,10 @@ import (
 const bindingTokenTTL = 365 * 24 * time.Hour
 
 func (s *Server) handleCreateBindingToken(w http.ResponseWriter, r *http.Request) {
-	t, _ := tenantFrom(r.Context())
+	t, ok := mustTenant(w, r)
+	if !ok {
+		return
+	}
 	plain, hash := newToken()
 	err := s.inAccount(r.Context(), t.AccountID, func(tx pgx.Tx) error {
 		_, err := db.New(tx).CreateBindingToken(r.Context(), db.CreateBindingTokenParams{
@@ -3025,7 +3207,10 @@ func (s *Server) handlePatchRoom(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "Mode must be 'blacklist' or 'whitelist'"})
 		return
 	}
-	t, _ := tenantFrom(r.Context())
+	t, ok := mustTenant(w, r)
+	if !ok {
+		return
+	}
 	var room db.Room
 	err := s.inAccount(r.Context(), t.AccountID, func(tx pgx.Tx) error {
 		var err error
@@ -3368,7 +3553,10 @@ func (s *Server) recordEvent(ctx context.Context, tx pgx.Tx, e eventInput) error
 }
 
 func (s *Server) handleListEvents(w http.ResponseWriter, r *http.Request) {
-	t, _ := tenantFrom(r.Context())
+	t, ok := mustTenant(w, r)
+	if !ok {
+		return
+	}
 	var events []db.Event
 	err := s.inAccount(r.Context(), t.AccountID, func(tx pgx.Tx) error {
 		var err error
@@ -3849,7 +4037,7 @@ Expected: FAIL with 404 on `POST /api/v1/rooms/{id}/members` — the route does 
 ```sql
 -- +goose Up
 -- A guest's account is discovered from their room grants before any account
--- scope exists, exactly as account_members is read in migration 00004. The
+-- scope exists, exactly as account_members is read in migration 00003. The
 -- query is keyed on a user id the session already proved.
 CREATE POLICY room_members_prescope ON room_members
     FOR SELECT USING (current_account_id() IS NULL);
@@ -3974,7 +4162,10 @@ func requireManager(w http.ResponseWriter, t Tenant) bool {
 }
 
 func (s *Server) handleAddRoomMember(w http.ResponseWriter, r *http.Request) {
-	t, _ := tenantFrom(r.Context())
+	t, ok := mustTenant(w, r)
+	if !ok {
+		return
+	}
 	if !requireManager(w, t) {
 		return
 	}
@@ -4025,7 +4216,10 @@ func (s *Server) handleListRoomMembers(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, ErrorResponse{Error: "Room not found"})
 		return
 	}
-	t, _ := tenantFrom(r.Context())
+	t, ok := mustTenant(w, r)
+	if !ok {
+		return
+	}
 	var members []db.ListRoomMembersRow
 	err := s.inAccount(r.Context(), t.AccountID, func(tx pgx.Tx) error {
 		q := db.New(tx)
