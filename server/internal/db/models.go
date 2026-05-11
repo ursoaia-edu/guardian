@@ -28,6 +28,24 @@ type AccountMember struct {
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
+type Room struct {
+	ID                uuid.UUID          `json:"id"`
+	AccountID         uuid.UUID          `json:"account_id"`
+	Name              string             `json:"name"`
+	Mode              string             `json:"mode"`
+	ProtectionEnabled bool               `json:"protection_enabled"`
+	PowerAllowed      bool               `json:"power_allowed"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+}
+
+type RoomMember struct {
+	RoomID    uuid.UUID          `json:"room_id"`
+	AccountID uuid.UUID          `json:"account_id"`
+	UserID    uuid.UUID          `json:"user_id"`
+	Role      string             `json:"role"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
 type Session struct {
 	TokenHash  string             `json:"token_hash"`
 	UserID     uuid.UUID          `json:"user_id"`
