@@ -2275,7 +2275,43 @@ func TestApplicationsOfAnotherAccountsRoomAreNotFound(t *testing.T) {
 		t.Fatalf("account B wrote into account A's room: %d", rr.Code)
 	}
 }
+
+// A blocklist you cannot remove from is not a blocklist a parent can use, and
+// removing an entry is the most likely action right after adding one.
+func TestDeleteRoomApplication(t *testing.T) {
+	s := &Server{pool: testPool(t)}
+	h := s.setupRoutes()
+	c := registerAndLogin(t, s, "parent@example.com")
+	room := createRoom(t, s, c, "Kids room")
+
+	var app struct {
+		ID string `json:"id"`
+	}
+	decodeInto(t, doJSON(t, h, "POST", "/api/v1/rooms/"+room+"/applications",
+		map[string]string{"name": "steam.exe", "list": "blacklist"}, c), &app)
+	if app.ID == "" {
+		t.Fatal("add returned no application id")
+	}
+
+	if rr := doJSON(t, h, "DELETE", "/api/v1/rooms/"+room+"/applications/"+app.ID, nil, c); rr.Code != 204 {
+		t.Fatalf("delete: %d %s", rr.Code, rr.Body.String())
+	}
+	// Deleting the same entry twice is a 404, not a second 204: the second call
+	// removed nothing and should say so.
+	if rr := doJSON(t, h, "DELETE", "/api/v1/rooms/"+room+"/applications/"+app.ID, nil, c); rr.Code != 404 {
+		t.Fatalf("second delete: %d, want 404", rr.Code)
+	}
+
+	// The now-empty list must serialise as [] rather than null — this is the
+	// only test that exercises orEmpty against a genuinely empty collection.
+	listed := doJSON(t, h, "GET", "/api/v1/rooms/"+room+"/applications", nil, c)
+	if !strings.Contains(listed.Body.String(), `"applications":[]`) {
+		t.Fatalf("empty list did not serialise as an empty array: %s", listed.Body.String())
+	}
+}
 ```
+
+(imports for this file: `encoding/json`, `net/http`, `strings`, `testing`)
 
 - [ ] **Step 2: Run it and watch it fail**
 
@@ -2415,6 +2451,47 @@ func (s *Server) handleAddRoomApplication(w http.ResponseWriter, r *http.Request
 	}
 	writeJSON(w, http.StatusCreated, app)
 }
+
+func (s *Server) handleDeleteRoomApplication(w http.ResponseWriter, r *http.Request) {
+	roomID, ok := roomIDParam(r)
+	if !ok {
+		writeJSON(w, http.StatusNotFound, ErrorResponse{Error: "Room not found"})
+		return
+	}
+	appID, parseErr := uuid.Parse(chi.URLParam(r, "appID"))
+	if parseErr != nil {
+		writeJSON(w, http.StatusNotFound, ErrorResponse{Error: "Application not found"})
+		return
+	}
+	t, ok := mustTenant(w, r)
+	if !ok {
+		return
+	}
+
+	var affected int64
+	err := s.inAccount(r.Context(), t.AccountID, func(tx pgx.Tx) error {
+		q := db.New(tx)
+		// Same guard as the insert: prove the room belongs to this account so a
+		// foreign room is an honest 404 rather than a silent zero-row delete.
+		if _, err := q.GetRoom(r.Context(), roomID); err != nil {
+			return err
+		}
+		var err error
+		affected, err = q.DeleteRoomApplication(r.Context(), db.DeleteRoomApplicationParams{
+			ID: appID, RoomID: roomID,
+		})
+		return err
+	})
+	if err != nil {
+		writeLookupError(w, r, err, "Room")
+		return
+	}
+	if affected == 0 {
+		writeJSON(w, http.StatusNotFound, ErrorResponse{Error: "Application not found"})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
 ```
 
 Routes, inside `/api/v1`:
@@ -2422,6 +2499,7 @@ Routes, inside `/api/v1`:
 ```go
 		r.Get("/rooms/{roomID}/applications", s.handleListRoomApplications)
 		r.Post("/rooms/{roomID}/applications", s.handleAddRoomApplication)
+		r.Delete("/rooms/{roomID}/applications/{appID}", s.handleDeleteRoomApplication)
 ```
 
 - [ ] **Step 6: Run the tests — they must pass**
@@ -3715,8 +3793,12 @@ func TestCrossAccountAccessIsAlways404(t *testing.T) {
 
 	ca := registerAndLogin(t, s, "a@example.com")
 	roomA := createRoom(t, s, ca, "A's room")
-	doJSON(t, h, "POST", "/api/v1/rooms/"+roomA+"/applications",
-		map[string]string{"name": "steam.exe", "list": "blacklist"}, ca)
+	var appRow struct {
+		ID string `json:"id"`
+	}
+	decodeInto(t, doJSON(t, h, "POST", "/api/v1/rooms/"+roomA+"/applications",
+		map[string]string{"name": "steam.exe", "list": "blacklist"}, ca), &appRow)
+	appA := appRow.ID
 	enroll(t, s, mintBindingToken(t, s, ca), "guid-a", "PC-A")
 
 	var listA struct {
@@ -3739,6 +3821,7 @@ func TestCrossAccountAccessIsAlways404(t *testing.T) {
 		{"DELETE", "/api/v1/rooms/" + roomA, nil},
 		{"GET", "/api/v1/rooms/" + roomA + "/applications", nil},
 		{"POST", "/api/v1/rooms/" + roomA + "/applications", map[string]string{"name": "x.exe", "list": "blacklist"}},
+		{"DELETE", "/api/v1/rooms/" + roomA + "/applications/" + appA, nil},
 		{"PATCH", "/api/v1/computers/" + computerA, map[string]any{"display_name": "stolen"}},
 		{"PATCH", "/api/v1/computers/" + computerA, map[string]any{"blocked": true}},
 	}
