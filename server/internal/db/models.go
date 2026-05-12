@@ -38,6 +38,25 @@ type Application struct {
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
+type Computer struct {
+	ID           uuid.UUID          `json:"id"`
+	AccountID    uuid.UUID          `json:"account_id"`
+	RoomID       *uuid.UUID         `json:"room_id"`
+	DisplayName  string             `json:"display_name"`
+	MachineGuid  string             `json:"machine_guid"`
+	Hostname     string             `json:"hostname"`
+	OsName       string             `json:"os_name"`
+	OsBuild      string             `json:"os_build"`
+	Arch         string             `json:"arch"`
+	AgentVersion string             `json:"agent_version"`
+	Hardware     []byte             `json:"hardware"`
+	Runtime      []byte             `json:"runtime"`
+	TokenHash    string             `json:"token_hash"`
+	Blocked      bool               `json:"blocked"`
+	EnrolledAt   pgtype.Timestamptz `json:"enrolled_at"`
+	LastSeenAt   pgtype.Timestamptz `json:"last_seen_at"`
+}
+
 type Room struct {
 	ID                uuid.UUID          `json:"id"`
 	AccountID         uuid.UUID          `json:"account_id"`

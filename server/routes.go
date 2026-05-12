@@ -36,6 +36,9 @@ func (s *Server) setupRoutes() *chi.Mux {
 		r.Get("/rooms/{roomID}/applications", s.handleListRoomApplications)
 		r.Post("/rooms/{roomID}/applications", s.handleAddRoomApplication)
 		r.Delete("/rooms/{roomID}/applications/{appID}", s.handleDeleteRoomApplication)
+
+		r.Get("/computers", s.handleListComputers)
+		r.Patch("/computers/{computerID}", s.handlePatchComputer)
 	})
 
 	// Legacy single-tenant routes, disabled from Task 3 onward: NewServer no
