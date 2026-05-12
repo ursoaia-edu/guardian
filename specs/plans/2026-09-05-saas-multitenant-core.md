@@ -777,6 +777,14 @@ sql:
               type: "UUID"
               import: "github.com/google/uuid"
               pointer: true
+          # computers.token_hash is the agent's credential digest. Handlers
+          # return db.Computer straight to the cabinet, so without this tag the
+          # digest ships in every computer response. Enforcing it on the
+          # generated struct rather than in a hand-written DTO means a new
+          # handler cannot forget it. TestComputerResponseHidesTheTokenHash is
+          # the guard that the tag still applies after a regeneration.
+          - column: "computers.token_hash"
+            go_struct_tag: 'json:"-"'
 ```
 
 sqlc understands goose annotations and ignores the `-- +goose Down` half of each file, so migrations double as the schema source.
@@ -2527,7 +2535,7 @@ git commit -m "feat(server): move application lists onto rooms"
 - Modify: `server/routes.go`
 
 **Interfaces:**
-- Produces: `GET /api/v1/computers`, `PATCH /api/v1/computers/{computerID}` (display name, room assignment, blocked); `ListComputers`, `GetComputer`, `UpdateComputer`, `UpsertComputerByGUID`, `CountComputers`, `GetComputerByTokenHash`, `TouchComputer`.
+- Produces: `GET /api/v1/computers`, `PATCH /api/v1/computers/{computerID}` (display name, room assignment, blocked); `ListComputers`, `GetComputer`, `UpdateComputer`, `UpsertComputerByGUID`, `CountComputers`. (`GetComputerByTokenHash` and `TouchComputer` belong to Task 11, which appends them to the same queries file — do not write them here.)
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2613,11 +2621,21 @@ func TestSetDisplayNameAndRoom(t *testing.T) {
 		t.Fatalf("patch: %d %s", rr.Code, rr.Body.String())
 	}
 
+	// Read back through the OWNER connection, not s.pool. `computers` has no
+	// pre-scope policy — only `accounts` and `account_members` do — so an
+	// unscoped query as guardian_app sees zero rows and this assertion would
+	// fail against a perfectly correct implementation. That RLS bites here is
+	// the system working, not a problem to route around in production code.
+	owner, err := pgxpool.New(context.Background(), os.Getenv("TEST_DATABASE_URL"))
+	if err != nil {
+		t.Fatalf("connect as owner: %v", err)
+	}
+	defer owner.Close()
+
 	var name string
 	var roomID *uuid.UUID
-	err := s.pool.QueryRow(context.Background(),
-		`SELECT display_name, room_id FROM computers WHERE id = $1`, id).Scan(&name, &roomID)
-	if err != nil {
+	if err := owner.QueryRow(context.Background(),
+		`SELECT display_name, room_id FROM computers WHERE id = $1`, id).Scan(&name, &roomID); err != nil {
 		t.Fatalf("read back: %v", err)
 	}
 	if name != "Masha's laptop" {
@@ -2625,6 +2643,28 @@ func TestSetDisplayNameAndRoom(t *testing.T) {
 	}
 	if roomID == nil || roomID.String() != room {
 		t.Fatalf("room_id is %v, want %s", roomID, room)
+	}
+}
+
+// The agent's credential digest must never leave the database. It is a one-way
+// hash of a 32-byte random token, so exposure is not immediately exploitable —
+// but a credential digest handed to every cabinet caller (including, from
+// Task 14, a room guest) is the kind of leak that is only ever noticed after it
+// matters. The sqlc struct tag is what enforces this; this test is what proves
+// the tag still does its job.
+func TestComputerResponseHidesTheTokenHash(t *testing.T) {
+	s := &Server{pool: testPool(t)}
+	c := registerAndLogin(t, s, "parent@example.com")
+	id := insertComputer(t, s, accountIDOf(t, s, "parent@example.com"), "guid-1", "PC-1")
+
+	for _, rr := range []*httptest.ResponseRecorder{
+		doJSON(t, s.setupRoutes(), "GET", "/api/v1/computers", nil, c),
+		doJSON(t, s.setupRoutes(), "PATCH", "/api/v1/computers/"+id.String(),
+			map[string]any{"display_name": "Renamed"}, c),
+	} {
+		if strings.Contains(rr.Body.String(), "token_hash") {
+			t.Fatalf("token hash leaked into an API response: %s", rr.Body.String())
+		}
 	}
 }
 
