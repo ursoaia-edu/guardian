@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -42,6 +43,24 @@ func mustTenant(w http.ResponseWriter, r *http.Request) (Tenant, bool) {
 		return Tenant{}, false
 	}
 	return t, true
+}
+
+// writeLookupError maps the error from a scoped lookup. RLS makes another
+// account's row indistinguishable from an absent one — both come back as no
+// rows — so both are a 404 and neither is logged as a problem. Anything else is
+// a real failure: a dropped connection, a cancelled context, a broken query.
+// Those must be a logged 500, or an outage arrives at the operator disguised as
+// a flood of "not found".
+//
+// It lives here beside mustTenant: both encode the same idea, that a
+// handler's view of the world is already narrowed by the account scope.
+func writeLookupError(w http.ResponseWriter, r *http.Request, err error, what string) {
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeJSON(w, http.StatusNotFound, ErrorResponse{Error: what + " not found"})
+		return
+	}
+	slog.Error("scoped lookup failed", "path", r.URL.Path, "error", err)
+	writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "Internal error"})
 }
 
 // inAccount runs fn inside a transaction scoped to one account. The GUC is set

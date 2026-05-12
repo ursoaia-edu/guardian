@@ -58,3 +58,31 @@ func TestRoomOfAnotherAccountIsNotFound(t *testing.T) {
 		t.Fatalf("account B got %d for account A's room, want 404", rr.Code)
 	}
 }
+
+// Deleting is the second write path this task adds, and RLS has to hide a
+// foreign room from it just as thoroughly as from a read — otherwise one
+// account can destroy another's rooms while being told they do not exist.
+func TestDeleteRoom(t *testing.T) {
+	s := &Server{pool: testPool(t)}
+	h := s.setupRoutes()
+	ca := registerAndLogin(t, s, "a@example.com")
+	roomA := createRoom(t, s, ca, "A's room")
+
+	cb := registerAndLogin(t, s, "b@example.com")
+	if rr := doJSON(t, h, "DELETE", "/api/v1/rooms/"+roomA, nil, cb); rr.Code != 404 {
+		t.Fatalf("account B got %d deleting account A's room, want 404", rr.Code)
+	}
+
+	// The room must still be there: a 404 that actually deleted the row would
+	// be the worst possible outcome, and only this second check catches it.
+	if rr := doJSON(t, h, "GET", "/api/v1/rooms/"+roomA, nil, ca); rr.Code != 200 {
+		t.Fatalf("account A's room is gone after B's delete attempt: %d", rr.Code)
+	}
+
+	if rr := doJSON(t, h, "DELETE", "/api/v1/rooms/"+roomA, nil, ca); rr.Code != 204 {
+		t.Fatalf("owner delete: %d", rr.Code)
+	}
+	if rr := doJSON(t, h, "GET", "/api/v1/rooms/"+roomA, nil, ca); rr.Code != 404 {
+		t.Fatalf("room still readable after deletion: %d", rr.Code)
+	}
+}

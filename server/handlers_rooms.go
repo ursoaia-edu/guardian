@@ -29,7 +29,7 @@ func (s *Server) handleListRooms(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "Could not list rooms"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"rooms": rooms})
+	writeJSON(w, http.StatusOK, map[string]any{"rooms": orEmpty(rooms)})
 }
 
 func (s *Server) handleCreateRoom(w http.ResponseWriter, r *http.Request) {
@@ -90,8 +90,9 @@ func (s *Server) handleGetRoom(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		// RLS turns "another account's room" into no rows, so the caller cannot
-		// tell a foreign room from a nonexistent one.
-		writeJSON(w, http.StatusNotFound, ErrorResponse{Error: "Room not found"})
+		// tell a foreign room from a nonexistent one — but a dropped connection
+		// is not a missing room, and writeLookupError keeps the two apart.
+		writeLookupError(w, r, err, "Room")
 		return
 	}
 	writeJSON(w, http.StatusOK, room)
