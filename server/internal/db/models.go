@@ -28,6 +28,16 @@ type AccountMember struct {
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
+type Application struct {
+	ID        uuid.UUID          `json:"id"`
+	AccountID uuid.UUID          `json:"account_id"`
+	RoomID    uuid.UUID          `json:"room_id"`
+	Name      string             `json:"name"`
+	List      string             `json:"list"`
+	Enabled   bool               `json:"enabled"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
 type Room struct {
 	ID                uuid.UUID          `json:"id"`
 	AccountID         uuid.UUID          `json:"account_id"`
