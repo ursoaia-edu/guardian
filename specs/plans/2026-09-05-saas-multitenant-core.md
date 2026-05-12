@@ -1911,6 +1911,34 @@ func TestRoomOfAnotherAccountIsNotFound(t *testing.T) {
 		t.Fatalf("account B got %d for account A's room, want 404", rr.Code)
 	}
 }
+
+// Deleting is the second write path this task adds, and RLS has to hide a
+// foreign room from it just as thoroughly as from a read — otherwise one
+// account can destroy another's rooms while being told they do not exist.
+func TestDeleteRoom(t *testing.T) {
+	s := &Server{pool: testPool(t)}
+	h := s.setupRoutes()
+	ca := registerAndLogin(t, s, "a@example.com")
+	roomA := createRoom(t, s, ca, "A's room")
+
+	cb := registerAndLogin(t, s, "b@example.com")
+	if rr := doJSON(t, h, "DELETE", "/api/v1/rooms/"+roomA, nil, cb); rr.Code != 404 {
+		t.Fatalf("account B got %d deleting account A's room, want 404", rr.Code)
+	}
+
+	// The room must still be there: a 404 that actually deleted the row would
+	// be the worst possible outcome, and only this second check catches it.
+	if rr := doJSON(t, h, "GET", "/api/v1/rooms/"+roomA, nil, ca); rr.Code != 200 {
+		t.Fatalf("account A's room is gone after B's delete attempt: %d", rr.Code)
+	}
+
+	if rr := doJSON(t, h, "DELETE", "/api/v1/rooms/"+roomA, nil, ca); rr.Code != 204 {
+		t.Fatalf("owner delete: %d", rr.Code)
+	}
+	if rr := doJSON(t, h, "GET", "/api/v1/rooms/"+roomA, nil, ca); rr.Code != 404 {
+		t.Fatalf("room still readable after deletion: %d", rr.Code)
+	}
+}
 ```
 
 (import `net/http`)
@@ -2033,7 +2061,7 @@ func (s *Server) handleListRooms(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "Could not list rooms"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"rooms": rooms})
+	writeJSON(w, http.StatusOK, map[string]any{"rooms": orEmpty(rooms)})
 }
 
 func (s *Server) handleCreateRoom(w http.ResponseWriter, r *http.Request) {
@@ -2069,6 +2097,36 @@ func (s *Server) handleCreateRoom(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, room)
 }
 
+// orEmpty replaces a nil slice with an empty one. sqlc leaves a result slice
+// nil when a query returns no rows, and a nil slice marshals to JSON null, so
+// without this an empty collection endpoint answers {"rooms": null} rather than
+// {"rooms": []} — a shape difference that every strict client has to special-case.
+// It belongs in helpers.go, beside writeJSON.
+func orEmpty[T any](s []T) []T {
+	if s == nil {
+		return []T{}
+	}
+	return s
+}
+
+// writeLookupError maps the error from a scoped lookup. RLS makes another
+// account's row indistinguishable from an absent one — both come back as no
+// rows — so both are a 404 and neither is logged as a problem. Anything else is
+// a real failure: a dropped connection, a cancelled context, a broken query.
+// Those must be a logged 500, or an outage arrives at the operator disguised as
+// a flood of "not found".
+//
+// It lives in tenant.go beside mustTenant: both encode the same idea, that a
+// handler's view of the world is already narrowed by the account scope.
+func writeLookupError(w http.ResponseWriter, r *http.Request, err error, what string) {
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeJSON(w, http.StatusNotFound, ErrorResponse{Error: what + " not found"})
+		return
+	}
+	slog.Error("scoped lookup failed", "path", r.URL.Path, "error", err)
+	writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "Internal error"})
+}
+
 // roomIDParam parses the URL parameter. A malformed id is reported as 404, not
 // 400: whether the id is well-formed tells the caller nothing they may know.
 func roomIDParam(r *http.Request) (uuid.UUID, bool) {
@@ -2094,8 +2152,9 @@ func (s *Server) handleGetRoom(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		// RLS turns "another account's room" into no rows, so the caller cannot
-		// tell a foreign room from a nonexistent one.
-		writeJSON(w, http.StatusNotFound, ErrorResponse{Error: "Room not found"})
+		// tell a foreign room from a nonexistent one — but a dropped connection
+		// is not a missing room, and writeLookupError keeps the two apart.
+		writeLookupError(w, r, err, "Room")
 		return
 	}
 	writeJSON(w, http.StatusOK, room)
@@ -2299,10 +2358,10 @@ func (s *Server) handleListRoomApplications(w http.ResponseWriter, r *http.Reque
 		return err
 	})
 	if err != nil {
-		writeJSON(w, http.StatusNotFound, ErrorResponse{Error: "Room not found"})
+		writeLookupError(w, r, err, "Room")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"applications": apps})
+	writeJSON(w, http.StatusOK, map[string]any{"applications": orEmpty(apps)})
 }
 
 func (s *Server) handleAddRoomApplication(w http.ResponseWriter, r *http.Request) {
@@ -2351,7 +2410,7 @@ func (s *Server) handleAddRoomApplication(w http.ResponseWriter, r *http.Request
 		return err
 	})
 	if err != nil {
-		writeJSON(w, http.StatusNotFound, ErrorResponse{Error: "Room not found"})
+		writeLookupError(w, r, err, "Room")
 		return
 	}
 	writeJSON(w, http.StatusCreated, app)
@@ -2629,13 +2688,13 @@ func (s *Server) handleListComputers(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "Could not list computers"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"computers": computers})
+	writeJSON(w, http.StatusOK, map[string]any{"computers": orEmpty(computers)})
 }
 
 func (s *Server) handlePatchComputer(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(chi.URLParam(r, "computerID"))
 	if err != nil {
-		writeJSON(w, http.StatusNotFound, ErrorResponse{Error: "Computer not found"})
+		writeLookupError(w, r, err, "Computer")
 		return
 	}
 	var req struct {
@@ -2701,7 +2760,7 @@ func (s *Server) handlePatchComputer(w http.ResponseWriter, r *http.Request) {
 		return err
 	})
 	if err != nil {
-		writeJSON(w, http.StatusNotFound, ErrorResponse{Error: "Computer not found"})
+		writeLookupError(w, r, err, "Computer")
 		return
 	}
 	writeJSON(w, http.StatusOK, computer)
@@ -3221,7 +3280,7 @@ func (s *Server) handlePatchRoom(w http.ResponseWriter, r *http.Request) {
 		return err
 	})
 	if err != nil {
-		writeJSON(w, http.StatusNotFound, ErrorResponse{Error: "Room not found"})
+		writeLookupError(w, r, err, "Room")
 		return
 	}
 	writeJSON(w, http.StatusOK, room)
@@ -3568,7 +3627,7 @@ func (s *Server) handleListEvents(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "Could not list events"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"events": events})
+	writeJSON(w, http.StatusOK, map[string]any{"events": orEmpty(events)})
 }
 ```
 
@@ -4203,7 +4262,7 @@ func (s *Server) handleAddRoomMember(w http.ResponseWriter, r *http.Request) {
 		})
 	})
 	if err != nil {
-		writeJSON(w, http.StatusNotFound, ErrorResponse{Error: "Room not found"})
+		writeLookupError(w, r, err, "Room")
 		return
 	}
 	slog.Info("room member added", "room_id", roomID, "user_id", user.ID)
@@ -4231,10 +4290,10 @@ func (s *Server) handleListRoomMembers(w http.ResponseWriter, r *http.Request) {
 		return err
 	})
 	if err != nil {
-		writeJSON(w, http.StatusNotFound, ErrorResponse{Error: "Room not found"})
+		writeLookupError(w, r, err, "Room")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"members": members})
+	writeJSON(w, http.StatusOK, map[string]any{"members": orEmpty(members)})
 }
 
 // assertRoomVisible is the single place that answers "may this caller touch
