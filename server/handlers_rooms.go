@@ -125,3 +125,82 @@ func (s *Server) handleDeleteRoom(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+func (s *Server) handleListRoomApplications(w http.ResponseWriter, r *http.Request) {
+	roomID, ok := roomIDParam(r)
+	if !ok {
+		writeJSON(w, http.StatusNotFound, ErrorResponse{Error: "Room not found"})
+		return
+	}
+	t, ok := mustTenant(w, r)
+	if !ok {
+		return
+	}
+	var apps []db.Application
+	err := s.inAccount(r.Context(), t.AccountID, func(tx pgx.Tx) error {
+		q := db.New(tx)
+		if _, err := q.GetRoom(r.Context(), roomID); err != nil {
+			return err
+		}
+		var err error
+		apps, err = q.ListRoomApplications(r.Context(), roomID)
+		return err
+	})
+	if err != nil {
+		writeLookupError(w, r, err, "Room")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"applications": orEmpty(apps)})
+}
+
+func (s *Server) handleAddRoomApplication(w http.ResponseWriter, r *http.Request) {
+	roomID, ok := roomIDParam(r)
+	if !ok {
+		writeJSON(w, http.StatusNotFound, ErrorResponse{Error: "Room not found"})
+		return
+	}
+	var req struct {
+		Name string `json:"name"`
+		List string `json:"list"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "Invalid JSON"})
+		return
+	}
+	req.Name = strings.TrimSpace(req.Name)
+	if req.Name == "" {
+		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "Application name cannot be empty"})
+		return
+	}
+	if req.List == "" {
+		req.List = "blacklist"
+	}
+	if req.List != "blacklist" && req.List != "whitelist" {
+		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "List must be 'blacklist' or 'whitelist'"})
+		return
+	}
+
+	t, ok := mustTenant(w, r)
+	if !ok {
+		return
+	}
+	var app db.Application
+	err := s.inAccount(r.Context(), t.AccountID, func(tx pgx.Tx) error {
+		q := db.New(tx)
+		// Proves the room belongs to this account before writing into it: RLS
+		// would reject the insert anyway, but this gives an honest 404.
+		if _, err := q.GetRoom(r.Context(), roomID); err != nil {
+			return err
+		}
+		var err error
+		app, err = q.AddRoomApplication(r.Context(), db.AddRoomApplicationParams{
+			AccountID: t.AccountID, RoomID: roomID, Name: req.Name, List: req.List,
+		})
+		return err
+	})
+	if err != nil {
+		writeLookupError(w, r, err, "Room")
+		return
+	}
+	writeJSON(w, http.StatusCreated, app)
+}
