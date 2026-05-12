@@ -204,3 +204,44 @@ func (s *Server) handleAddRoomApplication(w http.ResponseWriter, r *http.Request
 	}
 	writeJSON(w, http.StatusCreated, app)
 }
+
+func (s *Server) handleDeleteRoomApplication(w http.ResponseWriter, r *http.Request) {
+	roomID, ok := roomIDParam(r)
+	if !ok {
+		writeJSON(w, http.StatusNotFound, ErrorResponse{Error: "Room not found"})
+		return
+	}
+	appID, parseErr := uuid.Parse(chi.URLParam(r, "appID"))
+	if parseErr != nil {
+		writeJSON(w, http.StatusNotFound, ErrorResponse{Error: "Application not found"})
+		return
+	}
+	t, ok := mustTenant(w, r)
+	if !ok {
+		return
+	}
+
+	var affected int64
+	err := s.inAccount(r.Context(), t.AccountID, func(tx pgx.Tx) error {
+		q := db.New(tx)
+		// Same guard as the insert: prove the room belongs to this account so a
+		// foreign room is an honest 404 rather than a silent zero-row delete.
+		if _, err := q.GetRoom(r.Context(), roomID); err != nil {
+			return err
+		}
+		var err error
+		affected, err = q.DeleteRoomApplication(r.Context(), db.DeleteRoomApplicationParams{
+			ID: appID, RoomID: roomID,
+		})
+		return err
+	})
+	if err != nil {
+		writeLookupError(w, r, err, "Room")
+		return
+	}
+	if affected == 0 {
+		writeJSON(w, http.StatusNotFound, ErrorResponse{Error: "Application not found"})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
