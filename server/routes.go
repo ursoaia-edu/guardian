@@ -28,6 +28,11 @@ func (s *Server) setupRoutes() *chi.Mux {
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Use(s.SessionAuth)
 		r.Get("/me", s.handleMe)
+
+		r.Get("/rooms", s.handleListRooms)
+		r.Post("/rooms", s.handleCreateRoom)
+		r.Get("/rooms/{roomID}", s.handleGetRoom)
+		r.Delete("/rooms/{roomID}", s.handleDeleteRoom)
 	})
 
 	// Legacy single-tenant routes, disabled from Task 3 onward: NewServer no
