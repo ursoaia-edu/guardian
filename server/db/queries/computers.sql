@@ -1,0 +1,35 @@
+-- name: ListComputers :many
+SELECT * FROM computers ORDER BY COALESCE(NULLIF(display_name, ''), hostname);
+
+-- name: GetComputer :one
+SELECT * FROM computers WHERE id = $1;
+
+-- name: CountComputers :one
+SELECT count(*) FROM computers;
+
+-- name: UpdateComputer :one
+UPDATE computers SET
+    display_name = COALESCE(sqlc.narg(display_name), display_name),
+    room_id      = CASE WHEN sqlc.arg(set_room)::boolean
+                        THEN sqlc.narg(room_id) ELSE room_id END,
+    blocked      = COALESCE(sqlc.narg(blocked), blocked)
+WHERE id = sqlc.arg(id)
+RETURNING *;
+
+-- name: UpsertComputerByGUID :one
+-- Reinstalling an agent on a known machine updates the row and rotates its
+-- token instead of adding a duplicate to the pool.
+INSERT INTO computers (
+    account_id, machine_guid, hostname, os_name, os_build, arch,
+    agent_version, hardware, token_hash
+) VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE(sqlc.narg(hardware), '{}'::jsonb), $8)
+ON CONFLICT (account_id, machine_guid) DO UPDATE SET
+    hostname      = EXCLUDED.hostname,
+    os_name       = EXCLUDED.os_name,
+    os_build      = EXCLUDED.os_build,
+    arch          = EXCLUDED.arch,
+    agent_version = EXCLUDED.agent_version,
+    hardware      = EXCLUDED.hardware,
+    token_hash    = EXCLUDED.token_hash,
+    enrolled_at   = now()
+RETURNING *;
