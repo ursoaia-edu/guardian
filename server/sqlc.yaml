@@ -32,3 +32,11 @@ sql:
               type: "UUID"
               import: "github.com/google/uuid"
               pointer: true
+          # computers.token_hash is the agent's credential digest. Handlers
+          # return db.Computer straight to the cabinet, so without this tag the
+          # digest ships in every computer response. Enforcing it on the
+          # generated struct rather than in a hand-written DTO means a new
+          # handler cannot forget it. TestComputerResponseHidesTheTokenHash is
+          # the guard that the tag still applies after a regeneration.
+          - column: "computers.token_hash"
+            go_struct_tag: 'json:"-"'

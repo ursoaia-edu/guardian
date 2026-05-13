@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -79,23 +81,21 @@ func TestSetDisplayNameAndRoom(t *testing.T) {
 		t.Fatalf("patch: %d %s", rr.Code, rr.Body.String())
 	}
 
-	// computers carries no "prescope" policy (unlike accounts/account_members;
-	// see 00003_rls.sql) — that hole is deliberately narrow and this table is
-	// not part of it — so a read through the RLS-scoped guardian_app pool
-	// with no app.account_id set would see zero rows regardless of the write
-	// above. Reading back through the owner connection, which RLS does not
-	// apply to, verifies the row was actually written instead of vacuously
-	// passing on a hidden row.
-	pool, err := pgxpool.New(context.Background(), os.Getenv("TEST_DATABASE_URL"))
+	// Read back through the OWNER connection, not s.pool. `computers` has no
+	// pre-scope policy — only `accounts` and `account_members` do — so an
+	// unscoped query as guardian_app sees zero rows and this assertion would
+	// fail against a perfectly correct implementation. That RLS bites here is
+	// the system working, not a problem to route around in production code.
+	owner, err := pgxpool.New(context.Background(), os.Getenv("TEST_DATABASE_URL"))
 	if err != nil {
 		t.Fatalf("connect as owner: %v", err)
 	}
-	defer pool.Close()
+	defer owner.Close()
+
 	var name string
 	var roomID *uuid.UUID
-	err = pool.QueryRow(context.Background(),
-		`SELECT display_name, room_id FROM computers WHERE id = $1`, id).Scan(&name, &roomID)
-	if err != nil {
+	if err := owner.QueryRow(context.Background(),
+		`SELECT display_name, room_id FROM computers WHERE id = $1`, id).Scan(&name, &roomID); err != nil {
 		t.Fatalf("read back: %v", err)
 	}
 	if name != "Masha's laptop" {
@@ -103,6 +103,28 @@ func TestSetDisplayNameAndRoom(t *testing.T) {
 	}
 	if roomID == nil || roomID.String() != room {
 		t.Fatalf("room_id is %v, want %s", roomID, room)
+	}
+}
+
+// The agent's credential digest must never leave the database. It is a one-way
+// hash of a 32-byte random token, so exposure is not immediately exploitable —
+// but a credential digest handed to every cabinet caller (including, from
+// Task 14, a room guest) is the kind of leak that is only ever noticed after it
+// matters. The sqlc struct tag is what enforces this; this test is what proves
+// the tag still does its job.
+func TestComputerResponseHidesTheTokenHash(t *testing.T) {
+	s := &Server{pool: testPool(t)}
+	c := registerAndLogin(t, s, "parent@example.com")
+	id := insertComputer(t, s, accountIDOf(t, s, "parent@example.com"), "guid-1", "PC-1")
+
+	for _, rr := range []*httptest.ResponseRecorder{
+		doJSON(t, s.setupRoutes(), "GET", "/api/v1/computers", nil, c),
+		doJSON(t, s.setupRoutes(), "PATCH", "/api/v1/computers/"+id.String(),
+			map[string]any{"display_name": "Renamed"}, c),
+	} {
+		if strings.Contains(rr.Body.String(), "token_hash") {
+			t.Fatalf("token hash leaked into an API response: %s", rr.Body.String())
+		}
 	}
 }
 

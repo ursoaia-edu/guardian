@@ -51,7 +51,7 @@ type Computer struct {
 	AgentVersion string             `json:"agent_version"`
 	Hardware     []byte             `json:"hardware"`
 	Runtime      []byte             `json:"runtime"`
-	TokenHash    string             `json:"token_hash"`
+	TokenHash    string             `json:"-"`
 	Blocked      bool               `json:"blocked"`
 	EnrolledAt   pgtype.Timestamptz `json:"enrolled_at"`
 	LastSeenAt   pgtype.Timestamptz `json:"last_seen_at"`

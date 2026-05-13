@@ -164,7 +164,7 @@ type UpsertComputerByGUIDParams struct {
 	OsBuild      string      `json:"os_build"`
 	Arch         string      `json:"arch"`
 	AgentVersion string      `json:"agent_version"`
-	TokenHash    string      `json:"token_hash"`
+	TokenHash    string      `json:"-"`
 	Hardware     interface{} `json:"hardware"`
 }
 
