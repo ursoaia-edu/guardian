@@ -16,6 +16,12 @@ UPDATE computers SET
 WHERE id = sqlc.arg(id)
 RETURNING *;
 
+-- name: GetComputerByGUID :one
+SELECT * FROM computers WHERE account_id = $1 AND machine_guid = $2;
+
+-- name: GetAccountComputerLimit :one
+SELECT computer_limit FROM accounts WHERE id = $1;
+
 -- name: UpsertComputerByGUID :one
 -- Reinstalling an agent on a known machine updates the row and rotates its
 -- token instead of adding a duplicate to the pool.
