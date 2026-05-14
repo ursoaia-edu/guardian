@@ -37,11 +37,14 @@ func (s *Server) handlePatchComputer(w http.ResponseWriter, r *http.Request) {
 		writeLookupError(w, r, err, "Computer")
 		return
 	}
+	// No json tags: this struct is never unmarshalled into. The body is decoded
+	// field by field out of raw below, because only that distinguishes an absent
+	// room_id from an explicitly null one.
 	var req struct {
-		DisplayName *string    `json:"display_name"`
-		RoomID      *uuid.UUID `json:"room_id"`
-		SetRoom     bool       `json:"-"`
-		Blocked     *bool      `json:"blocked"`
+		DisplayName *string
+		RoomID      *uuid.UUID
+		SetRoom     bool
+		Blocked     *bool
 	}
 	raw := map[string]json.RawMessage{}
 	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {

@@ -40,3 +40,15 @@ sql:
           # the guard that the tag still applies after a regeneration.
           - column: "computers.token_hash"
             go_struct_tag: 'json:"-"'
+          # sqlc maps jsonb to []byte, and encoding/json marshals a []byte field
+          # as a base64 string — so without this every response ships
+          # "hardware":"e30=" instead of "hardware":{}. json.RawMessage has the
+          # same underlying type, so writes still accept a plain []byte, but it
+          # marshals through as raw JSON. Both entries are needed for the same
+          # reason as the uuid pair: an override matches only columns whose
+          # nullability equals its `nullable` flag.
+          - db_type: "jsonb"
+            go_type: "encoding/json.RawMessage"
+          - db_type: "jsonb"
+            nullable: true
+            go_type: "encoding/json.RawMessage"

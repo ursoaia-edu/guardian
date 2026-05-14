@@ -5,6 +5,8 @@
 package db
 
 import (
+	"encoding/json"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -49,8 +51,8 @@ type Computer struct {
 	OsBuild      string             `json:"os_build"`
 	Arch         string             `json:"arch"`
 	AgentVersion string             `json:"agent_version"`
-	Hardware     []byte             `json:"hardware"`
-	Runtime      []byte             `json:"runtime"`
+	Hardware     json.RawMessage    `json:"hardware"`
+	Runtime      json.RawMessage    `json:"runtime"`
 	TokenHash    string             `json:"-"`
 	Blocked      bool               `json:"blocked"`
 	EnrolledAt   pgtype.Timestamptz `json:"enrolled_at"`

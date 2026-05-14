@@ -106,6 +106,79 @@ func TestSetDisplayNameAndRoom(t *testing.T) {
 	}
 }
 
+// room_id has three request states and only one of them is exercised by the
+// test above. These two cover the other two, and they are the ones that fail
+// silently: a PATCH that omits room_id must not clear an assignment, or a
+// rename would quietly unmanage a machine, and an explicit null must actually
+// clear it, or a parent cannot take a machine out of a room at all.
+func TestPatchWithoutRoomIDKeepsTheRoom(t *testing.T) {
+	s := &Server{pool: testPool(t)}
+	h := s.setupRoutes()
+	c := registerAndLogin(t, s, "parent@example.com")
+	room := createRoom(t, s, c, "Kids room")
+	id := insertComputer(t, s, accountIDOf(t, s, "parent@example.com"), "guid-1", "PC-1")
+
+	if rr := doJSON(t, h, "PATCH", "/api/v1/computers/"+id.String(),
+		map[string]any{"room_id": room}, c); rr.Code != 200 {
+		t.Fatalf("assign: %d %s", rr.Code, rr.Body.String())
+	}
+	if rr := doJSON(t, h, "PATCH", "/api/v1/computers/"+id.String(),
+		map[string]any{"display_name": "Renamed"}, c); rr.Code != 200 {
+		t.Fatalf("rename: %d %s", rr.Code, rr.Body.String())
+	}
+
+	var out struct {
+		Computers []struct {
+			RoomID *string `json:"room_id"`
+		} `json:"computers"`
+	}
+	decodeInto(t, doJSON(t, h, "GET", "/api/v1/computers", nil, c), &out)
+	if len(out.Computers) != 1 {
+		t.Fatalf("expected one computer, got %d", len(out.Computers))
+	}
+	if out.Computers[0].RoomID == nil || *out.Computers[0].RoomID != room {
+		t.Fatalf("renaming a computer cleared its room: %v", out.Computers[0].RoomID)
+	}
+}
+
+func TestPatchWithNullRoomIDClearsTheRoom(t *testing.T) {
+	s := &Server{pool: testPool(t)}
+	h := s.setupRoutes()
+	c := registerAndLogin(t, s, "parent@example.com")
+	room := createRoom(t, s, c, "Kids room")
+	id := insertComputer(t, s, accountIDOf(t, s, "parent@example.com"), "guid-1", "PC-1")
+
+	doJSON(t, h, "PATCH", "/api/v1/computers/"+id.String(), map[string]any{"room_id": room}, c)
+	if rr := doJSON(t, h, "PATCH", "/api/v1/computers/"+id.String(),
+		map[string]any{"room_id": nil}, c); rr.Code != 200 {
+		t.Fatalf("unassign: %d %s", rr.Code, rr.Body.String())
+	}
+
+	var out struct {
+		Computers []struct {
+			RoomID *string `json:"room_id"`
+		} `json:"computers"`
+	}
+	decodeInto(t, doJSON(t, h, "GET", "/api/v1/computers", nil, c), &out)
+	if out.Computers[0].RoomID != nil {
+		t.Fatalf("explicit null did not clear the room: %v", *out.Computers[0].RoomID)
+	}
+}
+
+// hardware and runtime are jsonb. Without the sqlc override they are []byte,
+// and encoding/json turns a []byte field into a base64 string — so the cabinet
+// would receive "hardware":"e30=" and have to guess what to do with it.
+func TestComputerJSONBFieldsAreNotBase64(t *testing.T) {
+	s := &Server{pool: testPool(t)}
+	c := registerAndLogin(t, s, "parent@example.com")
+	insertComputer(t, s, accountIDOf(t, s, "parent@example.com"), "guid-1", "PC-1")
+
+	body := doJSON(t, s.setupRoutes(), "GET", "/api/v1/computers", nil, c).Body.String()
+	if !strings.Contains(body, `"hardware":{`) || !strings.Contains(body, `"runtime":{`) {
+		t.Fatalf("jsonb fields did not serialise as objects: %s", body)
+	}
+}
+
 // The agent's credential digest must never leave the database. It is a one-way
 // hash of a 32-byte random token, so exposure is not immediately exploitable —
 // but a credential digest handed to every cabinet caller (including, from
