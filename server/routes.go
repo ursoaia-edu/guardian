@@ -19,6 +19,9 @@ func (s *Server) setupRoutes() *chi.Mux {
 	// Unauthenticated
 	r.Get("/health", handleHealth)
 
+	// The binding token in the body is this route's gate; see handlers_agent.go.
+	r.Post("/agent/enroll", s.handleEnroll)
+
 	r.Route("/api/v1/auth", func(r chi.Router) {
 		r.Post("/register", s.handleRegister)
 		r.Post("/login", s.handleLogin)
@@ -39,6 +42,8 @@ func (s *Server) setupRoutes() *chi.Mux {
 
 		r.Get("/computers", s.handleListComputers)
 		r.Patch("/computers/{computerID}", s.handlePatchComputer)
+
+		r.Post("/binding-tokens", s.handleCreateBindingToken)
 	})
 
 	// Legacy single-tenant routes, disabled from Task 3 onward: NewServer no

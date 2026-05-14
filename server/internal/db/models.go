@@ -40,6 +40,15 @@ type Application struct {
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
+type BindingToken struct {
+	ID        uuid.UUID          `json:"id"`
+	AccountID uuid.UUID          `json:"account_id"`
+	TokenHash string             `json:"token_hash"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
+	RevokedAt pgtype.Timestamptz `json:"revoked_at"`
+}
+
 type Computer struct {
 	ID           uuid.UUID          `json:"id"`
 	AccountID    uuid.UUID          `json:"account_id"`
