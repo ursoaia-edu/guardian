@@ -38,6 +38,7 @@ email verification, and the account switcher for users who belong to more than o
 - Tokens (session, agent, binding, invitation) are 32 random bytes hex-encoded; only their SHA-256 hex digest is stored.
 - Timestamps are `timestamptz`, always UTC.
 - **Migration `00004` is permanently retired.** Ruling R1 folded its policies into `00003_rls.sql`, leaving a gap in the sequence. `runMigrations` calls `goose.UpContext` without `WithAllowMissing`, so goose refuses out-of-order versions: a `00004_*.sql` added later would be rejected on every database that has already applied `00005`. Never reuse the number.
+- **A test that reads an account-scoped table back must scope the read.** Only `accounts` and `account_members` have pre-scope policies; every other table returns zero rows to an unscoped `s.pool` query as `guardian_app`, so a verification query written that way fails against a perfectly correct implementation. Read back either inside `s.inAccount(...)` — which also exercises the scoping the application uses — or through a pool opened on `TEST_DATABASE_URL` when the point is to observe the row independently of RLS. This has caught two tasks already.
 - Tests require a live Postgres. `TEST_DATABASE_URL` (owner) and `TEST_APP_DATABASE_URL` (`guardian_app`) must be set; `server/docker-compose.dev.yml` provides both.
 - Server code is English throughout — identifiers, comments, log messages, API error strings.
 
@@ -3005,7 +3006,7 @@ git commit -m "feat(server): add the computer pool with display names"
 
 **Interfaces:**
 - Consumes: `UpsertComputerByGUID`, `CountComputers` (Task 9); `newToken`, `hashToken` (Task 5).
-- Produces: `POST /api/v1/binding-tokens` (cabinet, mints one), `POST /agent/enroll` (unauthenticated, gated by the binding token); queries `CreateBindingToken`, `GetActiveBindingToken`, `RevokeBindingToken`.
+- Produces: `POST /api/v1/binding-tokens` (cabinet, mints one), `DELETE /api/v1/binding-tokens` (revokes every active one), `POST /agent/enroll` (unauthenticated, gated by the binding token); queries `CreateBindingToken`, `GetActiveBindingToken`, `RevokeAllBindingTokens`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -3106,6 +3107,25 @@ func TestEnrollRejectsUnknownToken(t *testing.T) {
 	}
 }
 
+// The kill switch has to actually kill. Nothing else exercises
+// GetActiveBindingToken's `revoked_at IS NULL` filter, so without this test that
+// clause could be deleted and every other test would still pass.
+func TestRevokedBindingTokenStopsEnrolling(t *testing.T) {
+	s := &Server{pool: testPool(t)}
+	c := registerAndLogin(t, s, "parent@example.com")
+	binding := mintBindingToken(t, s, c)
+
+	if code, _ := enroll(t, s, binding, "guid-1", "PC-1"); code != 201 {
+		t.Fatalf("enroll before revocation: %d", code)
+	}
+	if rr := doJSON(t, s.setupRoutes(), "DELETE", "/api/v1/binding-tokens", nil, c); rr.Code != 204 {
+		t.Fatalf("revoke: %d %s", rr.Code, rr.Body.String())
+	}
+	if code, _ := enroll(t, s, binding, "guid-2", "PC-2"); code != 401 {
+		t.Fatalf("a revoked binding token still enrolled a machine: %d", code)
+	}
+}
+
 func TestEnrollRejectsOverPlanLimit(t *testing.T) {
 	s := &Server{pool: testPool(t)}
 	c := registerAndLogin(t, s, "parent@example.com")
@@ -3172,6 +3192,15 @@ RETURNING *;
 -- name: GetActiveBindingToken :one
 SELECT * FROM binding_tokens
 WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > now();
+
+-- name: RevokeAllBindingTokens :execrows
+-- The kill switch for a leaked installer. There is no per-token variant because
+-- there is nothing to select from yet — the cabinet lists tokens in a later
+-- plan — and "my installer got out, invalidate it" is the whole of what a
+-- customer needs today. Enrolled agents are unaffected: they hold their own
+-- per-machine tokens by now.
+UPDATE binding_tokens SET revoked_at = now()
+WHERE revoked_at IS NULL;
 ```
 
 Regenerate: `go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.27.0 generate`
@@ -3216,6 +3245,32 @@ func (s *Server) handleCreateBindingToken(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]string{"token": plain})
+}
+
+// handleRevokeBindingTokens invalidates every binding token the account holds.
+// A binding token lives for a year and one downloaded installer carries it to
+// every machine, so without a kill switch a leaked installer is a year-long
+// credential with no remedy. Machines already enrolled keep working: they hold
+// their own per-machine tokens by now, and those are revoked one at a time by
+// deleting the computer.
+func (s *Server) handleRevokeBindingTokens(w http.ResponseWriter, r *http.Request) {
+	t, ok := mustTenant(w, r)
+	if !ok {
+		return
+	}
+	var revoked int64
+	err := s.inAccount(r.Context(), t.AccountID, func(tx pgx.Tx) error {
+		var err error
+		revoked, err = db.New(tx).RevokeAllBindingTokens(r.Context())
+		return err
+	})
+	if err != nil {
+		slog.Error("revoke binding tokens", "error", err)
+		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "Could not revoke the tokens"})
+		return
+	}
+	slog.Info("binding tokens revoked", "account_id", t.AccountID, "count", revoked)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 type enrollRequest struct {
@@ -3330,6 +3385,7 @@ and inside `/api/v1`:
 
 ```go
 		r.Post("/binding-tokens", s.handleCreateBindingToken)
+		r.Delete("/binding-tokens", s.handleRevokeBindingTokens)
 ```
 
 Regenerate and build: `go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.27.0 generate && go build ./...`
