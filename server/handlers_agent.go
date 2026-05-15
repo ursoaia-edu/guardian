@@ -36,6 +36,32 @@ func (s *Server) handleCreateBindingToken(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusCreated, map[string]string{"token": plain})
 }
 
+// handleRevokeBindingTokens invalidates every binding token the account holds.
+// A binding token lives for a year and one downloaded installer carries it to
+// every machine, so without a kill switch a leaked installer is a year-long
+// credential with no remedy. Machines already enrolled keep working: they hold
+// their own per-machine tokens by now, and those are revoked one at a time by
+// deleting the computer.
+func (s *Server) handleRevokeBindingTokens(w http.ResponseWriter, r *http.Request) {
+	t, ok := mustTenant(w, r)
+	if !ok {
+		return
+	}
+	var revoked int64
+	err := s.inAccount(r.Context(), t.AccountID, func(tx pgx.Tx) error {
+		var err error
+		revoked, err = db.New(tx).RevokeAllBindingTokens(r.Context())
+		return err
+	})
+	if err != nil {
+		slog.Error("revoke binding tokens", "error", err)
+		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "Could not revoke the tokens"})
+		return
+	}
+	slog.Info("binding tokens revoked", "account_id", t.AccountID, "count", revoked)
+	w.WriteHeader(http.StatusNoContent)
+}
+
 type enrollRequest struct {
 	BindingToken string          `json:"binding_token"`
 	MachineGUID  string          `json:"machine_guid"`

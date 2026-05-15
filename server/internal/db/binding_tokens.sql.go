@@ -56,3 +56,21 @@ func (q *Queries) GetActiveBindingToken(ctx context.Context, tokenHash string) (
 	)
 	return i, err
 }
+
+const revokeAllBindingTokens = `-- name: RevokeAllBindingTokens :execrows
+UPDATE binding_tokens SET revoked_at = now()
+WHERE revoked_at IS NULL
+`
+
+// The kill switch for a leaked installer. There is no per-token variant because
+// there is nothing to select from yet — the cabinet lists tokens in a later
+// plan — and "my installer got out, invalidate it" is the whole of what a
+// customer needs today. Enrolled agents are unaffected: they hold their own
+// per-machine tokens by now.
+func (q *Queries) RevokeAllBindingTokens(ctx context.Context) (int64, error) {
+	result, err := q.db.Exec(ctx, revokeAllBindingTokens)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}

@@ -115,6 +115,25 @@ func TestEnrollRejectsUnknownToken(t *testing.T) {
 	}
 }
 
+// The kill switch has to actually kill. Nothing else exercises
+// GetActiveBindingToken's `revoked_at IS NULL` filter, so without this test that
+// clause could be deleted and every other test would still pass.
+func TestRevokedBindingTokenStopsEnrolling(t *testing.T) {
+	s := &Server{pool: testPool(t)}
+	c := registerAndLogin(t, s, "parent@example.com")
+	binding := mintBindingToken(t, s, c)
+
+	if code, _ := enroll(t, s, binding, "guid-1", "PC-1"); code != 201 {
+		t.Fatalf("enroll before revocation: %d", code)
+	}
+	if rr := doJSON(t, s.setupRoutes(), "DELETE", "/api/v1/binding-tokens", nil, c); rr.Code != 204 {
+		t.Fatalf("revoke: %d %s", rr.Code, rr.Body.String())
+	}
+	if code, _ := enroll(t, s, binding, "guid-2", "PC-2"); code != 401 {
+		t.Fatalf("a revoked binding token still enrolled a machine: %d", code)
+	}
+}
+
 func TestEnrollRejectsOverPlanLimit(t *testing.T) {
 	s := &Server{pool: testPool(t)}
 	c := registerAndLogin(t, s, "parent@example.com")

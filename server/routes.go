@@ -44,6 +44,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 		r.Patch("/computers/{computerID}", s.handlePatchComputer)
 
 		r.Post("/binding-tokens", s.handleCreateBindingToken)
+		r.Delete("/binding-tokens", s.handleRevokeBindingTokens)
 	})
 
 	// Legacy single-tenant routes, disabled from Task 3 onward: NewServer no
