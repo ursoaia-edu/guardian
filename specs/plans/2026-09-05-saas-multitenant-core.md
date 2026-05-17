@@ -3090,10 +3090,33 @@ func TestReenrollDoesNotDuplicate(t *testing.T) {
 		t.Fatal("re-enrollment reused the old agent token; it must be rotated")
 	}
 
+	// The comparison above proves nothing on its own: two independent newToken()
+	// calls differ whatever the database did, so an upsert that forgot
+	// token_hash would hand the agent a credential that authenticates nothing
+	// and this test would still pass. Read the stored digest back and check it
+	// is the new token's, not the old one's.
+	accountID := accountIDOf(t, s, "parent@example.com")
 	var n int
-	s.pool.QueryRow(context.Background(), `SELECT count(*) FROM computers`).Scan(&n)
+	var storedHash string
+	err := s.inAccount(context.Background(), accountID, func(tx pgx.Tx) error {
+		if err := tx.QueryRow(context.Background(),
+			`SELECT count(*) FROM computers`).Scan(&n); err != nil {
+			return err
+		}
+		return tx.QueryRow(context.Background(),
+			`SELECT token_hash FROM computers WHERE machine_guid = $1`, "guid-1").Scan(&storedHash)
+	})
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
 	if n != 1 {
 		t.Fatalf("pool holds %d machines after a reinstall, want 1", n)
+	}
+	if storedHash != hashToken(second) {
+		t.Fatal("the stored digest is not the newly issued token's; the upsert did not rotate it")
+	}
+	if storedHash == hashToken(first) {
+		t.Fatal("the old token still authenticates after a reinstall")
 	}
 }
 
@@ -3123,6 +3146,29 @@ func TestRevokedBindingTokenStopsEnrolling(t *testing.T) {
 	}
 	if code, _ := enroll(t, s, binding, "guid-2", "PC-2"); code != 401 {
 		t.Fatalf("a revoked binding token still enrolled a machine: %d", code)
+	}
+}
+
+// RevokeAllBindingTokens is a table-wide UPDATE with no account predicate: the
+// whole of its safety is one RLS policy. If that policy ever stops covering
+// UPDATE, one customer pressing "invalidate my installers" silently invalidates
+// every customer's, and nothing else in the suite would notice.
+func TestRevocationDoesNotTouchAnotherAccount(t *testing.T) {
+	s := &Server{pool: testPool(t)}
+	ca := registerAndLogin(t, s, "a@example.com")
+	cb := registerAndLogin(t, s, "b@example.com")
+	bindingA := mintBindingToken(t, s, ca)
+	bindingB := mintBindingToken(t, s, cb)
+
+	if rr := doJSON(t, s.setupRoutes(), "DELETE", "/api/v1/binding-tokens", nil, ca); rr.Code != 204 {
+		t.Fatalf("revoke as A: %d", rr.Code)
+	}
+
+	if code, _ := enroll(t, s, bindingA, "guid-a", "PC-A"); code != 401 {
+		t.Fatalf("account A's own token survived its revocation: %d", code)
+	}
+	if code, _ := enroll(t, s, bindingB, "guid-b", "PC-B"); code != 201 {
+		t.Fatalf("account A's revocation killed account B's token: %d", code)
 	}
 }
 
@@ -3172,8 +3218,15 @@ CREATE POLICY binding_tokens_isolation ON binding_tokens
     USING (account_id = current_account_id())
     WITH CHECK (account_id = current_account_id());
 -- Enrollment arrives with no account scope: the token itself is what names the
--- account, so the lookup by hash must be readable unscoped. It reveals nothing
--- without the 32-byte secret.
+-- account, so the lookup by hash has to be readable unscoped. Be precise about
+-- how big the hole is, as with the accounts pre-scope policy: this permits an
+-- unscoped connection to enumerate EVERY account's token rows — ids, account
+-- ids, lifetimes and digests — not merely to look one up by hash. What it does
+-- not permit is using any of them: the digests are SHA-256 of 32 random bytes
+-- and enrolment needs the plaintext. GetActiveBindingToken is the only query in
+-- the server allowed to run unscoped against this table, and it is keyed by
+-- digest. It is FOR SELECT alone, so the account-wide revoke UPDATE stays
+-- confined by the isolation policy above.
 CREATE POLICY binding_tokens_lookup ON binding_tokens
     FOR SELECT USING (current_account_id() IS NULL);
 
@@ -3300,6 +3353,16 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 	// request body, even though the agent could trivially send one.
 	binding, err := db.New(s.pool).GetActiveBindingToken(ctx, hashToken(req.BindingToken))
 	if err != nil {
+		// An unreachable database is not a bad token. Collapsing the two would
+		// tell every customer in the fleet to fetch a new installer during an
+		// outage, and leave the operator nothing but a stream of Warns that look
+		// like someone probing tokens. Same rule as writeLookupError, which this
+		// handler cannot use because it has no account scope to speak of.
+		if !errors.Is(err, pgx.ErrNoRows) {
+			slog.Error("look up binding token", "error", err)
+			writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "Could not enroll this computer"})
+			return
+		}
 		slog.Warn("enrollment with an invalid binding token", "remote", r.RemoteAddr)
 		writeJSON(w, http.StatusUnauthorized, ErrorResponse{Error: "This installer's token is no longer valid"})
 		return
