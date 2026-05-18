@@ -89,6 +89,16 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 	// request body, even though the agent could trivially send one.
 	binding, err := db.New(s.pool).GetActiveBindingToken(ctx, hashToken(req.BindingToken))
 	if err != nil {
+		// An unreachable database is not a bad token. Collapsing the two would
+		// tell every customer in the fleet to fetch a new installer during an
+		// outage, and leave the operator nothing but a stream of Warns that look
+		// like someone probing tokens. Same rule as writeLookupError, which this
+		// handler cannot use because it has no account scope to speak of.
+		if !errors.Is(err, pgx.ErrNoRows) {
+			slog.Error("look up binding token", "error", err)
+			writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "Could not enroll this computer"})
+			return
+		}
 		slog.Warn("enrollment with an invalid binding token", "remote", r.RemoteAddr)
 		writeJSON(w, http.StatusUnauthorized, ErrorResponse{Error: "This installer's token is no longer valid"})
 		return

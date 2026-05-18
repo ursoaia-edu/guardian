@@ -90,18 +90,33 @@ func TestReenrollDoesNotDuplicate(t *testing.T) {
 		t.Fatal("re-enrollment reused the old agent token; it must be rotated")
 	}
 
-	// See the comment in TestEnrollCreatesComputer: computers has no unscoped
-	// read path, so this check runs inside the account's own scope.
-	accID := accountIDOf(t, s, "parent@example.com")
+	// The comparison above proves nothing on its own: two independent newToken()
+	// calls differ whatever the database did, so an upsert that forgot
+	// token_hash would hand the agent a credential that authenticates nothing
+	// and this test would still pass. Read the stored digest back and check it
+	// is the new token's, not the old one's.
+	accountID := accountIDOf(t, s, "parent@example.com")
 	var n int
-	err := s.inAccount(context.Background(), accID, func(tx pgx.Tx) error {
-		return tx.QueryRow(context.Background(), `SELECT count(*) FROM computers`).Scan(&n)
+	var storedHash string
+	err := s.inAccount(context.Background(), accountID, func(tx pgx.Tx) error {
+		if err := tx.QueryRow(context.Background(),
+			`SELECT count(*) FROM computers`).Scan(&n); err != nil {
+			return err
+		}
+		return tx.QueryRow(context.Background(),
+			`SELECT token_hash FROM computers WHERE machine_guid = $1`, "guid-1").Scan(&storedHash)
 	})
 	if err != nil {
-		t.Fatalf("count: %v", err)
+		t.Fatalf("read back: %v", err)
 	}
 	if n != 1 {
 		t.Fatalf("pool holds %d machines after a reinstall, want 1", n)
+	}
+	if storedHash != hashToken(second) {
+		t.Fatal("the stored digest is not the newly issued token's; the upsert did not rotate it")
+	}
+	if storedHash == hashToken(first) {
+		t.Fatal("the old token still authenticates after a reinstall")
 	}
 }
 
@@ -131,6 +146,29 @@ func TestRevokedBindingTokenStopsEnrolling(t *testing.T) {
 	}
 	if code, _ := enroll(t, s, binding, "guid-2", "PC-2"); code != 401 {
 		t.Fatalf("a revoked binding token still enrolled a machine: %d", code)
+	}
+}
+
+// RevokeAllBindingTokens is a table-wide UPDATE with no account predicate: the
+// whole of its safety is one RLS policy. If that policy ever stops covering
+// UPDATE, one customer pressing "invalidate my installers" silently invalidates
+// every customer's, and nothing else in the suite would notice.
+func TestRevocationDoesNotTouchAnotherAccount(t *testing.T) {
+	s := &Server{pool: testPool(t)}
+	ca := registerAndLogin(t, s, "a@example.com")
+	cb := registerAndLogin(t, s, "b@example.com")
+	bindingA := mintBindingToken(t, s, ca)
+	bindingB := mintBindingToken(t, s, cb)
+
+	if rr := doJSON(t, s.setupRoutes(), "DELETE", "/api/v1/binding-tokens", nil, ca); rr.Code != 204 {
+		t.Fatalf("revoke as A: %d", rr.Code)
+	}
+
+	if code, _ := enroll(t, s, bindingA, "guid-a", "PC-A"); code != 401 {
+		t.Fatalf("account A's own token survived its revocation: %d", code)
+	}
+	if code, _ := enroll(t, s, bindingB, "guid-b", "PC-B"); code != 201 {
+		t.Fatalf("account A's revocation killed account B's token: %d", code)
 	}
 }
 
