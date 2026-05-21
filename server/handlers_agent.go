@@ -140,13 +140,21 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 		if len(hardware) == 0 {
 			hardware = json.RawMessage("{}")
 		}
-		_, err = q.UpsertComputerByGUID(ctx, db.UpsertComputerByGUIDParams{
+		computer, err := q.UpsertComputerByGUID(ctx, db.UpsertComputerByGUIDParams{
 			AccountID: binding.AccountID, MachineGuid: req.MachineGUID,
 			Hostname: req.Hostname, OsName: req.OSName, OsBuild: req.OSBuild,
 			Arch: req.Arch, AgentVersion: req.AgentVersion,
 			Hardware: hardware, TokenHash: agentHash,
 		})
-		return err
+		if err != nil {
+			return err
+		}
+		return s.recordEvent(ctx, tx, eventInput{
+			AccountID:  binding.AccountID,
+			ComputerID: &computer.ID,
+			Type:       "computer.enrolled",
+			Payload:    map[string]any{"hostname": req.Hostname, "agent_version": req.AgentVersion},
+		})
 	})
 	if err != nil {
 		slog.Error("enroll", "error", err)

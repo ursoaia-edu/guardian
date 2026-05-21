@@ -46,6 +46,8 @@ func (s *Server) setupRoutes() *chi.Mux {
 
 		r.Post("/binding-tokens", s.handleCreateBindingToken)
 		r.Delete("/binding-tokens", s.handleRevokeBindingTokens)
+
+		r.Get("/events", s.handleListEvents)
 	})
 
 	r.Group(func(r chi.Router) {

@@ -68,6 +68,16 @@ type Computer struct {
 	LastSeenAt   pgtype.Timestamptz `json:"last_seen_at"`
 }
 
+type Event struct {
+	ID         uuid.UUID          `json:"id"`
+	AccountID  uuid.UUID          `json:"account_id"`
+	RoomID     *uuid.UUID         `json:"room_id"`
+	ComputerID *uuid.UUID         `json:"computer_id"`
+	Type       string             `json:"type"`
+	Payload    json.RawMessage    `json:"payload"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+}
+
 type Room struct {
 	ID                uuid.UUID          `json:"id"`
 	AccountID         uuid.UUID          `json:"account_id"`
