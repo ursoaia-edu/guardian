@@ -7,6 +7,7 @@ package db
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/google/uuid"
 )
@@ -94,6 +95,34 @@ func (q *Queries) GetComputerByGUID(ctx context.Context, arg GetComputerByGUIDPa
 	return i, err
 }
 
+const getComputerByTokenHash = `-- name: GetComputerByTokenHash :one
+SELECT id, account_id, room_id, display_name, machine_guid, hostname, os_name, os_build, arch, agent_version, hardware, runtime, token_hash, blocked, enrolled_at, last_seen_at FROM computers WHERE token_hash = $1
+`
+
+func (q *Queries) GetComputerByTokenHash(ctx context.Context, tokenHash string) (Computer, error) {
+	row := q.db.QueryRow(ctx, getComputerByTokenHash, tokenHash)
+	var i Computer
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.RoomID,
+		&i.DisplayName,
+		&i.MachineGuid,
+		&i.Hostname,
+		&i.OsName,
+		&i.OsBuild,
+		&i.Arch,
+		&i.AgentVersion,
+		&i.Hardware,
+		&i.Runtime,
+		&i.TokenHash,
+		&i.Blocked,
+		&i.EnrolledAt,
+		&i.LastSeenAt,
+	)
+	return i, err
+}
+
 const listComputers = `-- name: ListComputers :many
 SELECT id, account_id, room_id, display_name, machine_guid, hostname, os_name, os_build, arch, agent_version, hardware, runtime, token_hash, blocked, enrolled_at, last_seen_at FROM computers ORDER BY COALESCE(NULLIF(display_name, ''), hostname)
 `
@@ -133,6 +162,20 @@ func (q *Queries) ListComputers(ctx context.Context) ([]Computer, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const touchComputer = `-- name: TouchComputer :exec
+UPDATE computers SET last_seen_at = now(), runtime = $2 WHERE id = $1
+`
+
+type TouchComputerParams struct {
+	ID      uuid.UUID       `json:"id"`
+	Runtime json.RawMessage `json:"runtime"`
+}
+
+func (q *Queries) TouchComputer(ctx context.Context, arg TouchComputerParams) error {
+	_, err := q.db.Exec(ctx, touchComputer, arg.ID, arg.Runtime)
+	return err
 }
 
 const updateComputer = `-- name: UpdateComputer :one

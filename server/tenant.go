@@ -9,6 +9,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
+	"server/internal/db"
 )
 
 type ctxKey int
@@ -29,6 +31,13 @@ func withTenant(ctx context.Context, t Tenant) context.Context {
 func tenantFrom(ctx context.Context) (Tenant, bool) {
 	t, ok := ctx.Value(tenantKey).(Tenant)
 	return t, ok
+}
+
+const computerKey ctxKey = 1
+
+func computerFrom(ctx context.Context) (db.Computer, bool) {
+	c, ok := ctx.Value(computerKey).(db.Computer)
+	return c, ok
 }
 
 // mustTenant returns the tenant a SessionAuth-protected handler is running for.

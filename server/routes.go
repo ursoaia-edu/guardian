@@ -35,6 +35,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 		r.Get("/rooms", s.handleListRooms)
 		r.Post("/rooms", s.handleCreateRoom)
 		r.Get("/rooms/{roomID}", s.handleGetRoom)
+		r.Patch("/rooms/{roomID}", s.handlePatchRoom)
 		r.Delete("/rooms/{roomID}", s.handleDeleteRoom)
 		r.Get("/rooms/{roomID}/applications", s.handleListRoomApplications)
 		r.Post("/rooms/{roomID}/applications", s.handleAddRoomApplication)
@@ -45,6 +46,11 @@ func (s *Server) setupRoutes() *chi.Mux {
 
 		r.Post("/binding-tokens", s.handleCreateBindingToken)
 		r.Delete("/binding-tokens", s.handleRevokeBindingTokens)
+	})
+
+	r.Group(func(r chi.Router) {
+		r.Use(s.AgentAuth)
+		r.Get("/agent/sync", s.handleAgentSync)
 	})
 
 	// Legacy single-tenant routes, disabled from Task 3 onward: NewServer no

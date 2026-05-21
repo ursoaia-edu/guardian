@@ -98,6 +98,46 @@ func (s *Server) handleGetRoom(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, room)
 }
 
+func (s *Server) handlePatchRoom(w http.ResponseWriter, r *http.Request) {
+	id, ok := roomIDParam(r)
+	if !ok {
+		writeJSON(w, http.StatusNotFound, ErrorResponse{Error: "Room not found"})
+		return
+	}
+	var req struct {
+		Name              *string `json:"name"`
+		Mode              *string `json:"mode"`
+		ProtectionEnabled *bool   `json:"protection_enabled"`
+		PowerAllowed      *bool   `json:"power_allowed"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "Invalid JSON"})
+		return
+	}
+	if req.Mode != nil && *req.Mode != "blacklist" && *req.Mode != "whitelist" {
+		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "Mode must be 'blacklist' or 'whitelist'"})
+		return
+	}
+	t, ok := mustTenant(w, r)
+	if !ok {
+		return
+	}
+	var room db.Room
+	err := s.inAccount(r.Context(), t.AccountID, func(tx pgx.Tx) error {
+		var err error
+		room, err = db.New(tx).UpdateRoom(r.Context(), db.UpdateRoomParams{
+			ID: id, Name: req.Name, Mode: req.Mode,
+			ProtectionEnabled: req.ProtectionEnabled, PowerAllowed: req.PowerAllowed,
+		})
+		return err
+	})
+	if err != nil {
+		writeLookupError(w, r, err, "Room")
+		return
+	}
+	writeJSON(w, http.StatusOK, room)
+}
+
 func (s *Server) handleDeleteRoom(w http.ResponseWriter, r *http.Request) {
 	id, ok := roomIDParam(r)
 	if !ok {
