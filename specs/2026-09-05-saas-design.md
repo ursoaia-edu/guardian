@@ -115,6 +115,15 @@ Three rules the model depends on:
    separate thing from policy and applies whether or not it is in a room — it is a lock on the
    machine, not a rule about programs.
 
+   **On the wire, a lock is whitelist mode with an empty list.** The agent's sync response has no
+   field that says "locked", and inventing one would break every agent already deployed; but
+   "whitelist, allowing nothing" already means exactly that in the vocabulary the agent speaks —
+   only the system processes it protects unconditionally survive. The alternative reading, that a
+   blocked machine simply receives no policy, has to be named to be rejected: it would mean pressing
+   **Block this computer** in the cabinet switches protection off on it, which is the opposite of
+   the button. A locked machine's own room policy is irrelevant while the lock is on; unblocking
+   restores it on the next sync.
+
 ### Roles
 
 | Role | Scope | Capabilities |

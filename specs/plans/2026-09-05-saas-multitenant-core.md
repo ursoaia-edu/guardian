@@ -3532,6 +3532,129 @@ func TestSyncOfUnassignedComputerEnforcesNothing(t *testing.T) {
 	}
 }
 
+// assignToRoom moves the account's only computer into a room, returning its id.
+func assignToRoom(t *testing.T, s *Server, c *http.Cookie, room string) string {
+	t.Helper()
+	h := s.setupRoutes()
+	var list struct {
+		Computers []struct {
+			ID string `json:"id"`
+		} `json:"computers"`
+	}
+	decodeInto(t, doJSON(t, h, "GET", "/api/v1/computers", nil, c), &list)
+	if len(list.Computers) != 1 {
+		t.Fatalf("expected one computer, got %d", len(list.Computers))
+	}
+	id := list.Computers[0].ID
+	if rr := doJSON(t, h, "PATCH", "/api/v1/computers/"+id,
+		map[string]any{"room_id": room}, c); rr.Code != 200 {
+		t.Fatalf("assign: %d %s", rr.Code, rr.Body.String())
+	}
+	return id
+}
+
+// Protection off is one of the three fail-closed branches and the one a parent
+// toggles most often — it is the master switch for a whole room.
+func TestSyncWithProtectionOffEnforcesNothing(t *testing.T) {
+	s := &Server{pool: testPool(t)}
+	h := s.setupRoutes()
+	c := registerAndLogin(t, s, "parent@example.com")
+	room := createRoom(t, s, c, "Kids room")
+	doJSON(t, h, "POST", "/api/v1/rooms/"+room+"/applications",
+		map[string]string{"name": "steam.exe", "list": "blacklist"}, c)
+
+	binding := mintBindingToken(t, s, c)
+	_, agentToken := enroll(t, s, binding, "guid-1", "PC-1")
+	assignToRoom(t, s, c, room)
+
+	// The room has a rule but protection was never switched on.
+	code, out := agentSync(t, s, agentToken)
+	if code != 200 {
+		t.Fatalf("status %d", code)
+	}
+	if out.Mode != "free" || len(out.Applications) != 0 {
+		t.Fatalf("protection is off but the agent was told to enforce %q with %d applications",
+			out.Mode, len(out.Applications))
+	}
+}
+
+// Blocking a computer must LOCK it, not unmanage it. Expressed in the wire
+// format the agent already speaks: whitelist mode with an empty list allows
+// nothing but the processes the agent protects unconditionally. If this ever
+// returns "free", pressing "block this computer" in the cabinet switches
+// protection off — the exact opposite of the button.
+func TestSyncOfBlockedComputerLocksIt(t *testing.T) {
+	s := &Server{pool: testPool(t)}
+	h := s.setupRoutes()
+	c := registerAndLogin(t, s, "parent@example.com")
+	room := createRoom(t, s, c, "Kids room")
+	doJSON(t, h, "PATCH", "/api/v1/rooms/"+room, map[string]any{"protection_enabled": true}, c)
+
+	binding := mintBindingToken(t, s, c)
+	_, agentToken := enroll(t, s, binding, "guid-1", "PC-1")
+	id := assignToRoom(t, s, c, room)
+
+	if rr := doJSON(t, h, "PATCH", "/api/v1/computers/"+id,
+		map[string]any{"blocked": true}, c); rr.Code != 200 {
+		t.Fatalf("block: %d %s", rr.Code, rr.Body.String())
+	}
+
+	code, out := agentSync(t, s, agentToken)
+	if code != 200 {
+		t.Fatalf("status %d", code)
+	}
+	if out.Mode != "whitelist" {
+		t.Fatalf("a blocked computer was told to run in %q mode; blocking must lock it", out.Mode)
+	}
+	if len(out.Applications) != 0 {
+		t.Fatalf("a locked computer was given %d allowed applications", len(out.Applications))
+	}
+}
+
+// Telemetry must never be able to stop enforcement. Both of these values are
+// valid JSON that Postgres refuses in a jsonb column; before readRuntime parsed
+// rather than merely validated, either one turned a sync into a permanent 500
+// and left the machine with no policy at all.
+func TestMalformedRuntimeDoesNotBreakSync(t *testing.T) {
+	s := &Server{pool: testPool(t)}
+	h := s.setupRoutes()
+	c := registerAndLogin(t, s, "parent@example.com")
+	room := createRoom(t, s, c, "Kids room")
+	doJSON(t, h, "PATCH", "/api/v1/rooms/"+room, map[string]any{"protection_enabled": true}, c)
+	doJSON(t, h, "POST", "/api/v1/rooms/"+room+"/applications",
+		map[string]string{"name": "steam.exe", "list": "blacklist"}, c)
+
+	binding := mintBindingToken(t, s, c)
+	_, agentToken := enroll(t, s, binding, "guid-1", "PC-1")
+	assignToRoom(t, s, c, room)
+
+	// Built from bytes rather than written as an escape: a literal NUL escape
+	// in source is exactly the thing editors and tooling silently rewrite.
+	nulEscape := string([]byte{'\\', 'u', '0', '0', '0', '0'})
+
+	for _, runtime := range []string{
+		`{"user":"a` + nulEscape + `b"}`, // legal JSON, rejected by jsonb
+		`{"user":"` + string([]byte{0xff, 0xfe}) + `"}`, // invalid UTF-8 bytes
+		`"not an object"`,
+		`{ broken`,
+	} {
+		req := httptest.NewRequest("GET", "/agent/sync?runtime="+url.QueryEscape(runtime), nil)
+		req.Header.Set("Authorization", "Bearer "+agentToken)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+
+		if rec.Code != 200 {
+			t.Fatalf("runtime %q broke the sync: %d %s", runtime, rec.Code, rec.Body.String())
+		}
+		var out ClientSyncResponse
+		decodeInto(t, rec, &out)
+		if out.Mode != "blacklist" || len(out.Applications) != 1 {
+			t.Fatalf("runtime %q cost the machine its policy: mode %q, %d applications",
+				runtime, out.Mode, len(out.Applications))
+		}
+	}
+}
+
 func TestSyncReturnsTheRoomPolicy(t *testing.T) {
 	s := &Server{pool: testPool(t)}
 	h := s.setupRoutes()
@@ -3590,6 +3713,17 @@ func (s *Server) handlePatchRoom(w http.ResponseWriter, r *http.Request) {
 	if req.Mode != nil && *req.Mode != "blacklist" && *req.Mode != "whitelist" {
 		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "Mode must be 'blacklist' or 'whitelist'"})
 		return
+	}
+	// The same name rule the create path applies. Without it a rename can empty
+	// a room's name or set it to whitespace, and the cabinet then shows a room
+	// with no label that a parent cannot tell apart from any other.
+	if req.Name != nil {
+		trimmed := strings.TrimSpace(*req.Name)
+		if trimmed == "" {
+			writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "Room name cannot be empty"})
+			return
+		}
+		req.Name = &trimmed
 	}
 	t, ok := mustTenant(w, r)
 	if !ok {
@@ -3695,28 +3829,39 @@ func (s *Server) AgentAuth(next http.Handler) http.Handler {
 		// why that is not an unscoped SELECT policy on computers. Raw pgx rather
 		// than a generated query: this is an authentication primitive, not a
 		// domain query, and it has no place in the sqlc surface.
-		var accountID uuid.UUID
-		err := s.pool.QueryRow(r.Context(),
-			`SELECT account_for_agent_token($1)`, hash).Scan(&accountID)
-		if err != nil {
-			// A NULL result scans into uuid.UUID as an error, which is also what
-			// an unknown token produces — both are simply "not authenticated".
-			// A genuine database failure lands here too; it is logged at Warn
-			// rather than Error because this path is reachable by anyone with a
-			// socket, and an Error per bogus request is a log-flooding lever.
-			slog.Warn("agent token did not resolve", "remote", r.RemoteAddr, "error", err)
+		// Scanned into a POINTER on purpose. An unknown token makes the function
+		// return SQL NULL, and pgx scans NULL into a plain uuid.UUID without
+		// error — leaving the zero uuid and no signal. The pointer stays nil
+		// instead, so an unknown token is rejected here, in one round trip,
+		// rather than falling through to a second lookup that was always going
+		// to find nothing. That also keeps a genuine database failure a 5xx
+		// instead of dressing it up as a bad credential.
+		var accountID *uuid.UUID
+		if err := s.pool.QueryRow(r.Context(),
+			`SELECT account_for_agent_token($1)`, hash).Scan(&accountID); err != nil {
+			slog.Error("resolve agent token", "remote", r.RemoteAddr, "error", err)
+			writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "Internal error"})
+			return
+		}
+		if accountID == nil {
+			slog.Warn("agent with an unknown token", "remote", r.RemoteAddr)
 			writeJSON(w, http.StatusUnauthorized, ErrorResponse{Error: "Unauthorized"})
 			return
 		}
 
 		// Everything after this point is scoped like any other query.
 		var computer db.Computer
-		if err := s.inAccount(r.Context(), accountID, func(tx pgx.Tx) error {
+		if err := s.inAccount(r.Context(), *accountID, func(tx pgx.Tx) error {
 			var err error
 			computer, err = db.New(tx).GetComputerByTokenHash(r.Context(), hash)
 			return err
 		}); err != nil {
-			slog.Warn("agent with an unknown token", "remote", r.RemoteAddr)
+			// Reaching here means the token resolved to an account a moment ago
+			// but the row is now unreadable — a deleted computer, or a failure.
+			// Either way the agent is not authenticated, but the error is worth
+			// keeping: without it this line cannot be told apart from a bogus
+			// token in the logs.
+			slog.Warn("agent token resolved but its computer did not", "remote", r.RemoteAddr, "error", err)
 			writeJSON(w, http.StatusUnauthorized, ErrorResponse{Error: "Unauthorized"})
 			return
 		}
@@ -3727,16 +3872,25 @@ func (s *Server) AgentAuth(next http.Handler) http.Handler {
 }
 ```
 
-Add to `server/tenant.go`:
+In `server/tenant.go`, fold the new key into the existing `iota` block rather than declaring it
+separately. Two context keys of the same type with hand-assigned values is a silent collision
+waiting for the next one: `tenantKey` is 0 today, so a stray `const computerKey ctxKey = 1` happens
+to work, and the next key declared with `iota` in its own block would quietly alias it and swap a
+`Tenant` for a `db.Computer` inside a type assertion.
 
 ```go
-const computerKey ctxKey = 1
+const (
+	tenantKey ctxKey = iota
+	computerKey
+)
 
 func computerFrom(ctx context.Context) (db.Computer, bool) {
 	c, ok := ctx.Value(computerKey).(db.Computer)
 	return c, ok
 }
 ```
+
+(the existing `const tenantKey ctxKey = iota` declaration is replaced by the block above)
 
 (import `server/internal/db` in `tenant.go`, `context` in `middleware.go`)
 
@@ -3756,20 +3910,51 @@ func (s *Server) handleAgentSync(w http.ResponseWriter, r *http.Request) {
 		Client:       []ClientEntry{},
 	}
 
+	// Telemetry is recorded in its own transaction, deliberately outside the one
+	// that computes the policy. "Telemetry must never stop enforcement" is only
+	// true if a failed telemetry write cannot fail the request — and there are
+	// more ways for a jsonb write to fail than any input filter will enumerate.
+	// A lost last_seen_at is a degraded fleet view; a failed sync is a machine
+	// running with no policy at all.
+	if err := s.inAccount(r.Context(), computer.AccountID, func(tx pgx.Tx) error {
+		return db.New(tx).TouchComputer(r.Context(), db.TouchComputerParams{
+			ID: computer.ID, Runtime: readRuntime(r),
+		})
+	}); err != nil {
+		slog.Error("record agent telemetry", "computer_id", computer.ID, "error", err)
+	}
+
+	// A blocked machine is locked, not unmanaged. Expressed in the wire format
+	// the agent already speaks: whitelist mode with an empty list means "allow
+	// nothing but the system processes the agent protects unconditionally".
+	// Sending "free" here would mean pressing "block this computer" in the
+	// cabinet switched protection OFF — the exact opposite of the button.
+	if computer.Blocked {
+		resp.Mode = "whitelist"
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+
+	// No room at all: nothing is enforced. A freshly enrolled machine must not
+	// start killing processes before someone deliberately placed it somewhere.
+	if computer.RoomID == nil {
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+
 	err := s.inAccount(r.Context(), computer.AccountID, func(tx pgx.Tx) error {
 		q := db.New(tx)
-		if err := q.TouchComputer(r.Context(), db.TouchComputerParams{
-			ID: computer.ID, Runtime: readRuntime(r),
-		}); err != nil {
+		room, err := q.GetRoom(r.Context(), *computer.RoomID)
+		if err != nil {
+			// A room that has been deleted out from under the machine is a
+			// legitimate "nothing to enforce"; a database failure is not, and
+			// collapsing the two would hide an outage behind a quiet free mode.
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil
+			}
 			return err
 		}
-		// No room, or protection off, or the machine is blocked: nothing is
-		// enforced. "free" is the mode the agent already understands.
-		if computer.RoomID == nil || computer.Blocked {
-			return nil
-		}
-		room, err := q.GetRoom(r.Context(), *computer.RoomID)
-		if err != nil || !room.ProtectionEnabled {
+		if !room.ProtectionEnabled {
 			return nil
 		}
 		apps, err := q.ListRoomApplications(r.Context(), room.ID)
@@ -3795,14 +3980,40 @@ func (s *Server) handleAgentSync(w http.ResponseWriter, r *http.Request) {
 }
 
 // readRuntime collects the volatile half of the passport the agent reports on
-// every sync. Absent or malformed input is stored as an empty object rather
-// than failing the sync — telemetry must never stop enforcement.
+// every sync. Anything it cannot vouch for becomes an empty object.
+//
+// json.Valid is NOT a sufficient gate: it accepts things jsonb rejects. Both of
+// these are valid JSON and both make Postgres error —
+//
+//	a JSON string holding a NUL escape    ERROR: unsupported Unicode escape sequence
+//	a JSON string holding invalid UTF-8   ERROR: invalid byte sequence for encoding "UTF8"
+//
+// — and a Windows username on a non-UTF-8 codepage is exactly how the second one
+// reaches us. So the value is decoded and re-encoded: decoding replaces invalid
+// UTF-8 with U+FFFD, requiring an object rejects the scalars the column is not
+// meant to hold, and the NUL escape is checked for explicitly because Go emits
+// it again on the way out.
 func readRuntime(r *http.Request) []byte {
+	const empty = `{}`
 	raw := r.URL.Query().Get("runtime")
-	if raw == "" || !json.Valid([]byte(raw)) {
-		return []byte("{}")
+	if raw == "" {
+		return []byte(empty)
 	}
-	return []byte(raw)
+	var probe map[string]any
+	if err := json.Unmarshal([]byte(raw), &probe); err != nil {
+		return []byte(empty)
+	}
+	encoded, err := json.Marshal(probe)
+	if err != nil {
+		return []byte(empty)
+	}
+	// Go re-emits a NUL as a six-character escape, so it is those six
+	// bytes that have to be looked for, spelled out here rather than
+	// written as a literal that an editor can silently interpret.
+	if bytes.Contains(encoded, []byte{'\\', 'u', '0', '0', '0', '0'}) {
+		return []byte(empty)
+	}
+	return encoded
 }
 ```
 
