@@ -3479,7 +3479,7 @@ git commit -m "feat(server): add binding tokens and agent enrollment"
 
 **Interfaces:**
 - Consumes: enrollment from Task 10.
-- Produces: `GET /agent/sync`; middleware `func (s *Server) AgentAuth(next http.Handler) http.Handler`; queries `GetComputerByTokenHash`, `TouchComputer`, `GetRoomPolicyForComputer`.
+- Produces: `GET /agent/sync`; `PATCH /api/v1/rooms/{roomID}` (`handlePatchRoom`, deferred here from Task 7); middleware `func (s *Server) AgentAuth(next http.Handler) http.Handler`; the `account_for_agent_token(text)` SQL function; queries `GetComputerByTokenHash`, `TouchComputer`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -3634,18 +3634,43 @@ SELECT * FROM computers WHERE token_hash = $1;
 UPDATE computers SET last_seen_at = now(), runtime = $2 WHERE id = $1;
 ```
 
-`GetComputerByTokenHash` runs unscoped — the token is what names the account — so `computers` needs the same lookup exception the binding tokens got. Add `server/db/migrations/00010_agent_lookup.sql`:
+Agent authentication happens before any account scope exists, so something has to read `computers`
+unscoped. The obvious move — a `FOR SELECT USING (current_account_id() IS NULL)` policy, the same
+exception `binding_tokens` got — is the wrong one here. `binding_tokens` holds ids, digests and
+lifetimes; `computers` holds every customer's machine inventory: hostnames, hardware, display names,
+who is logged in. A blanket unscoped read policy on it means any query that forgets its scope
+returns the whole fleet of every account, and this plan has already produced unscoped queries by
+accident twice.
+
+Agent authentication needs exactly one fact — which account the token belongs to — so grant exactly
+that. Add `server/db/migrations/00010_agent_lookup.sql`:
 
 ```sql
 -- +goose Up
--- Agent authentication happens before any account scope exists. The lookup is
--- by a 32-byte token hash and returns at most one row.
-CREATE POLICY computers_token_lookup ON computers
-    FOR SELECT USING (current_account_id() IS NULL);
+-- The narrow alternative to an unscoped SELECT policy on computers. SECURITY
+-- DEFINER runs this as the table owner, who is not subject to RLS, but the
+-- function returns a single uuid and nothing else — so the only thing reachable
+-- without an account scope is the answer to "whose token is this?". Everything
+-- the agent handler goes on to read happens inside inAccount like any other
+-- query.
+--
+-- search_path is pinned because a SECURITY DEFINER function that resolves
+-- unqualified names through the caller's search_path is a privilege-escalation
+-- primitive.
+CREATE FUNCTION account_for_agent_token(hash TEXT) RETURNS UUID
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public AS $$
+    SELECT c.account_id FROM public.computers c WHERE c.token_hash = hash
+$$;
+
+REVOKE ALL ON FUNCTION account_for_agent_token(TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION account_for_agent_token(TEXT) TO guardian_app;
 
 -- +goose Down
-DROP POLICY computers_token_lookup ON computers;
+DROP FUNCTION account_for_agent_token(TEXT);
 ```
+
+`GetComputerByTokenHash` therefore runs **scoped**, inside `inAccount`, once the function has named
+the account.
 
 Regenerate: `go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.27.0 generate`
 
@@ -3663,9 +3688,34 @@ func (s *Server) AgentAuth(next http.Handler) http.Handler {
 			writeJSON(w, http.StatusUnauthorized, ErrorResponse{Error: "Unauthorized"})
 			return
 		}
-		computer, err := db.New(s.pool).GetComputerByTokenHash(
-			r.Context(), hashToken(strings.TrimPrefix(h, "Bearer ")))
+		hash := hashToken(strings.TrimPrefix(h, "Bearer "))
+
+		// Two steps on purpose. The first is the only unscoped read in the agent
+		// path and it returns a bare account id — see 00010_agent_lookup.sql for
+		// why that is not an unscoped SELECT policy on computers. Raw pgx rather
+		// than a generated query: this is an authentication primitive, not a
+		// domain query, and it has no place in the sqlc surface.
+		var accountID uuid.UUID
+		err := s.pool.QueryRow(r.Context(),
+			`SELECT account_for_agent_token($1)`, hash).Scan(&accountID)
 		if err != nil {
+			// A NULL result scans into uuid.UUID as an error, which is also what
+			// an unknown token produces — both are simply "not authenticated".
+			// A genuine database failure lands here too; it is logged at Warn
+			// rather than Error because this path is reachable by anyone with a
+			// socket, and an Error per bogus request is a log-flooding lever.
+			slog.Warn("agent token did not resolve", "remote", r.RemoteAddr, "error", err)
+			writeJSON(w, http.StatusUnauthorized, ErrorResponse{Error: "Unauthorized"})
+			return
+		}
+
+		// Everything after this point is scoped like any other query.
+		var computer db.Computer
+		if err := s.inAccount(r.Context(), accountID, func(tx pgx.Tx) error {
+			var err error
+			computer, err = db.New(tx).GetComputerByTokenHash(r.Context(), hash)
+			return err
+		}); err != nil {
 			slog.Warn("agent with an unknown token", "remote", r.RemoteAddr)
 			writeJSON(w, http.StatusUnauthorized, ErrorResponse{Error: "Unauthorized"})
 			return
