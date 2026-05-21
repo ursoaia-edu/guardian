@@ -162,3 +162,65 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 	slog.Info("computer enrolled", "account_id", binding.AccountID, "hostname", req.Hostname)
 	writeJSON(w, http.StatusCreated, map[string]string{"agent_token": agentPlain})
 }
+
+func (s *Server) handleAgentSync(w http.ResponseWriter, r *http.Request) {
+	computer, ok := computerFrom(r.Context())
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, ErrorResponse{Error: "Unauthorized"})
+		return
+	}
+
+	resp := ClientSyncResponse{
+		Applications: []ClientApplication{},
+		Mode:         "free",
+		Client:       []ClientEntry{},
+	}
+
+	err := s.inAccount(r.Context(), computer.AccountID, func(tx pgx.Tx) error {
+		q := db.New(tx)
+		if err := q.TouchComputer(r.Context(), db.TouchComputerParams{
+			ID: computer.ID, Runtime: readRuntime(r),
+		}); err != nil {
+			return err
+		}
+		// No room, or protection off, or the machine is blocked: nothing is
+		// enforced. "free" is the mode the agent already understands.
+		if computer.RoomID == nil || computer.Blocked {
+			return nil
+		}
+		room, err := q.GetRoom(r.Context(), *computer.RoomID)
+		if err != nil || !room.ProtectionEnabled {
+			return nil
+		}
+		apps, err := q.ListRoomApplications(r.Context(), room.ID)
+		if err != nil {
+			return err
+		}
+		for _, a := range apps {
+			if a.Enabled && a.List == room.Mode {
+				resp.Applications = append(resp.Applications,
+					ClientApplication{Name: a.Name, Mode: a.List})
+			}
+		}
+		resp.Mode = room.Mode
+		resp.Client = []ClientEntry{{Name: "power", Status: room.PowerAllowed}}
+		return nil
+	})
+	if err != nil {
+		slog.Error("agent sync", "computer_id", computer.ID, "error", err)
+		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "Sync failed"})
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// readRuntime collects the volatile half of the passport the agent reports on
+// every sync. Absent or malformed input is stored as an empty object rather
+// than failing the sync — telemetry must never stop enforcement.
+func readRuntime(r *http.Request) []byte {
+	raw := r.URL.Query().Get("runtime")
+	if raw == "" || !json.Valid([]byte(raw)) {
+		return []byte("{}")
+	}
+	return []byte(raw)
+}

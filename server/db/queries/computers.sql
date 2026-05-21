@@ -39,3 +39,9 @@ ON CONFLICT (account_id, machine_guid) DO UPDATE SET
     token_hash    = EXCLUDED.token_hash,
     enrolled_at   = now()
 RETURNING *;
+
+-- name: GetComputerByTokenHash :one
+SELECT * FROM computers WHERE token_hash = $1;
+
+-- name: TouchComputer :exec
+UPDATE computers SET last_seen_at = now(), runtime = $2 WHERE id = $1;
