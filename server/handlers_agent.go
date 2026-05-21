@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -176,20 +177,51 @@ func (s *Server) handleAgentSync(w http.ResponseWriter, r *http.Request) {
 		Client:       []ClientEntry{},
 	}
 
+	// Telemetry is recorded in its own transaction, deliberately outside the one
+	// that computes the policy. "Telemetry must never stop enforcement" is only
+	// true if a failed telemetry write cannot fail the request — and there are
+	// more ways for a jsonb write to fail than any input filter will enumerate.
+	// A lost last_seen_at is a degraded fleet view; a failed sync is a machine
+	// running with no policy at all.
+	if err := s.inAccount(r.Context(), computer.AccountID, func(tx pgx.Tx) error {
+		return db.New(tx).TouchComputer(r.Context(), db.TouchComputerParams{
+			ID: computer.ID, Runtime: readRuntime(r),
+		})
+	}); err != nil {
+		slog.Error("record agent telemetry", "computer_id", computer.ID, "error", err)
+	}
+
+	// A blocked machine is locked, not unmanaged. Expressed in the wire format
+	// the agent already speaks: whitelist mode with an empty list means "allow
+	// nothing but the system processes the agent protects unconditionally".
+	// Sending "free" here would mean pressing "block this computer" in the
+	// cabinet switched protection OFF — the exact opposite of the button.
+	if computer.Blocked {
+		resp.Mode = "whitelist"
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+
+	// No room at all: nothing is enforced. A freshly enrolled machine must not
+	// start killing processes before someone deliberately placed it somewhere.
+	if computer.RoomID == nil {
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+
 	err := s.inAccount(r.Context(), computer.AccountID, func(tx pgx.Tx) error {
 		q := db.New(tx)
-		if err := q.TouchComputer(r.Context(), db.TouchComputerParams{
-			ID: computer.ID, Runtime: readRuntime(r),
-		}); err != nil {
+		room, err := q.GetRoom(r.Context(), *computer.RoomID)
+		if err != nil {
+			// A room that has been deleted out from under the machine is a
+			// legitimate "nothing to enforce"; a database failure is not, and
+			// collapsing the two would hide an outage behind a quiet free mode.
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil
+			}
 			return err
 		}
-		// No room, or protection off, or the machine is blocked: nothing is
-		// enforced. "free" is the mode the agent already understands.
-		if computer.RoomID == nil || computer.Blocked {
-			return nil
-		}
-		room, err := q.GetRoom(r.Context(), *computer.RoomID)
-		if err != nil || !room.ProtectionEnabled {
+		if !room.ProtectionEnabled {
 			return nil
 		}
 		apps, err := q.ListRoomApplications(r.Context(), room.ID)
@@ -215,12 +247,38 @@ func (s *Server) handleAgentSync(w http.ResponseWriter, r *http.Request) {
 }
 
 // readRuntime collects the volatile half of the passport the agent reports on
-// every sync. Absent or malformed input is stored as an empty object rather
-// than failing the sync — telemetry must never stop enforcement.
+// every sync. Anything it cannot vouch for becomes an empty object.
+//
+// json.Valid is NOT a sufficient gate: it accepts things jsonb rejects. Both of
+// these are valid JSON and both make Postgres error —
+//
+//	a JSON string holding a NUL escape    ERROR: unsupported Unicode escape sequence
+//	a JSON string holding invalid UTF-8   ERROR: invalid byte sequence for encoding "UTF8"
+//
+// — and a Windows username on a non-UTF-8 codepage is exactly how the second one
+// reaches us. So the value is decoded and re-encoded: decoding replaces invalid
+// UTF-8 with U+FFFD, requiring an object rejects the scalars the column is not
+// meant to hold, and the NUL escape is checked for explicitly because Go emits
+// it again on the way out.
 func readRuntime(r *http.Request) []byte {
+	const empty = `{}`
 	raw := r.URL.Query().Get("runtime")
-	if raw == "" || !json.Valid([]byte(raw)) {
-		return []byte("{}")
+	if raw == "" {
+		return []byte(empty)
 	}
-	return []byte(raw)
+	var probe map[string]any
+	if err := json.Unmarshal([]byte(raw), &probe); err != nil {
+		return []byte(empty)
+	}
+	encoded, err := json.Marshal(probe)
+	if err != nil {
+		return []byte(empty)
+	}
+	// Go re-emits a NUL as a six-character escape, so it is those six
+	// bytes that have to be looked for, spelled out here rather than
+	// written as a literal that an editor can silently interpret.
+	if bytes.Contains(encoded, []byte{'\\', 'u', '0', '0', '0', '0'}) {
+		return []byte(empty)
+	}
+	return encoded
 }
