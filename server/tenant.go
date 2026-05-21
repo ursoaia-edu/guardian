@@ -15,7 +15,10 @@ import (
 
 type ctxKey int
 
-const tenantKey ctxKey = iota
+const (
+	tenantKey ctxKey = iota
+	computerKey
+)
 
 // Tenant is who the caller is, resolved server-side from a session or an agent
 // token. It is never built from request parameters.
@@ -32,8 +35,6 @@ func tenantFrom(ctx context.Context) (Tenant, bool) {
 	t, ok := ctx.Value(tenantKey).(Tenant)
 	return t, ok
 }
-
-const computerKey ctxKey = 1
 
 func computerFrom(ctx context.Context) (db.Computer, bool) {
 	c, ok := ctx.Value(computerKey).(db.Computer)

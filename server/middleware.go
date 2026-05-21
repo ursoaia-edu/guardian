@@ -78,28 +78,39 @@ func (s *Server) AgentAuth(next http.Handler) http.Handler {
 		// why that is not an unscoped SELECT policy on computers. Raw pgx rather
 		// than a generated query: this is an authentication primitive, not a
 		// domain query, and it has no place in the sqlc surface.
-		var accountID uuid.UUID
-		err := s.pool.QueryRow(r.Context(),
-			`SELECT account_for_agent_token($1)`, hash).Scan(&accountID)
-		if err != nil {
-			// A NULL result scans into uuid.UUID as an error, which is also what
-			// an unknown token produces — both are simply "not authenticated".
-			// A genuine database failure lands here too; it is logged at Warn
-			// rather than Error because this path is reachable by anyone with a
-			// socket, and an Error per bogus request is a log-flooding lever.
-			slog.Warn("agent token did not resolve", "remote", r.RemoteAddr, "error", err)
+		// Scanned into a POINTER on purpose. An unknown token makes the function
+		// return SQL NULL, and pgx scans NULL into a plain uuid.UUID without
+		// error — leaving the zero uuid and no signal. The pointer stays nil
+		// instead, so an unknown token is rejected here, in one round trip,
+		// rather than falling through to a second lookup that was always going
+		// to find nothing. That also keeps a genuine database failure a 5xx
+		// instead of dressing it up as a bad credential.
+		var accountID *uuid.UUID
+		if err := s.pool.QueryRow(r.Context(),
+			`SELECT account_for_agent_token($1)`, hash).Scan(&accountID); err != nil {
+			slog.Error("resolve agent token", "remote", r.RemoteAddr, "error", err)
+			writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "Internal error"})
+			return
+		}
+		if accountID == nil {
+			slog.Warn("agent with an unknown token", "remote", r.RemoteAddr)
 			writeJSON(w, http.StatusUnauthorized, ErrorResponse{Error: "Unauthorized"})
 			return
 		}
 
 		// Everything after this point is scoped like any other query.
 		var computer db.Computer
-		if err := s.inAccount(r.Context(), accountID, func(tx pgx.Tx) error {
+		if err := s.inAccount(r.Context(), *accountID, func(tx pgx.Tx) error {
 			var err error
 			computer, err = db.New(tx).GetComputerByTokenHash(r.Context(), hash)
 			return err
 		}); err != nil {
-			slog.Warn("agent with an unknown token", "remote", r.RemoteAddr)
+			// Reaching here means the token resolved to an account a moment ago
+			// but the row is now unreadable — a deleted computer, or a failure.
+			// Either way the agent is not authenticated, but the error is worth
+			// keeping: without it this line cannot be told apart from a bogus
+			// token in the logs.
+			slog.Warn("agent token resolved but its computer did not", "remote", r.RemoteAddr, "error", err)
 			writeJSON(w, http.StatusUnauthorized, ErrorResponse{Error: "Unauthorized"})
 			return
 		}

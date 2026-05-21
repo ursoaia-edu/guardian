@@ -118,6 +118,17 @@ func (s *Server) handlePatchRoom(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "Mode must be 'blacklist' or 'whitelist'"})
 		return
 	}
+	// The same name rule the create path applies. Without it a rename can empty
+	// a room's name or set it to whitespace, and the cabinet then shows a room
+	// with no label that a parent cannot tell apart from any other.
+	if req.Name != nil {
+		trimmed := strings.TrimSpace(*req.Name)
+		if trimmed == "" {
+			writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "Room name cannot be empty"})
+			return
+		}
+		req.Name = &trimmed
+	}
 	t, ok := mustTenant(w, r)
 	if !ok {
 		return
