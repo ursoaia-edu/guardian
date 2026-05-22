@@ -4047,10 +4047,10 @@ git commit -m "feat(server): add per-agent authentication and room-scoped sync"
 
 **Files:**
 - Create: `server/db/migrations/00011_events.sql`, `server/db/queries/events.sql`, `server/events.go`, `server/events_test.go`
-- Modify: `server/handlers_rooms.go`, `server/handlers_agent.go`, `server/routes.go`
+- Modify: `server/handlers_agent.go`, `server/routes.go`
 
 **Interfaces:**
-- Produces: `func (s *Server) recordEvent(ctx context.Context, tx pgx.Tx, e eventInput) error`; `GET /api/v1/events?since=`.
+- Produces: `func (s *Server) recordEvent(ctx context.Context, tx pgx.Tx, e eventInput) error`; `GET /api/v1/events` (the most recent 200). A `since=` filter belongs with the cabinet in plan 2; there is no consumer for it here and inventing one now would be untested surface.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -4277,7 +4277,7 @@ git commit -m "feat(server): record and expose an account event log"
 
 **Interfaces:**
 - Consumes: every endpoint built so far.
-- Produces: the mandatory cross-account suite; `go run ./fakeagent -server=... -token=...`.
+- Produces: the mandatory cross-account suite; `go run ./fakeagent -server=... -binding-token=...`.
 
 - [ ] **Step 1: Write the parameterised isolation suite**
 
@@ -4531,11 +4531,11 @@ git commit -m "test(server): add the cross-account isolation suite and a fake ag
 
 **Files:**
 - Create: `server/db/migrations/00012_room_member_lookup.sql`, `server/db/queries/room_members.sql`, `server/handlers_members.go`, `server/members_test.go`
-- Modify: `server/tenant.go`, `server/middleware.go`, `server/handlers_rooms.go`, `server/handlers_computers.go`, `server/routes.go`
+- Modify: `server/tenant.go`, `server/middleware.go`, `server/handlers_auth.go` (the `accountHeader` constant and `handleMe`), `server/handlers_rooms.go`, `server/handlers_computers.go`, `server/handlers_agent.go`, `server/events.go`, `server/routes.go`
 
 **Interfaces:**
 - Consumes: `Tenant` (Task 3), `SessionAuth` (Task 6), the room and computer handlers (Tasks 7–9).
-- Produces: `Tenant.Role` (`owner` | `admin` | `member`); `POST/GET/DELETE /api/v1/rooms/{roomID}/members`; `func requireManager(w http.ResponseWriter, t Tenant) bool`; queries `ListAccessibleAccounts`, `ListRoomsForMember`, `IsRoomMember`, `ListComputersForMember`, `GetComputerForMember`, `AddRoomMember`, `ListRoomMembers`, `DeleteRoomMember`.
+- Produces: `Tenant.Role` (`owner` | `admin` | `member`); explicit account selection via the `X-Guardian-Account` header, validated against proven memberships; `GET/POST /api/v1/rooms/{roomID}/members` and `DELETE /api/v1/rooms/{roomID}/members/{userID}`; `func requireManager(w http.ResponseWriter, t Tenant) bool`; queries `ListAccessibleAccounts`, `ListRoomsForMember`, `IsRoomMember`, `ListComputersForMember`, `GetComputerForMember`, `AddRoomMember`, `ListRoomMembers`, `DeleteRoomMember`.
 
 This is the second axis of authorisation. Account membership decides *which account* you
 are in; room membership decides *how much of it* you see. Building it now costs one task;
@@ -4580,6 +4580,43 @@ func addGuest(t *testing.T, s *Server, owner *http.Cookie, roomID, email string)
 	return nil
 }
 
+// asAccount issues a request as a user acting in a named account. A guest owns
+// an account of their own — registration gives everyone one — so reaching the
+// account whose room was shared with them means saying which account they mean.
+func asAccount(t *testing.T, h http.Handler, method, path string, body any, c *http.Cookie, account uuid.UUID) *httptest.ResponseRecorder {
+	t.Helper()
+	var r io.Reader
+	if body != nil {
+		raw, err := json.Marshal(body)
+		if err != nil {
+			t.Fatalf("marshal body: %v", err)
+		}
+		r = bytes.NewReader(raw)
+	}
+	req := httptest.NewRequest(method, path, r)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(accountHeader, account.String())
+	req.AddCookie(c)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+// Selecting an account is a choice among proven memberships, never a way to
+// reach a new one. Without this test the header would be an authorisation hole
+// wearing the clothes of a convenience feature.
+func TestAccountHeaderCannotReachAnotherAccount(t *testing.T) {
+	s := &Server{pool: testPool(t)}
+	h := s.setupRoutes()
+	ca := registerAndLogin(t, s, "a@example.com")
+	registerAndLogin(t, s, "b@example.com")
+	accountB := accountIDOf(t, s, "b@example.com")
+
+	if rr := asAccount(t, h, "GET", "/api/v1/rooms", nil, ca, accountB); rr.Code != 404 {
+		t.Fatalf("account A selected account B and got %d, want 404", rr.Code)
+	}
+}
+
 func TestGuestSeesOnlyTheGrantedRoom(t *testing.T) {
 	s := &Server{pool: testPool(t)}
 	h := s.setupRoutes()
@@ -4588,13 +4625,14 @@ func TestGuestSeesOnlyTheGrantedRoom(t *testing.T) {
 	createRoom(t, s, owner, "Private room")
 
 	guest := addGuest(t, s, owner, shared, "grandma@example.com")
+	ownerAccount := accountIDOf(t, s, "parent@example.com")
 
 	var out struct {
 		Rooms []struct {
 			Name string `json:"name"`
 		} `json:"rooms"`
 	}
-	decodeInto(t, doJSON(t, h, "GET", "/api/v1/rooms", nil, guest), &out)
+	decodeInto(t, asAccount(t, h, "GET", "/api/v1/rooms", nil, guest, ownerAccount), &out)
 	if len(out.Rooms) != 1 || out.Rooms[0].Name != "Shared room" {
 		t.Fatalf("guest sees %+v; only the granted room may be visible", out.Rooms)
 	}
@@ -4607,8 +4645,9 @@ func TestGuestCannotOpenAnUngrantedRoom(t *testing.T) {
 	shared := createRoom(t, s, owner, "Shared room")
 	private := createRoom(t, s, owner, "Private room")
 	guest := addGuest(t, s, owner, shared, "grandma@example.com")
+	ownerAccount := accountIDOf(t, s, "parent@example.com")
 
-	if rr := doJSON(t, h, "GET", "/api/v1/rooms/"+private, nil, guest); rr.Code != 404 {
+	if rr := asAccount(t, h, "GET", "/api/v1/rooms/"+private, nil, guest, ownerAccount); rr.Code != 404 {
 		t.Fatalf("guest opened an ungranted room: %d", rr.Code)
 	}
 }
@@ -4641,7 +4680,8 @@ func TestGuestSeesOnlyTheGrantedRoomsComputers(t *testing.T) {
 			Hostname string `json:"hostname"`
 		} `json:"computers"`
 	}
-	decodeInto(t, doJSON(t, h, "GET", "/api/v1/computers", nil, guest), &seen)
+	ownerAccount := accountIDOf(t, s, "parent@example.com")
+	decodeInto(t, asAccount(t, h, "GET", "/api/v1/computers", nil, guest, ownerAccount), &seen)
 	if len(seen.Computers) != 1 || seen.Computers[0].Hostname != "PC-SHARED" {
 		t.Fatalf("guest sees %+v; the unassigned pool must stay hidden", seen.Computers)
 	}
@@ -4654,7 +4694,8 @@ func TestGuestCannotMintBindingTokens(t *testing.T) {
 	shared := createRoom(t, s, owner, "Shared room")
 	guest := addGuest(t, s, owner, shared, "grandma@example.com")
 
-	if rr := doJSON(t, h, "POST", "/api/v1/binding-tokens", nil, guest); rr.Code != 403 {
+	ownerAccount := accountIDOf(t, s, "parent@example.com")
+	if rr := asAccount(t, h, "POST", "/api/v1/binding-tokens", nil, guest, ownerAccount); rr.Code != 403 {
 		t.Fatalf("guest minted a binding token: %d", rr.Code)
 	}
 }
@@ -4668,6 +4709,57 @@ func TestAddingAnUnknownEmailIsNotFound(t *testing.T) {
 		map[string]string{"email": "nobody@example.com"}, owner)
 	if rr.Code != 404 {
 		t.Fatalf("status %d, want 404", rr.Code)
+	}
+}
+
+// Revocation has to actually revoke. A grant that cannot be taken back outlives
+// the reason it was given, and the only remedy left would be deleting the room
+// the family actually uses.
+func TestRemovingARoomMemberRevokesAccess(t *testing.T) {
+	s := &Server{pool: testPool(t)}
+	h := s.setupRoutes()
+	owner := registerAndLogin(t, s, "parent@example.com")
+	shared := createRoom(t, s, owner, "Shared room")
+	guest := addGuest(t, s, owner, shared, "grandma@example.com")
+
+	// The guest can see the room while the grant stands.
+	var before struct {
+		Rooms []json.RawMessage `json:"rooms"`
+	}
+	ownerAccount := accountIDOf(t, s, "parent@example.com")
+	decodeInto(t, asAccount(t, h, "GET", "/api/v1/rooms", nil, guest, ownerAccount), &before)
+	if len(before.Rooms) != 1 {
+		t.Fatalf("guest sees %d rooms before revocation, want 1", len(before.Rooms))
+	}
+
+	var members struct {
+		Members []struct {
+			ID string `json:"id"`
+		} `json:"members"`
+	}
+	decodeInto(t, doJSON(t, h, "GET", "/api/v1/rooms/"+shared+"/members", nil, owner), &members)
+	if len(members.Members) != 1 {
+		t.Fatalf("expected one member, got %d", len(members.Members))
+	}
+
+	if rr := doJSON(t, h, "DELETE",
+		"/api/v1/rooms/"+shared+"/members/"+members.Members[0].ID, nil, owner); rr.Code != 204 {
+		t.Fatalf("remove member: %d %s", rr.Code, rr.Body.String())
+	}
+
+	// The grant is gone, so naming that account is no longer something the
+	// guest may do at all — the header now selects an account they have no
+	// membership in, which is a 404 like any other unreachable account.
+	if rr := asAccount(t, h, "GET", "/api/v1/rooms", nil, guest, ownerAccount); rr.Code != 404 {
+		t.Fatalf("a removed guest can still act in the account: %d", rr.Code)
+	}
+	// And their own account, which they fall back to, holds none of its rooms.
+	var after struct {
+		Rooms []json.RawMessage `json:"rooms"`
+	}
+	decodeInto(t, doJSON(t, h, "GET", "/api/v1/rooms", nil, guest), &after)
+	if len(after.Rooms) != 0 {
+		t.Fatalf("a removed guest still sees %d rooms", len(after.Rooms))
 	}
 }
 ```
@@ -4773,14 +4865,79 @@ In `server/middleware.go`, replace the `ListAccountsForUser` call in `SessionAut
 		}
 ```
 
-and the context line:
+and the context line, which now has a real choice to make:
 
 ```go
+		// Task 6 picked accounts[0] and noted that was "exactly right while every
+		// user has one account". This task ends that: a guest registers normally,
+		// so they OWN an account of their own and are a MEMBER of the one whose
+		// room was shared with them — and `owner` sorts first, so the default
+		// would send an invited grandmother to her own empty account and she
+		// would never see the room she was given. The caller therefore names the
+		// account this request acts in.
+		//
+		// This is not "account_id from the request" in the sense the global
+		// constraint forbids. The constraint exists so a caller cannot reach an
+		// account they have no claim on; here the header can only SELECT among
+		// memberships the session already proved, and an unmatched value is a
+		// 404 — whether an account exists is not something a non-member is
+		// entitled to learn.
+		selected := accounts[0]
+		if requested := r.Header.Get(accountHeader); requested != "" {
+			id, err := uuid.Parse(requested)
+			if err != nil {
+				writeJSON(w, http.StatusNotFound, ErrorResponse{Error: "Account not found"})
+				return
+			}
+			found := false
+			for _, a := range accounts {
+				if a.AccountID == id {
+					selected, found = a, true
+					break
+				}
+			}
+			if !found {
+				slog.Warn("account selection rejected", "user_id", session.UserID)
+				writeJSON(w, http.StatusNotFound, ErrorResponse{Error: "Account not found"})
+				return
+			}
+		}
+
 		ctx = withTenant(ctx, Tenant{
-			AccountID: accounts[0].AccountID,
+			AccountID: selected.AccountID,
 			UserID:    session.UserID,
-			Role:      accounts[0].Role,
+			Role:      selected.Role,
 		})
+```
+
+Declare the header name next to `sessionCookieName` in `server/handlers_auth.go`:
+
+```go
+const accountHeader = "X-Guardian-Account"
+```
+
+And extend `handleMe` so a client can discover what it may select — without this the header is
+unusable, because nothing tells the caller which account ids exist:
+
+```go
+func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
+	t, ok := mustTenant(w, r)
+	if !ok {
+		return
+	}
+	accounts, err := db.New(s.pool).ListAccessibleAccounts(r.Context(), t.UserID)
+	if err != nil {
+		slog.Error("list accessible accounts", "error", err)
+		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "Internal error"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"user_id":    t.UserID.String(),
+		"account_id": t.AccountID.String(),
+		"role":       t.Role,
+		"accounts":   orEmpty(accounts),
+	})
+}
 ```
 
 - [ ] **Step 6: Implement membership and scope the handlers**
@@ -4858,6 +5015,55 @@ func (s *Server) handleAddRoomMember(w http.ResponseWriter, r *http.Request) {
 	}
 	slog.Info("room member added", "room_id", roomID, "user_id", user.ID)
 	w.WriteHeader(http.StatusCreated)
+}
+
+// handleDeleteRoomMember takes a guest's access back. Sharing a room with
+// somebody and then having no way to un-share it is the same defect as a
+// credential with no kill switch: the grant outlives the reason for it, and the
+// only remedy would be deleting the room the family actually uses.
+func (s *Server) handleDeleteRoomMember(w http.ResponseWriter, r *http.Request) {
+	t, ok := mustTenant(w, r)
+	if !ok {
+		return
+	}
+	if !requireManager(w, t) {
+		return
+	}
+	roomID, ok := roomIDParam(r)
+	if !ok {
+		writeJSON(w, http.StatusNotFound, ErrorResponse{Error: "Room not found"})
+		return
+	}
+	userID, parseErr := uuid.Parse(chi.URLParam(r, "userID"))
+	if parseErr != nil {
+		writeJSON(w, http.StatusNotFound, ErrorResponse{Error: "Member not found"})
+		return
+	}
+
+	var affected int64
+	err := s.inAccount(r.Context(), t.AccountID, func(tx pgx.Tx) error {
+		q := db.New(tx)
+		// Prove the room belongs to this account first, so a foreign room is a
+		// 404 rather than a silent zero-row delete.
+		if _, err := q.GetRoom(r.Context(), roomID); err != nil {
+			return err
+		}
+		var err error
+		affected, err = q.DeleteRoomMember(r.Context(), db.DeleteRoomMemberParams{
+			RoomID: roomID, UserID: userID,
+		})
+		return err
+	})
+	if err != nil {
+		writeLookupError(w, r, err, "Room")
+		return
+	}
+	if affected == 0 {
+		writeJSON(w, http.StatusNotFound, ErrorResponse{Error: "Member not found"})
+		return
+	}
+	slog.Info("room member removed", "room_id", roomID, "user_id", userID)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleListRoomMembers(w http.ResponseWriter, r *http.Request) {
@@ -4962,6 +5168,7 @@ Routes, inside `/api/v1`:
 ```go
 		r.Get("/rooms/{roomID}/members", s.handleListRoomMembers)
 		r.Post("/rooms/{roomID}/members", s.handleAddRoomMember)
+		r.Delete("/rooms/{roomID}/members/{userID}", s.handleDeleteRoomMember)
 ```
 
 - [ ] **Step 7: Extend the isolation suite**
