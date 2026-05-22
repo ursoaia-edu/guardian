@@ -112,7 +112,11 @@ Server installs to `/usr/local/bin/procsentinel/` as a systemd service. Agent an
 
 ## Notes
 
-- The only automated tests are for Guardian Console (`tools/whitelist-gui`); the server, agent and mobile app have none
+- Server tests need a live Postgres: `docker compose -f server/docker-compose.dev.yml up -d`,
+  then `TEST_DATABASE_URL` and `TEST_APP_DATABASE_URL` as in `specs/plans/2026-09-05-saas-multitenant-core.md`
+- `server/fakeagent` enrolls and syncs like the Windows agent, for exercising the API without Windows
+- `server/isolation_test.go` is mandatory: every new account-scoped endpoint gets a row in its table
+- The agent and mobile app still have no automated tests
 - `tools/whitelist-gui/builtin.go` mirrors the hardcoded protected-process list in `agent/main.go` and must be kept in sync by hand
 - `tools/mkico` is a separate module (it needs `golang.org/x/image` only to build the console's icon)
 - Server and agent have separate `go.mod` files (modules `server` and `agent`)
