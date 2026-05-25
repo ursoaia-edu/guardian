@@ -4272,12 +4272,55 @@ git commit -m "feat(server): record and expose an account event log"
 ### Task 13: The isolation suite and the fake agent
 
 **Files:**
-- Create: `server/isolation_test.go`, `server/fakeagent/main.go`
+- Create: `server/isolation_test.go`, `server/fakeagent/main.go`, `server/db/migrations/00012_room_account_consistency.sql`
 - Modify: `CLAUDE.md`
 
 **Interfaces:**
 - Consumes: every endpoint built so far.
-- Produces: the mandatory cross-account suite; `go run ./fakeagent -server=... -binding-token=...`.
+- Produces: the mandatory cross-account suite; `go run ./fakeagent -server=... -binding-token=...`; a composite foreign key making a cross-account room assignment impossible in the database.
+
+- [ ] **Step 0: Close the one cross-account reference RLS does not cover**
+
+Every other cross-tenant path in this plan has two defences: the query filter, and an RLS policy that
+makes the row invisible if the filter is forgotten. `computers.room_id` has only one. RLS on
+`computers` tests `computers.account_id` — it says nothing about whose room the row *points at*, so
+the sole thing stopping account B from attaching its own machine to account A's room is the
+`GetRoom` guard inside `handlePatchComputer`. Delete those six lines and every test still passes.
+
+A composite foreign key gives that invariant the second layer the rest of the schema has. Create
+`server/db/migrations/00012_room_account_consistency.sql`:
+
+```sql
+-- +goose Up
+-- A computer may only point at a room belonging to its own account. This is the
+-- database-level counterpart to the GetRoom guard in handlePatchComputer: RLS
+-- cannot express it, because the policy on computers tests that row's own
+-- account_id and never looks at the room it references.
+--
+-- room_id is nullable and the default MATCH SIMPLE semantics leave the
+-- constraint unenforced when any referenced column is NULL, so an unassigned
+-- computer is unaffected.
+ALTER TABLE rooms ADD CONSTRAINT rooms_account_id_id_key UNIQUE (account_id, id);
+
+ALTER TABLE computers
+    ADD CONSTRAINT computers_room_same_account
+    FOREIGN KEY (account_id, room_id) REFERENCES rooms (account_id, id)
+    ON DELETE SET NULL;
+
+-- The single-column FK is now redundant: the composite one already guarantees
+-- the room exists, and keeping both would fire two lookups per write.
+ALTER TABLE computers DROP CONSTRAINT computers_room_id_fkey;
+
+-- +goose Down
+ALTER TABLE computers
+    ADD CONSTRAINT computers_room_id_fkey
+    FOREIGN KEY (room_id) REFERENCES rooms (id) ON DELETE SET NULL;
+ALTER TABLE computers DROP CONSTRAINT computers_room_same_account;
+ALTER TABLE rooms DROP CONSTRAINT rooms_account_id_id_key;
+```
+
+If `computers_room_id_fkey` is not the name Postgres generated for the original single-column
+foreign key, find the real one with `\d computers` and use that — do not guess.
 
 - [ ] **Step 1: Write the parameterised isolation suite**
 
@@ -4304,9 +4347,19 @@ func TestCrossAccountAccessIsAlways404(t *testing.T) {
 	var appRow struct {
 		ID string `json:"id"`
 	}
-	decodeInto(t, doJSON(t, h, "POST", "/api/v1/rooms/"+roomA+"/applications",
-		map[string]string{"name": "steam.exe", "list": "blacklist"}, ca), &appRow)
+	addApp := doJSON(t, h, "POST", "/api/v1/rooms/"+roomA+"/applications",
+		map[string]string{"name": "steam.exe", "list": "blacklist"}, ca)
+	if addApp.Code != 201 {
+		t.Fatalf("setup: add application: %d %s", addApp.Code, addApp.Body.String())
+	}
+	decodeInto(t, addApp, &appRow)
 	appA := appRow.ID
+	// Without this the DELETE case below would 404 at the router on an empty id
+	// and pass while proving nothing — a safety net that fails open is worse
+	// than none, because it is trusted.
+	if appA == "" {
+		t.Fatal("setup: the application was created but returned no id")
+	}
 	enroll(t, s, mintBindingToken(t, s, ca), "guid-a", "PC-A")
 
 	var listA struct {
@@ -4335,7 +4388,10 @@ func TestCrossAccountAccessIsAlways404(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		t.Run(fmt.Sprintf("%s %s", tc.method, tc.path), func(t *testing.T) {
+		// The body is part of the name: two rows PATCH the same computer path
+		// with different fields, and identical subtest names would leave the
+		// output unable to say which one failed.
+		t.Run(fmt.Sprintf("%s %s %v", tc.method, tc.path, tc.body), func(t *testing.T) {
 			rr := doJSON(t, h, tc.method, tc.path, tc.body, cb)
 			if rr.Code != http.StatusNotFound {
 				t.Fatalf("got %d, want 404 — account B reached account A's data: %s",
@@ -4355,16 +4411,72 @@ func TestCollectionsAreEmptyForANewAccount(t *testing.T) {
 	enroll(t, s, mintBindingToken(t, s, ca), "guid-a", "PC-A")
 
 	cb := registerAndLogin(t, s, "b@example.com")
-	for _, path := range []string{"/api/v1/rooms", "/api/v1/computers", "/api/v1/events"} {
-		t.Run(path, func(t *testing.T) {
+	for _, tc := range []struct{ path, key string }{
+		{"/api/v1/rooms", "rooms"},
+		{"/api/v1/computers", "computers"},
+		{"/api/v1/events", "events"},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			rr := doJSON(t, h, "GET", tc.path, nil, cb)
+			if rr.Code != 200 {
+				t.Fatalf("status %d: %s", rr.Code, rr.Body.String())
+			}
 			var out map[string][]any
-			decodeInto(t, doJSON(t, h, "GET", path, nil, cb), &out)
-			for key, rows := range out {
-				if len(rows) != 0 {
-					t.Fatalf("%s returned %d %s rows belonging to another account", path, len(rows), key)
-				}
+			decodeInto(t, rr, &out)
+			// The key has to be asserted present, not merely iterated: a
+			// response that dropped it entirely would iterate nothing and pass,
+			// which is the same vacuous green this whole suite exists to avoid.
+			rows, ok := out[tc.key]
+			if !ok {
+				t.Fatalf("%s returned no %q key: %s", tc.path, tc.key, rr.Body.String())
+			}
+			if len(rows) != 0 {
+				t.Fatalf("%s returned %d %s rows belonging to another account", tc.path, len(rows), tc.key)
 			}
 		})
+	}
+}
+
+// The one cross-account reference that arrives in a request BODY rather than a
+// path parameter, which is why the table above cannot express it: account B
+// naming account A's room while patching its own computer. Two things must stop
+// it — the GetRoom guard in the handler, and the composite foreign key from
+// migration 00012 — and before this test existed neither was covered.
+func TestComputerCannotBeMovedIntoAnotherAccountsRoom(t *testing.T) {
+	s := &Server{pool: testPool(t)}
+	h := s.setupRoutes()
+
+	ca := registerAndLogin(t, s, "a@example.com")
+	roomA := createRoom(t, s, ca, "A's room")
+
+	cb := registerAndLogin(t, s, "b@example.com")
+	enroll(t, s, mintBindingToken(t, s, cb), "guid-b", "PC-B")
+	var listB struct {
+		Computers []struct {
+			ID string `json:"id"`
+		} `json:"computers"`
+	}
+	decodeInto(t, doJSON(t, h, "GET", "/api/v1/computers", nil, cb), &listB)
+	if len(listB.Computers) != 1 {
+		t.Fatalf("account B has %d computers, want 1", len(listB.Computers))
+	}
+
+	rr := doJSON(t, h, "PATCH", "/api/v1/computers/"+listB.Computers[0].ID,
+		map[string]any{"room_id": roomA}, cb)
+	if rr.Code != 404 {
+		t.Fatalf("account B attached its computer to account A's room: %d %s", rr.Code, rr.Body.String())
+	}
+
+	// And the machine is still where it was — a 404 that nevertheless performed
+	// the move would be the worst outcome available.
+	var after struct {
+		Computers []struct {
+			RoomID *string `json:"room_id"`
+		} `json:"computers"`
+	}
+	decodeInto(t, doJSON(t, h, "GET", "/api/v1/computers", nil, cb), &after)
+	if after.Computers[0].RoomID != nil {
+		t.Fatalf("the computer was moved anyway, into room %s", *after.Computers[0].RoomID)
 	}
 }
 ```
@@ -4409,6 +4521,10 @@ import (
 	"time"
 )
 
+// One client for both calls, with a timeout: a diagnostic utility that
+// hangs against a wedged server is worse than one that fails.
+var client = &http.Client{Timeout: 15 * time.Second}
+
 func main() {
 	server := flag.String("server", "http://localhost:8080", "server base URL")
 	binding := flag.String("binding-token", "", "binding token from the cabinet")
@@ -4429,11 +4545,21 @@ func main() {
 	}
 	fmt.Printf("enrolled as %s\n", *hostname)
 
+	consecutiveFailures := 0
 	for {
 		body, err := sync(*server, token)
 		if err != nil {
+			consecutiveFailures++
 			fmt.Fprintf(os.Stderr, "sync: %v\n", err)
+			// Five in a row is not a blip: the computer has been deleted, or
+			// its token rotated by a reinstall elsewhere. Looping silently
+			// forever would tell whoever is watching nothing at all.
+			if consecutiveFailures >= 5 {
+				fmt.Fprintln(os.Stderr, "giving up after 5 consecutive sync failures")
+				os.Exit(1)
+			}
 		} else {
+			consecutiveFailures = 0
 			fmt.Printf("%s %s\n", time.Now().Format(time.TimeOnly), body)
 		}
 		time.Sleep(*interval)
@@ -4451,7 +4577,7 @@ func enroll(server, binding, guid, hostname string) (string, error) {
 		"agent_version": "fake",
 		"hardware":      map[string]any{"cpu": "fake", "ram_gb": 16},
 	})
-	resp, err := http.Post(server+"/agent/enroll", "application/json", bytes.NewReader(payload))
+	resp, err := client.Post(server+"/agent/enroll", "application/json", bytes.NewReader(payload))
 	if err != nil {
 		return "", err
 	}
@@ -4473,7 +4599,7 @@ func sync(server, token string) (string, error) {
 	runtime := url.QueryEscape(`{"uptime_s":1234,"user":"fake"}`)
 	req, _ := http.NewRequest("GET", server+"/agent/sync?runtime="+runtime, nil)
 	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -4530,7 +4656,7 @@ git commit -m "test(server): add the cross-account isolation suite and a fake ag
 ### Task 14: Room membership and guest scoping
 
 **Files:**
-- Create: `server/db/migrations/00012_room_member_lookup.sql`, `server/db/queries/room_members.sql`, `server/handlers_members.go`, `server/members_test.go`
+- Create: `server/db/migrations/00013_room_member_lookup.sql`, `server/db/queries/room_members.sql`, `server/handlers_members.go`, `server/members_test.go`
 - Modify: `server/tenant.go`, `server/middleware.go`, `server/handlers_auth.go` (the `accountHeader` constant and `handleMe`), `server/handlers_rooms.go`, `server/handlers_computers.go`, `server/handlers_agent.go`, `server/events.go`, `server/routes.go`
 
 **Interfaces:**
@@ -4774,7 +4900,7 @@ Expected: FAIL with 404 on `POST /api/v1/rooms/{id}/members` — the route does 
 
 - [ ] **Step 3: Write the migration**
 
-`server/db/migrations/00012_room_member_lookup.sql`:
+`server/db/migrations/00013_room_member_lookup.sql`:
 
 ```sql
 -- +goose Up
@@ -5192,7 +5318,7 @@ Expected: PASS. `TestGuestSeesOnlyTheGrantedRoomsComputers` is the one that matt
 - [ ] **Step 9: Commit**
 
 ```bash
-git add server/db/migrations/00012_room_member_lookup.sql server/db/queries/room_members.sql server/internal/db server/handlers_members.go server/handlers_rooms.go server/handlers_computers.go server/handlers_agent.go server/events.go server/tenant.go server/middleware.go server/members_test.go server/isolation_test.go server/routes.go
+git add server/db/migrations/00013_room_member_lookup.sql server/db/queries/room_members.sql server/internal/db server/handlers_members.go server/handlers_rooms.go server/handlers_computers.go server/handlers_agent.go server/events.go server/tenant.go server/middleware.go server/members_test.go server/isolation_test.go server/routes.go
 git commit -m "feat(server): scope room guests to the rooms they were granted"
 ```
 
