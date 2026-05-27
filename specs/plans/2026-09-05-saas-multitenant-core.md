@@ -4302,10 +4302,17 @@ A composite foreign key gives that invariant the second layer the rest of the sc
 -- computer is unaffected.
 ALTER TABLE rooms ADD CONSTRAINT rooms_account_id_id_key UNIQUE (account_id, id);
 
+-- SET NULL names room_id explicitly (PostgreSQL 15+). The bare form nulls EVERY
+-- referencing column, so it would try to write account_id = NULL — which is NOT
+-- NULL — and deleting any room that still has a computer in it would fail
+-- outright. Verified on the live database: without the column list, DELETE FROM
+-- rooms raises `null value in column "account_id" ... violates not-null
+-- constraint`; with it, the computer survives with room_id cleared and its
+-- account intact.
 ALTER TABLE computers
     ADD CONSTRAINT computers_room_same_account
     FOREIGN KEY (account_id, room_id) REFERENCES rooms (account_id, id)
-    ON DELETE SET NULL;
+    ON DELETE SET NULL (room_id);
 
 -- The single-column FK is now redundant: the composite one already guarantees
 -- the room exists, and keeping both would fire two lookups per write.
@@ -4477,6 +4484,47 @@ func TestComputerCannotBeMovedIntoAnotherAccountsRoom(t *testing.T) {
 	decodeInto(t, doJSON(t, h, "GET", "/api/v1/computers", nil, cb), &after)
 	if after.Computers[0].RoomID != nil {
 		t.Fatalf("the computer was moved anyway, into room %s", *after.Computers[0].RoomID)
+	}
+}
+
+// Deleting a room that still holds machines has to work, and the machines have
+// to survive it unassigned. This is the behaviour the composite foreign key
+// most easily breaks: the default SET NULL nulls every referencing column, so
+// it would try to write account_id = NULL and the delete would fail outright.
+// Nothing else in the suite deletes a non-empty room.
+func TestDeletingARoomUnassignsItsComputers(t *testing.T) {
+	s := &Server{pool: testPool(t)}
+	h := s.setupRoutes()
+	c := registerAndLogin(t, s, "parent@example.com")
+	room := createRoom(t, s, c, "Kids room")
+	enroll(t, s, mintBindingToken(t, s, c), "guid-1", "PC-1")
+
+	var list struct {
+		Computers []struct {
+			ID string `json:"id"`
+		} `json:"computers"`
+	}
+	decodeInto(t, doJSON(t, h, "GET", "/api/v1/computers", nil, c), &list)
+	if rr := doJSON(t, h, "PATCH", "/api/v1/computers/"+list.Computers[0].ID,
+		map[string]any{"room_id": room}, c); rr.Code != 200 {
+		t.Fatalf("assign: %d %s", rr.Code, rr.Body.String())
+	}
+
+	if rr := doJSON(t, h, "DELETE", "/api/v1/rooms/"+room, nil, c); rr.Code != 204 {
+		t.Fatalf("deleting a room with a computer in it: %d %s", rr.Code, rr.Body.String())
+	}
+
+	var after struct {
+		Computers []struct {
+			RoomID *string `json:"room_id"`
+		} `json:"computers"`
+	}
+	decodeInto(t, doJSON(t, h, "GET", "/api/v1/computers", nil, c), &after)
+	if len(after.Computers) != 1 {
+		t.Fatalf("the computer went with the room: %d left", len(after.Computers))
+	}
+	if after.Computers[0].RoomID != nil {
+		t.Fatalf("the computer still points at a deleted room: %s", *after.Computers[0].RoomID)
 	}
 }
 ```
