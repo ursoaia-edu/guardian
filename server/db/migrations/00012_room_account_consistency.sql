@@ -9,10 +9,17 @@
 -- computer is unaffected.
 ALTER TABLE rooms ADD CONSTRAINT rooms_account_id_id_key UNIQUE (account_id, id);
 
+-- SET NULL names room_id explicitly (PostgreSQL 15+). The bare form nulls EVERY
+-- referencing column, so it would try to write account_id = NULL — which is NOT
+-- NULL — and deleting any room that still has a computer in it would fail
+-- outright. Verified on the live database: without the column list, DELETE FROM
+-- rooms raises `null value in column "account_id" ... violates not-null
+-- constraint`; with it, the computer survives with room_id cleared and its
+-- account intact.
 ALTER TABLE computers
     ADD CONSTRAINT computers_room_same_account
     FOREIGN KEY (account_id, room_id) REFERENCES rooms (account_id, id)
-    ON DELETE SET NULL;
+    ON DELETE SET NULL (room_id);
 
 -- The single-column FK is now redundant: the composite one already guarantees
 -- the room exists, and keeping both would fire two lookups per write.
