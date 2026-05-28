@@ -112,6 +112,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 const (
 	sessionCookieName = "guardian_session"
 	sessionTTL        = 30 * 24 * time.Hour
+	accountHeader     = "X-Guardian-Account"
 )
 
 // dummyPasswordHash is what a login attempt for an unknown email is verified
@@ -200,8 +201,16 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{
+	accounts, err := db.New(s.pool).ListAccessibleAccounts(r.Context(), t.UserID)
+	if err != nil {
+		slog.Error("list accessible accounts", "error", err)
+		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "Internal error"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
 		"user_id":    t.UserID.String(),
 		"account_id": t.AccountID.String(),
+		"role":       t.Role,
+		"accounts":   orEmpty(accounts),
 	})
 }

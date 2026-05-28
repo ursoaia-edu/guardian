@@ -21,6 +21,9 @@ func (s *Server) handleCreateBindingToken(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
+	if !requireManager(w, t) {
+		return
+	}
 	plain, hash := newToken()
 	err := s.inAccount(r.Context(), t.AccountID, func(tx pgx.Tx) error {
 		_, err := db.New(tx).CreateBindingToken(r.Context(), db.CreateBindingTokenParams{

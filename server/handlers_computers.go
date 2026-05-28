@@ -19,8 +19,13 @@ func (s *Server) handleListComputers(w http.ResponseWriter, r *http.Request) {
 	}
 	var computers []db.Computer
 	err := s.inAccount(r.Context(), t.AccountID, func(tx pgx.Tx) error {
+		q := db.New(tx)
 		var err error
-		computers, err = db.New(tx).ListComputers(r.Context())
+		if t.Role == "member" {
+			computers, err = q.ListComputersForMember(r.Context(), t.UserID)
+		} else {
+			computers, err = q.ListComputers(r.Context())
+		}
 		return err
 	})
 	if err != nil {
@@ -92,6 +97,13 @@ func (s *Server) handlePatchComputer(w http.ResponseWriter, r *http.Request) {
 			// Assigning to a room of another account must not be possible; RLS
 			// makes the lookup return no rows, which becomes a 404 below.
 			if _, err := q.GetRoom(r.Context(), *req.RoomID); err != nil {
+				return err
+			}
+		}
+		if t.Role == "member" {
+			if _, err := q.GetComputerForMember(r.Context(), db.GetComputerForMemberParams{
+				ID: id, UserID: t.UserID,
+			}); err != nil {
 				return err
 			}
 		}

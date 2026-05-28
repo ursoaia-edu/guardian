@@ -44,6 +44,9 @@ func (s *Server) handleListEvents(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !requireManager(w, t) {
+		return
+	}
 	var events []db.Event
 	err := s.inAccount(r.Context(), t.AccountID, func(tx pgx.Tx) error {
 		var err error
