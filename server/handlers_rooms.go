@@ -20,8 +20,13 @@ func (s *Server) handleListRooms(w http.ResponseWriter, r *http.Request) {
 	}
 	var rooms []db.Room
 	err := s.inAccount(r.Context(), t.AccountID, func(tx pgx.Tx) error {
+		q := db.New(tx)
 		var err error
-		rooms, err = db.New(tx).ListRooms(r.Context())
+		if t.Role == "member" {
+			rooms, err = q.ListRoomsForMember(r.Context(), t.UserID)
+		} else {
+			rooms, err = q.ListRooms(r.Context())
+		}
 		return err
 	})
 	if err != nil {
@@ -84,8 +89,12 @@ func (s *Server) handleGetRoom(w http.ResponseWriter, r *http.Request) {
 	}
 	var room db.Room
 	err := s.inAccount(r.Context(), t.AccountID, func(tx pgx.Tx) error {
+		q := db.New(tx)
+		if err := s.assertRoomVisible(r.Context(), q, t, id); err != nil {
+			return err
+		}
 		var err error
-		room, err = db.New(tx).GetRoom(r.Context(), id)
+		room, err = q.GetRoom(r.Context(), id)
 		return err
 	})
 	if err != nil {
@@ -135,8 +144,12 @@ func (s *Server) handlePatchRoom(w http.ResponseWriter, r *http.Request) {
 	}
 	var room db.Room
 	err := s.inAccount(r.Context(), t.AccountID, func(tx pgx.Tx) error {
+		q := db.New(tx)
+		if err := s.assertRoomVisible(r.Context(), q, t, id); err != nil {
+			return err
+		}
 		var err error
-		room, err = db.New(tx).UpdateRoom(r.Context(), db.UpdateRoomParams{
+		room, err = q.UpdateRoom(r.Context(), db.UpdateRoomParams{
 			ID: id, Name: req.Name, Mode: req.Mode,
 			ProtectionEnabled: req.ProtectionEnabled, PowerAllowed: req.PowerAllowed,
 		})
@@ -157,6 +170,9 @@ func (s *Server) handleDeleteRoom(w http.ResponseWriter, r *http.Request) {
 	}
 	t, ok := mustTenant(w, r)
 	if !ok {
+		return
+	}
+	if !requireManager(w, t) {
 		return
 	}
 	var affected int64
@@ -190,7 +206,7 @@ func (s *Server) handleListRoomApplications(w http.ResponseWriter, r *http.Reque
 	var apps []db.Application
 	err := s.inAccount(r.Context(), t.AccountID, func(tx pgx.Tx) error {
 		q := db.New(tx)
-		if _, err := q.GetRoom(r.Context(), roomID); err != nil {
+		if err := s.assertRoomVisible(r.Context(), q, t, roomID); err != nil {
 			return err
 		}
 		var err error
@@ -240,7 +256,7 @@ func (s *Server) handleAddRoomApplication(w http.ResponseWriter, r *http.Request
 		q := db.New(tx)
 		// Proves the room belongs to this account before writing into it: RLS
 		// would reject the insert anyway, but this gives an honest 404.
-		if _, err := q.GetRoom(r.Context(), roomID); err != nil {
+		if err := s.assertRoomVisible(r.Context(), q, t, roomID); err != nil {
 			return err
 		}
 		var err error
