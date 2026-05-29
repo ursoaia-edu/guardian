@@ -54,6 +54,8 @@ func TestCrossAccountAccessIsAlways404(t *testing.T) {
 		{"GET", "/api/v1/rooms/" + roomA + "/applications", nil},
 		{"POST", "/api/v1/rooms/" + roomA + "/applications", map[string]string{"name": "x.exe", "list": "blacklist"}},
 		{"DELETE", "/api/v1/rooms/" + roomA + "/applications/" + appA, nil},
+		{"GET", "/api/v1/rooms/" + roomA + "/members", nil},
+		{"POST", "/api/v1/rooms/" + roomA + "/members", map[string]string{"email": "b@example.com"}},
 		{"PATCH", "/api/v1/computers/" + computerA, map[string]any{"display_name": "stolen"}},
 		{"PATCH", "/api/v1/computers/" + computerA, map[string]any{"blocked": true}},
 	}
