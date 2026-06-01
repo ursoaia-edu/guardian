@@ -25,6 +25,7 @@ const (
 type Tenant struct {
 	AccountID uuid.UUID
 	UserID    uuid.UUID // zero for agent requests
+	Role      string    // owner | admin | member; empty for agent requests
 }
 
 func withTenant(ctx context.Context, t Tenant) context.Context {

@@ -43,7 +43,7 @@ func (s *Server) SessionAuth(next http.Handler) http.Handler {
 			writeJSON(w, http.StatusUnauthorized, ErrorResponse{Error: "Session expired"})
 			return
 		}
-		accounts, err := q.ListAccountsForUser(ctx, session.UserID)
+		accounts, err := q.ListAccessibleAccounts(ctx, session.UserID)
 		if err != nil || len(accounts) == 0 {
 			slog.Warn("session without an account", "user_id", session.UserID, "error", err)
 			writeJSON(w, http.StatusForbidden, ErrorResponse{Error: "No account"})
@@ -57,7 +57,46 @@ func (s *Server) SessionAuth(next http.Handler) http.Handler {
 			slog.Error("touch session", "error", err)
 		}
 
-		ctx = withTenant(ctx, Tenant{AccountID: accounts[0].ID, UserID: session.UserID})
+		// Task 6 picked accounts[0] and noted that was "exactly right while every
+		// user has one account". This task ends that: a guest registers normally,
+		// so they OWN an account of their own and are a MEMBER of the one whose
+		// room was shared with them — and `owner` sorts first, so the default
+		// would send an invited grandmother to her own empty account and she
+		// would never see the room she was given. The caller therefore names the
+		// account this request acts in.
+		//
+		// This is not "account_id from the request" in the sense the global
+		// constraint forbids. The constraint exists so a caller cannot reach an
+		// account they have no claim on; here the header can only SELECT among
+		// memberships the session already proved, and an unmatched value is a
+		// 404 — whether an account exists is not something a non-member is
+		// entitled to learn.
+		selected := accounts[0]
+		if requested := r.Header.Get(accountHeader); requested != "" {
+			id, err := uuid.Parse(requested)
+			if err != nil {
+				writeJSON(w, http.StatusNotFound, ErrorResponse{Error: "Account not found"})
+				return
+			}
+			found := false
+			for _, a := range accounts {
+				if a.AccountID == id {
+					selected, found = a, true
+					break
+				}
+			}
+			if !found {
+				slog.Warn("account selection rejected", "user_id", session.UserID)
+				writeJSON(w, http.StatusNotFound, ErrorResponse{Error: "Account not found"})
+				return
+			}
+		}
+
+		ctx = withTenant(ctx, Tenant{
+			AccountID: selected.AccountID,
+			UserID:    session.UserID,
+			Role:      selected.Role,
+		})
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

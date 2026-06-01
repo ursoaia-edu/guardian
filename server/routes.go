@@ -41,6 +41,10 @@ func (s *Server) setupRoutes() *chi.Mux {
 		r.Post("/rooms/{roomID}/applications", s.handleAddRoomApplication)
 		r.Delete("/rooms/{roomID}/applications/{appID}", s.handleDeleteRoomApplication)
 
+		r.Get("/rooms/{roomID}/members", s.handleListRoomMembers)
+		r.Post("/rooms/{roomID}/members", s.handleAddRoomMember)
+		r.Delete("/rooms/{roomID}/members/{userID}", s.handleDeleteRoomMember)
+
 		r.Get("/computers", s.handleListComputers)
 		r.Patch("/computers/{computerID}", s.handlePatchComputer)
 
