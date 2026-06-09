@@ -291,9 +291,10 @@ func (s *Server) handleDeleteRoomApplication(w http.ResponseWriter, r *http.Requ
 	var affected int64
 	err := s.inAccount(r.Context(), t.AccountID, func(tx pgx.Tx) error {
 		q := db.New(tx)
-		// Same guard as the insert: prove the room belongs to this account so a
-		// foreign room is an honest 404 rather than a silent zero-row delete.
-		if _, err := q.GetRoom(r.Context(), roomID); err != nil {
+		// Same guard as the insert: prove the room belongs to this account AND
+		// that the caller may touch it, so a foreign or ungranted room is an
+		// honest 404 rather than a silent zero-row delete.
+		if err := s.assertRoomVisible(r.Context(), q, t, roomID); err != nil {
 			return err
 		}
 		var err error

@@ -51,6 +51,9 @@ func (s *Server) handleRevokeBindingTokens(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
+	if !requireManager(w, t) {
+		return
+	}
 	var revoked int64
 	err := s.inAccount(r.Context(), t.AccountID, func(tx pgx.Tx) error {
 		var err error
