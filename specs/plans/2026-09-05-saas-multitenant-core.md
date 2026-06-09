@@ -4872,6 +4872,58 @@ func TestGuestCannotMintBindingTokens(t *testing.T) {
 	if rr := asAccount(t, h, "POST", "/api/v1/binding-tokens", nil, guest, ownerAccount); rr.Code != 403 {
 		t.Fatalf("guest minted a binding token: %d", rr.Code)
 	}
+	// Revoking is the sharper half: minting an extra token is a nuisance, but a
+	// guest able to revoke them all takes every installer the customer has out
+	// of service at once.
+	if rr := asAccount(t, h, "DELETE", "/api/v1/binding-tokens", nil, guest, ownerAccount); rr.Code != 403 {
+		t.Fatalf("guest revoked the account's binding tokens: %d", rr.Code)
+	}
+}
+
+// A guest is granted ONE room. Reaching into another room of the same account
+// is a privilege escalation, and deleting its rules is the sharpest form of it:
+// the machines in that room stop being protected and nobody is told.
+func TestGuestCannotTouchAnUngrantedRoomsApplications(t *testing.T) {
+	s := &Server{pool: testPool(t)}
+	h := s.setupRoutes()
+	owner := registerAndLogin(t, s, "parent@example.com")
+	shared := createRoom(t, s, owner, "Shared room")
+	private := createRoom(t, s, owner, "Private room")
+
+	var app struct {
+		ID string `json:"id"`
+	}
+	decodeInto(t, doJSON(t, h, "POST", "/api/v1/rooms/"+private+"/applications",
+		map[string]string{"name": "steam.exe", "list": "blacklist"}, owner), &app)
+	if app.ID == "" {
+		t.Fatal("setup: the application was created but returned no id")
+	}
+
+	guest := addGuest(t, s, owner, shared, "grandma@example.com")
+	ownerAccount := accountIDOf(t, s, "parent@example.com")
+
+	if rr := asAccount(t, h, "GET", "/api/v1/rooms/"+private+"/applications",
+		nil, guest, ownerAccount); rr.Code != 404 {
+		t.Fatalf("guest listed an ungranted room's applications: %d", rr.Code)
+	}
+	if rr := asAccount(t, h, "POST", "/api/v1/rooms/"+private+"/applications",
+		map[string]string{"name": "x.exe", "list": "blacklist"}, guest, ownerAccount); rr.Code != 404 {
+		t.Fatalf("guest added a rule to an ungranted room: %d", rr.Code)
+	}
+	if rr := asAccount(t, h, "DELETE", "/api/v1/rooms/"+private+"/applications/"+app.ID,
+		nil, guest, ownerAccount); rr.Code != 404 {
+		t.Fatalf("guest deleted a rule from an ungranted room: %d", rr.Code)
+	}
+
+	// And the rule is still there — a 404 that deleted it anyway would leave the
+	// room silently unprotected.
+	var apps struct {
+		Applications []json.RawMessage `json:"applications"`
+	}
+	decodeInto(t, doJSON(t, h, "GET", "/api/v1/rooms/"+private+"/applications", nil, owner), &apps)
+	if len(apps.Applications) != 1 {
+		t.Fatalf("the rule was removed anyway: %d left", len(apps.Applications))
+	}
 }
 
 func TestAddingAnUnknownEmailIsNotFound(t *testing.T) {
@@ -5305,7 +5357,18 @@ Now scope the existing handlers. In `server/handlers_rooms.go`, `handleListRooms
 	})
 ```
 
-In `handleGetRoom`, `handlePatchRoom`, `handleListRoomApplications` and `handleAddRoomApplication`, replace every bare `q.GetRoom(r.Context(), roomID)` guard with `s.assertRoomVisible(r.Context(), q, t, roomID)`. In `handleDeleteRoom`, add `if !requireManager(w, t) { return }` at the top — deleting a room is an account-wide act, not a guest's.
+In `handleGetRoom`, `handlePatchRoom`, `handleListRoomApplications`, `handleAddRoomApplication` **and
+`handleDeleteRoomApplication`**, replace every bare `q.GetRoom(r.Context(), roomID)` guard with
+`s.assertRoomVisible(r.Context(), q, t, roomID)`. In `handleDeleteRoom`, add
+`if !requireManager(w, t) { return }` at the top — deleting a room is an account-wide act, not a
+guest's. Add the same `requireManager` check to **`handleRevokeBindingTokens`**.
+
+Those last two are easy to miss because they did not exist when this list was first written:
+`handleDeleteRoomApplication` arrived with ruling R11 and `handleRevokeBindingTokens` with R14, both
+after Task 14 was drafted. Without the guards, a guest granted one room could delete the rules of
+**every** room in the account, and could revoke every installer the customer has — the first is a
+privilege escalation across rooms, the second a denial of service. Any handler added to this server
+from here on gets a line in this list.
 
 In `server/handlers_computers.go`, `handleListComputers`:
 
@@ -5366,7 +5429,7 @@ Expected: PASS. `TestGuestSeesOnlyTheGrantedRoomsComputers` is the one that matt
 - [ ] **Step 9: Commit**
 
 ```bash
-git add server/db/migrations/00013_room_member_lookup.sql server/db/queries/room_members.sql server/internal/db server/handlers_members.go server/handlers_rooms.go server/handlers_computers.go server/handlers_agent.go server/events.go server/tenant.go server/middleware.go server/members_test.go server/isolation_test.go server/routes.go
+git add server/db/migrations/00013_room_member_lookup.sql server/db/queries/room_members.sql server/internal/db server/handlers_members.go server/handlers_auth.go server/handlers_rooms.go server/handlers_computers.go server/handlers_agent.go server/events.go server/tenant.go server/middleware.go server/members_test.go server/applications_test.go server/isolation_test.go server/routes.go
 git commit -m "feat(server): scope room guests to the rooms they were granted"
 ```
 
