@@ -564,7 +564,11 @@ CREATE POLICY account_members_isolation ON account_members
 -- registration creates the very first account, and a signed-in user asks which
 -- accounts they may enter. Postgres ORs permissive policies, so the three
 -- policies below are a deliberate hole in the isolation above, on these two
--- tables ONLY. Be precise about how big it is: they key on nothing. Any
+-- tables. (Migration 00013 adds room_members for the same reason: a guest's
+-- account is discovered from their room grants before any scope exists. If you
+-- are reading this to decide whether a table may join them, the answer is no
+-- unless authentication itself cannot proceed without it.) Be precise about how
+-- big the hole is: they key on nothing. Any
 -- connection that has not called inAccount() can read every row of both tables
 -- and insert any account row. That is why the ONLY unscoped statements the
 -- server is permitted to run against these tables are the ones in the
@@ -4776,6 +4780,107 @@ func asAccount(t *testing.T, h http.Handler, method, path string, body any, c *h
 	return rec
 }
 
+// Every other guest test asserts what a guest CANNOT do. Without this one, an
+// assertRoomVisible that wrongly denied everything would leave the whole suite
+// green while the feature was entirely broken.
+func TestGuestCanUseTheGrantedRoom(t *testing.T) {
+	s := &Server{pool: testPool(t)}
+	h := s.setupRoutes()
+	owner := registerAndLogin(t, s, "parent@example.com")
+	shared := createRoom(t, s, owner, "Shared room")
+	guest := addGuest(t, s, owner, shared, "grandma@example.com")
+	ownerAccount := accountIDOf(t, s, "parent@example.com")
+
+	for _, tc := range []struct {
+		method, path string
+		body         any
+	}{
+		{"GET", "/api/v1/rooms/" + shared, nil},
+		{"GET", "/api/v1/rooms/" + shared + "/applications", nil},
+		{"GET", "/api/v1/rooms/" + shared + "/members", nil},
+		{"PATCH", "/api/v1/rooms/" + shared, map[string]any{"protection_enabled": true}},
+	} {
+		rr := asAccount(t, h, tc.method, tc.path, tc.body, guest, ownerAccount)
+		if rr.Code != 200 {
+			t.Fatalf("%s %s: %d %s — a guest must be able to work in the room they were granted",
+				tc.method, tc.path, rr.Code, rr.Body.String())
+		}
+	}
+
+	rr := asAccount(t, h, "POST", "/api/v1/rooms/"+shared+"/applications",
+		map[string]string{"name": "steam.exe", "list": "blacklist"}, guest, ownerAccount)
+	if rr.Code != 201 {
+		t.Fatalf("guest could not add a rule to their own room: %d %s", rr.Code, rr.Body.String())
+	}
+}
+
+// A guest may work inside the room they were granted, but creating rooms is an
+// account-wide act. Nothing stopped it before this test existed.
+func TestGuestCannotCreateRooms(t *testing.T) {
+	s := &Server{pool: testPool(t)}
+	h := s.setupRoutes()
+	owner := registerAndLogin(t, s, "parent@example.com")
+	shared := createRoom(t, s, owner, "Shared room")
+	guest := addGuest(t, s, owner, shared, "grandma@example.com")
+	ownerAccount := accountIDOf(t, s, "parent@example.com")
+
+	if rr := asAccount(t, h, "POST", "/api/v1/rooms",
+		map[string]string{"name": "Guest room"}, guest, ownerAccount); rr.Code != 403 {
+		t.Fatalf("guest created a room in the host's account: %d %s", rr.Code, rr.Body.String())
+	}
+
+	var out struct {
+		Rooms []json.RawMessage `json:"rooms"`
+	}
+	decodeInto(t, doJSON(t, h, "GET", "/api/v1/rooms", nil, owner), &out)
+	if len(out.Rooms) != 1 {
+		t.Fatalf("the host's account now holds %d rooms", len(out.Rooms))
+	}
+}
+
+// Moving a machine is a write, and a guest's writes stop at the rooms they were
+// granted. Moving it OUT of every room is worse than moving it sideways: the
+// machine stops enforcing anything at all and nobody is told.
+func TestGuestCannotMoveAComputerOutOfTheirRoom(t *testing.T) {
+	s := &Server{pool: testPool(t)}
+	h := s.setupRoutes()
+	owner := registerAndLogin(t, s, "parent@example.com")
+	shared := createRoom(t, s, owner, "Shared room")
+	private := createRoom(t, s, owner, "Private room")
+	enroll(t, s, mintBindingToken(t, s, owner), "guid-1", "PC-1")
+
+	var list struct {
+		Computers []struct {
+			ID string `json:"id"`
+		} `json:"computers"`
+	}
+	decodeInto(t, doJSON(t, h, "GET", "/api/v1/computers", nil, owner), &list)
+	id := list.Computers[0].ID
+	doJSON(t, h, "PATCH", "/api/v1/computers/"+id, map[string]any{"room_id": shared}, owner)
+
+	guest := addGuest(t, s, owner, shared, "grandma@example.com")
+	ownerAccount := accountIDOf(t, s, "parent@example.com")
+
+	if rr := asAccount(t, h, "PATCH", "/api/v1/computers/"+id,
+		map[string]any{"room_id": private}, guest, ownerAccount); rr.Code != 404 {
+		t.Fatalf("guest moved a machine into a room they were never granted: %d %s", rr.Code, rr.Body.String())
+	}
+	if rr := asAccount(t, h, "PATCH", "/api/v1/computers/"+id,
+		map[string]any{"room_id": nil}, guest, ownerAccount); rr.Code != 404 {
+		t.Fatalf("guest unmanaged a machine by taking it out of every room: %d %s", rr.Code, rr.Body.String())
+	}
+
+	var after struct {
+		Computers []struct {
+			RoomID *string `json:"room_id"`
+		} `json:"computers"`
+	}
+	decodeInto(t, doJSON(t, h, "GET", "/api/v1/computers", nil, owner), &after)
+	if after.Computers[0].RoomID == nil || *after.Computers[0].RoomID != shared {
+		t.Fatalf("the machine moved anyway: %v", after.Computers[0].RoomID)
+	}
+}
+
 // Selecting an account is a choice among proven memberships, never a way to
 // reach a new one. Without this test the header would be an authorisation hole
 // wearing the clothes of a convenience feature.
@@ -5186,8 +5291,12 @@ import (
 
 // requireManager rejects room guests from account-wide operations. It writes
 // the response itself and reports whether the caller may continue.
+//
+// An allow-list, not a deny-list on "member": a fourth role added later would
+// silently inherit account-wide powers under `role != "member"`, whereas this
+// form fails closed and forces whoever adds it to say so here.
 func requireManager(w http.ResponseWriter, t Tenant) bool {
-	if t.Role == "member" {
+	if t.Role != "owner" && t.Role != "admin" {
 		writeJSON(w, http.StatusForbidden, ErrorResponse{Error: "Only account admins can do that"})
 		return false
 	}
@@ -5359,9 +5468,11 @@ Now scope the existing handlers. In `server/handlers_rooms.go`, `handleListRooms
 
 In `handleGetRoom`, `handlePatchRoom`, `handleListRoomApplications`, `handleAddRoomApplication` **and
 `handleDeleteRoomApplication`**, replace every bare `q.GetRoom(r.Context(), roomID)` guard with
-`s.assertRoomVisible(r.Context(), q, t, roomID)`. In `handleDeleteRoom`, add
-`if !requireManager(w, t) { return }` at the top — deleting a room is an account-wide act, not a
-guest's. Add the same `requireManager` check to **`handleRevokeBindingTokens`**.
+`s.assertRoomVisible(r.Context(), q, t, roomID)`. In `handleDeleteRoom` **and `handleCreateRoom`**, add
+`if !requireManager(w, t) { return }` at the top — creating and deleting rooms are account-wide
+acts, not a guest's. Without it on the create path a guest makes rooms in the host's account, and
+RLS does not object because the account scope is the host's by then. Add the same `requireManager`
+check to **`handleRevokeBindingTokens`**.
 
 Those last two are easy to miss because they did not exist when this list was first written:
 `handleDeleteRoomApplication` arrived with ruling R11 and `handleRevokeBindingTokens` with R14, both
@@ -5380,7 +5491,8 @@ In `server/handlers_computers.go`, `handleListComputers`:
 		}
 ```
 
-and in `handlePatchComputer`, before the update:
+and in `handlePatchComputer`, before the update. Note there are **two** questions here, not one —
+may this caller touch this machine, and may it touch the room the machine is being moved *to*:
 
 ```go
 		if t.Role == "member" {
@@ -5389,8 +5501,28 @@ and in `handlePatchComputer`, before the update:
 			}); err != nil {
 				return err
 			}
+			// Taking a machine out of every room removes it from management
+			// altogether: it stops enforcing anything and nobody is told. That
+			// is an account-wide act, not something a guest does to a machine
+			// that happens to sit in their room.
+			if req.SetRoom && req.RoomID == nil {
+				return pgx.ErrNoRows
+			}
+		}
+		if req.RoomID != nil {
+			// assertRoomVisible, not GetRoom. GetRoom only proves the room is in
+			// the account, so a guest could move a machine into a room they were
+			// never granted — a write beyond their rooms, and the one place
+			// where a foreign room (404) and an ungranted one (200) would
+			// otherwise be distinguishable.
+			if err := s.assertRoomVisible(r.Context(), q, t, *req.RoomID); err != nil {
+				return err
+			}
 		}
 ```
+
+The existing `GetRoom` guard that this replaces must be removed, not left alongside — two lookups
+answering different questions is exactly how the weaker one survives a refactor.
 
 In `server/handlers_agent.go`, `handleCreateBindingToken`, and in `server/events.go`, `handleListEvents`, add as the first statement after reading the tenant:
 
