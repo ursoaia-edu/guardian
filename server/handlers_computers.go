@@ -93,17 +93,27 @@ func (s *Server) handlePatchComputer(w http.ResponseWriter, r *http.Request) {
 	var computer db.Computer
 	err = s.inAccount(r.Context(), t.AccountID, func(tx pgx.Tx) error {
 		q := db.New(tx)
-		if req.RoomID != nil {
-			// Assigning to a room of another account must not be possible; RLS
-			// makes the lookup return no rows, which becomes a 404 below.
-			if _, err := q.GetRoom(r.Context(), *req.RoomID); err != nil {
-				return err
-			}
-		}
 		if t.Role == "member" {
 			if _, err := q.GetComputerForMember(r.Context(), db.GetComputerForMemberParams{
 				ID: id, UserID: t.UserID,
 			}); err != nil {
+				return err
+			}
+			// Taking a machine out of every room removes it from management
+			// altogether: it stops enforcing anything and nobody is told. That
+			// is an account-wide act, not something a guest does to a machine
+			// that happens to sit in their room.
+			if req.SetRoom && req.RoomID == nil {
+				return pgx.ErrNoRows
+			}
+		}
+		if req.RoomID != nil {
+			// assertRoomVisible, not GetRoom. GetRoom only proves the room is in
+			// the account, so a guest could move a machine into a room they were
+			// never granted — a write beyond their rooms, and the one place
+			// where a foreign room (404) and an ungranted one (200) would
+			// otherwise be distinguishable.
+			if err := s.assertRoomVisible(r.Context(), q, t, *req.RoomID); err != nil {
 				return err
 			}
 		}

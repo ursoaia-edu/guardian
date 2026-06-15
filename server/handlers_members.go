@@ -16,8 +16,12 @@ import (
 
 // requireManager rejects room guests from account-wide operations. It writes
 // the response itself and reports whether the caller may continue.
+//
+// An allow-list, not a deny-list on "member": a fourth role added later would
+// silently inherit account-wide powers under `role != "member"`, whereas this
+// form fails closed and forces whoever adds it to say so here.
 func requireManager(w http.ResponseWriter, t Tenant) bool {
-	if t.Role == "member" {
+	if t.Role != "owner" && t.Role != "admin" {
 		writeJSON(w, http.StatusForbidden, ErrorResponse{Error: "Only account admins can do that"})
 		return false
 	}

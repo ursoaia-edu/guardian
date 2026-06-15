@@ -56,6 +56,107 @@ func asAccount(t *testing.T, h http.Handler, method, path string, body any, c *h
 	return rec
 }
 
+// Every other guest test asserts what a guest CANNOT do. Without this one, an
+// assertRoomVisible that wrongly denied everything would leave the whole suite
+// green while the feature was entirely broken.
+func TestGuestCanUseTheGrantedRoom(t *testing.T) {
+	s := &Server{pool: testPool(t)}
+	h := s.setupRoutes()
+	owner := registerAndLogin(t, s, "parent@example.com")
+	shared := createRoom(t, s, owner, "Shared room")
+	guest := addGuest(t, s, owner, shared, "grandma@example.com")
+	ownerAccount := accountIDOf(t, s, "parent@example.com")
+
+	for _, tc := range []struct {
+		method, path string
+		body         any
+	}{
+		{"GET", "/api/v1/rooms/" + shared, nil},
+		{"GET", "/api/v1/rooms/" + shared + "/applications", nil},
+		{"GET", "/api/v1/rooms/" + shared + "/members", nil},
+		{"PATCH", "/api/v1/rooms/" + shared, map[string]any{"protection_enabled": true}},
+	} {
+		rr := asAccount(t, h, tc.method, tc.path, tc.body, guest, ownerAccount)
+		if rr.Code != 200 {
+			t.Fatalf("%s %s: %d %s — a guest must be able to work in the room they were granted",
+				tc.method, tc.path, rr.Code, rr.Body.String())
+		}
+	}
+
+	rr := asAccount(t, h, "POST", "/api/v1/rooms/"+shared+"/applications",
+		map[string]string{"name": "steam.exe", "list": "blacklist"}, guest, ownerAccount)
+	if rr.Code != 201 {
+		t.Fatalf("guest could not add a rule to their own room: %d %s", rr.Code, rr.Body.String())
+	}
+}
+
+// A guest may work inside the room they were granted, but creating rooms is an
+// account-wide act. Nothing stopped it before this test existed.
+func TestGuestCannotCreateRooms(t *testing.T) {
+	s := &Server{pool: testPool(t)}
+	h := s.setupRoutes()
+	owner := registerAndLogin(t, s, "parent@example.com")
+	shared := createRoom(t, s, owner, "Shared room")
+	guest := addGuest(t, s, owner, shared, "grandma@example.com")
+	ownerAccount := accountIDOf(t, s, "parent@example.com")
+
+	if rr := asAccount(t, h, "POST", "/api/v1/rooms",
+		map[string]string{"name": "Guest room"}, guest, ownerAccount); rr.Code != 403 {
+		t.Fatalf("guest created a room in the host's account: %d %s", rr.Code, rr.Body.String())
+	}
+
+	var out struct {
+		Rooms []json.RawMessage `json:"rooms"`
+	}
+	decodeInto(t, doJSON(t, h, "GET", "/api/v1/rooms", nil, owner), &out)
+	if len(out.Rooms) != 1 {
+		t.Fatalf("the host's account now holds %d rooms", len(out.Rooms))
+	}
+}
+
+// Moving a machine is a write, and a guest's writes stop at the rooms they were
+// granted. Moving it OUT of every room is worse than moving it sideways: the
+// machine stops enforcing anything at all and nobody is told.
+func TestGuestCannotMoveAComputerOutOfTheirRoom(t *testing.T) {
+	s := &Server{pool: testPool(t)}
+	h := s.setupRoutes()
+	owner := registerAndLogin(t, s, "parent@example.com")
+	shared := createRoom(t, s, owner, "Shared room")
+	private := createRoom(t, s, owner, "Private room")
+	enroll(t, s, mintBindingToken(t, s, owner), "guid-1", "PC-1")
+
+	var list struct {
+		Computers []struct {
+			ID string `json:"id"`
+		} `json:"computers"`
+	}
+	decodeInto(t, doJSON(t, h, "GET", "/api/v1/computers", nil, owner), &list)
+	id := list.Computers[0].ID
+	doJSON(t, h, "PATCH", "/api/v1/computers/"+id, map[string]any{"room_id": shared}, owner)
+
+	guest := addGuest(t, s, owner, shared, "grandma@example.com")
+	ownerAccount := accountIDOf(t, s, "parent@example.com")
+
+	if rr := asAccount(t, h, "PATCH", "/api/v1/computers/"+id,
+		map[string]any{"room_id": private}, guest, ownerAccount); rr.Code != 404 {
+		t.Fatalf("guest moved a machine into a room they were never granted: %d %s", rr.Code, rr.Body.String())
+	}
+	if rr := asAccount(t, h, "PATCH", "/api/v1/computers/"+id,
+		map[string]any{"room_id": nil}, guest, ownerAccount); rr.Code != 404 {
+		t.Fatalf("guest unmanaged a machine by taking it out of every room: %d %s", rr.Code, rr.Body.String())
+	}
+
+	var after struct {
+		Computers []struct {
+			RoomID *string `json:"room_id"`
+		} `json:"computers"`
+	}
+	decodeInto(t, doJSON(t, h, "GET", "/api/v1/computers", nil, owner), &after)
+	if after.Computers[0].RoomID == nil || *after.Computers[0].RoomID != shared {
+		t.Fatalf("the machine moved anyway: %v", after.Computers[0].RoomID)
+	}
+}
+
 // Selecting an account is a choice among proven memberships, never a way to
 // reach a new one. Without this test the header would be an authorisation hole
 // wearing the clothes of a convenience feature.

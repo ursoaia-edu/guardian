@@ -54,6 +54,9 @@ func (s *Server) handleCreateRoom(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !requireManager(w, t) {
+		return
+	}
 	var room db.Room
 	err := s.inAccount(r.Context(), t.AccountID, func(tx pgx.Tx) error {
 		var err error

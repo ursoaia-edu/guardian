@@ -22,7 +22,11 @@ CREATE POLICY account_members_isolation ON account_members
 -- registration creates the very first account, and a signed-in user asks which
 -- accounts they may enter. Postgres ORs permissive policies, so the three
 -- policies below are a deliberate hole in the isolation above, on these two
--- tables ONLY. Be precise about how big it is: they key on nothing. Any
+-- tables. (Migration 00013 adds room_members for the same reason: a guest's
+-- account is discovered from their room grants before any scope exists. If you
+-- are reading this to decide whether a table may join them, the answer is no
+-- unless authentication itself cannot proceed without it.) Be precise about how
+-- big the hole is: they key on nothing. Any
 -- connection that has not called inAccount() can read every row of both tables
 -- and insert any account row. That is why the ONLY unscoped statements the
 -- server is permitted to run against these tables are the ones in the
