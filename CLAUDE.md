@@ -44,18 +44,20 @@ cd mobile && flutter pub run flutter_launcher_icons
 
 ## Architecture
 
-### Server (`server/` — multi-file Go package, ~1000 lines total)
-- `main.go` — Server struct, startup, graceful shutdown
-- `routes.go` — chi router setup with CORS, route groups (unauthenticated, client auth, admin auth)
-- `handlers.go` — all HTTP handler methods
-- `db.go` — SQLite database init, migrations, CRUD operations, cache loading
-- `models.go` — request/response structs (Application, Computer, ClientEntry, etc.)
-- `middleware.go` — Bearer token auth middleware (ClientAuth, AdminAuth)
-- `helpers.go` — utility functions (JSON writing, env file loading, IP detection)
-- `Server` struct holds DB connection and in-memory caches (`appsCache`, `enabledCache`, `modeCache`, `clientCache`) with a `sync.RWMutex`
-- Uses `go-chi/chi` router and `modernc.org/sqlite` (pure Go, no CGO required)
-- Two auth tiers via Bearer tokens: `TOKEN` (client/agent endpoints) and `ADMIN_TOKEN` (management endpoints)
-- SQLite tables: `applications`, `server`, `client`, `computers`
+### Server (`server/` — multi-tenant Go package, Postgres-backed)
+- `main.go` — `Server` struct (a pgx pool), startup, `migrate` subcommand, graceful shutdown
+- `routes.go` — chi router setup, CORS restricted to `CABINET_ORIGIN`, route groups (unauthenticated, cabinet session auth, agent auth)
+- `middleware.go` — `SessionAuth` (cabinet: cookie or Bearer session token) and `AgentAuth` (per-agent Bearer token)
+- `tenant.go` — `Tenant`/context plumbing and `inAccount`, which scopes every query inside a transaction via the `app.account_id` Postgres GUC
+- `auth.go` — argon2id password hashing, session/agent/binding token minting (SHA-256 digests)
+- `handlers_auth.go`, `handlers_rooms.go`, `handlers_members.go`, `handlers_computers.go`, `handlers_agent.go`, `events.go` — HTTP handlers grouped by resource; `handlers.go` keeps only `/health` and server info
+- `migrate.go` — embeds and runs `db/migrations/*.sql` (goose) against `MIGRATE_DATABASE_URL`
+- `db/migrations/` (goose SQL, schema owned by `guardian_owner`), `db/queries/` (sqlc sources), `internal/db/` (generated sqlc code, see `sqlc.yaml`)
+- `models.go` — only the agent's wire format (`ClientApplication`, `ClientEntry`, `ClientSyncResponse`, unchanged on purpose) plus `ErrorResponse`/`ServerInfoResponse`
+- PostgreSQL row-level security (RLS) is the tenancy boundary, not handler code: `guardian_app`, the role the service connects as, owns no table and has no `BYPASSRLS`
+- Two auth paths, no shared secret token anywhere: a session (cookie or Bearer) for the cabinet, a per-agent Bearer token (minted at `/agent/enroll`) for agents; both resolve to a `Tenant{AccountID, ...}` server-side
+- Postgres tables: `users`, `accounts`, `account_members`, `sessions`, `rooms`, `room_members`, `applications`, `computers`, `binding_tokens`, `events`
+- See `specs/server.md` for the full architecture (RLS policies, roles, the `account_for_agent_token` function, migrations)
 
 ### Agent (`agent/main.go` + platform-specific files)
 - Polls server via `/client/sync` (10s console mode, 20s service mode configurable via `CHECK_INTERVAL`), checks processes every 1s
@@ -76,20 +78,23 @@ cd mobile && flutter pub run flutter_launcher_icons
 - Preview locally: `cd docs && python3 -m http.server 8099` → http://localhost:8099
 
 ### API Endpoints
-- `/client/sync` — agent fetches apps, mode, and client entries (TOKEN auth)
-- `/manage/applications` — CRUD for blocked apps (ADMIN_TOKEN auth)
-- `/manage/applications/reset` — clear all applications (ADMIN_TOKEN auth)
-- `/status` — get/set server enabled state and mode (ADMIN_TOKEN auth)
-- `/info` — server info (ADMIN_TOKEN auth)
-- `/client` — get/set client entries like power (ADMIN_TOKEN auth)
-- `/manage/computers` — computer management (ADMIN_TOKEN auth)
-- `/manage/computers/reset` — unblock all computers (ADMIN_TOKEN auth)
-- `/manage/computers/block_all` — block all computers (ADMIN_TOKEN auth)
-- `/health` — health check (unauthenticated)
+- `POST /agent/enroll` — agent enrolls with a binding token, gets its own per-machine agent token (unauthenticated; the token in the body is the gate)
+- `GET /agent/sync` — agent fetches its room's applications, mode, and client entries (agent token auth)
+- `POST /api/v1/auth/register`, `/login`, `/logout` — cabinet account creation and session auth
+- `GET /api/v1/me` — caller's identity and every account they can act in (session auth)
+- `/api/v1/rooms`, `/api/v1/rooms/{roomID}` — room CRUD (session auth)
+- `/api/v1/rooms/{roomID}/applications` — per-room blacklist/whitelist entries (session auth)
+- `/api/v1/rooms/{roomID}/members` — room guest grants (session auth)
+- `/api/v1/computers`, `/api/v1/computers/{computerID}` — computer listing and reassignment/blocking (session auth)
+- `/api/v1/binding-tokens` — mint/revoke the installer's enrollment token (session auth)
+- `GET /api/v1/events` — recent account activity (session auth)
+- `GET /health` — health check (unauthenticated)
+- Session requests may set `X-Guardian-Account: <account-id>` to act as a different one of the caller's own proven memberships (e.g. a guest room grant) — see `specs/api.md`
+- Full request/response reference: `specs/api.md`
 
 ## Key Dependencies
 
-- **Server Go:** `go-chi/chi` (router), `go-chi/cors`, `modernc.org/sqlite` (pure Go SQLite)
+- **Server Go:** `go-chi/chi` (router), `go-chi/cors`, `jackc/pgx/v5` (PostgreSQL driver/pool), `pressly/goose/v3` (migrations)
 - **Agent Go:** `golang.org/x/sys` (Windows APIs)
 - **Flutter:** `http`, `shared_preferences`
 
@@ -104,7 +109,7 @@ dist/
                      # and Guardian.exe (the console)
 ```
 
-Server installs to `/usr/local/bin/procsentinel/` as a systemd service. Agent and server both read `.env` files for configuration (`SERVER_ADDRESS`, `TOKEN`, `ADMIN_TOKEN`).
+Server installs to `/usr/local/bin/procsentinel/` as a systemd service. Both agent and server read `.env` files for configuration; the agent's is `SERVER_ADDRESS`/`TOKEN`, the server's is `DATABASE_URL`/`MIGRATE_DATABASE_URL`/`CABINET_ORIGIN`/`SERVER_ADDRESS` (see `dist/server/server.env` and `specs/server.md`). Deploy order for the server: run `./guardian-server migrate` once with `MIGRATE_DATABASE_URL` set, then start the service — the running service's own role cannot alter the schema.
 
 ## Rules
 
@@ -120,5 +125,5 @@ Server installs to `/usr/local/bin/procsentinel/` as a systemd service. Agent an
 - `tools/whitelist-gui/builtin.go` mirrors the hardcoded protected-process list in `agent/main.go` and must be kept in sync by hand
 - `tools/mkico` is a separate module (it needs `golang.org/x/image` only to build the console's icon)
 - Server and agent have separate `go.mod` files (modules `server` and `agent`)
-- Server uses pure Go SQLite (`modernc.org/sqlite`) — CGO is NOT required for server builds
+- Server uses PostgreSQL via pgx; CGO is not required
 - Agent builds require `CGO_ENABLED=1`

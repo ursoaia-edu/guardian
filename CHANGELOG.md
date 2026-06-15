@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Server (rewrite)
+- Replace the single-tenant SQLite server with a multi-tenant PostgreSQL 16 backend: any number of customer accounts now share one database, kept apart by row-level security rather than by running a separate server per customer
+- Add a cabinet API (`/api/v1/...`) with email/password accounts, session cookies, rooms, per-room application lists, room guest sharing, computer management, binding tokens, and an account activity feed
+- Replace the shared `TOKEN`/`ADMIN_TOKEN` bearer secrets with per-principal credentials: a session per signed-in user and a per-machine agent token minted at enrollment (`POST /agent/enroll`, replacing the old `/client/sync` identity parameter)
+- Add `guardian-server migrate`, running schema migrations (goose) under a separate owner role; the running service's own database role can read and write but cannot alter the schema
+- Remove `server/db.go`, the old `applications`/`server`/`client`/`computers` SQLite tables and in-memory caches, and the `modernc.org/sqlite` dependency
+- The agent's own wire format (`/agent/sync`'s `applications`/`mode`/`client` shape) is unchanged on purpose, so agents already in the field keep working
+- Tighten CORS to an explicit, credentialed `CABINET_ORIGIN` allow-list instead of a wildcard
+
 ### Guardian Console (new)
 - Windows GUI (`tools/whitelist-gui`) for managing the agent on a single machine
 - Install / Update agent / Uninstall, plus start, stop and restart of the ProcSentinelAgent service

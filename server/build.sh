@@ -1,3 +1,5 @@
+# Deploy order: run "./guardian-server migrate" once with MIGRATE_DATABASE_URL
+# set, then start the service. The service itself cannot alter the schema.
 go build -o guardian-server
 
 cp guardian-server ../dist/server/
