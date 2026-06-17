@@ -2,35 +2,21 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	_ "modernc.org/sqlite"
 )
 
 // Server holds the state of the guardian server
 type Server struct {
 	pool *pgxpool.Pool
-
-	// Legacy single-tenant state, unpopulated from this task onward. The
-	// methods in db.go and handlers.go still reference these fields, so they
-	// must exist for the package to compile; Task 15 deletes them together
-	// with those files.
-	mu           sync.RWMutex
-	db           *sql.DB
-	appsCache    map[string]Application
-	enabledCache bool
-	modeCache    string
-	clientCache  map[string]bool
 }
 
 func NewServer(ctx context.Context) (*Server, error) {
