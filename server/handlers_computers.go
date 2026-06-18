@@ -37,9 +37,13 @@ func (s *Server) handleListComputers(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePatchComputer(w http.ResponseWriter, r *http.Request) {
+	// A malformed id is a 404, not a 500, mirroring roomIDParam: whether the id
+	// is well-formed tells the caller nothing they are entitled to know, and
+	// "undefined" is exactly the id a JS cabinet sends the moment a state
+	// variable is unset — a real client bug, not a contrived one.
 	id, err := uuid.Parse(chi.URLParam(r, "computerID"))
 	if err != nil {
-		writeLookupError(w, r, err, "Computer")
+		writeJSON(w, http.StatusNotFound, ErrorResponse{Error: "Computer not found"})
 		return
 	}
 	// No json tags: this struct is never unmarshalled into. The body is decoded

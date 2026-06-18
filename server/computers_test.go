@@ -213,3 +213,19 @@ func TestPatchComputerOfAnotherAccountIsNotFound(t *testing.T) {
 		t.Fatalf("account B patched account A's machine: %d", rr.Code)
 	}
 }
+
+// A malformed id must 404, not 500 — the same rule handlers_rooms.go states
+// and roomIDParam implements: whether an id is well-formed tells the caller
+// nothing they are entitled to know. "undefined" is not a contrived case: it
+// is the string a JS cabinet sends the moment a state variable is unset,
+// so this is the shape a real client bug produces in production.
+func TestPatchComputerWithMalformedIDIsNotFound(t *testing.T) {
+	s := &Server{pool: testPool(t)}
+	c := registerAndLogin(t, s, "parent@example.com")
+
+	rr := doJSON(t, s.setupRoutes(), "PATCH", "/api/v1/computers/undefined",
+		map[string]any{"display_name": "x"}, c)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("malformed computer id got %d, want 404: %s", rr.Code, rr.Body.String())
+	}
+}
