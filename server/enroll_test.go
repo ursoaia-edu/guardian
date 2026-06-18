@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
@@ -169,6 +171,48 @@ func TestRevocationDoesNotTouchAnotherAccount(t *testing.T) {
 	}
 	if code, _ := enroll(t, s, bindingB, "guid-b", "PC-B"); code != 201 {
 		t.Fatalf("account A's revocation killed account B's token: %d", code)
+	}
+}
+
+// A machine's own passport must never be able to make enrollment permanently
+// impossible. readRuntime already guards this on the sync path (see its
+// comment in handlers_agent.go): a JSON string carrying a NUL escape is legal
+// JSON but jsonb refuses it, and a JSON string carrying invalid UTF-8 bytes is
+// legal JSON but a text column refuses that too. A Windows machine on a
+// non-UTF-8 codepage can put either into its hostname or its hardware
+// inventory. Before this fix, either one 500'd the enrollment forever — the
+// machine retries the exact same passport and gets the exact same 500 every
+// time, so it can never join the fleet.
+//
+// Built from bytes rather than written as literals, same as
+// TestMalformedRuntimeDoesNotBreakSync: an editor or formatter would silently
+// rewrite a literal NUL escape or literal invalid-UTF-8 bytes in source.
+func TestHostilePassportStillEnrolls(t *testing.T) {
+	s := &Server{pool: testPool(t)}
+	c := registerAndLogin(t, s, "parent@example.com")
+	binding := mintBindingToken(t, s, c)
+
+	nulEscape := string([]byte{'\\', 'u', '0', '0', '0', '0'})
+	invalidUTF8 := string([]byte{0xff, 0xfe})
+
+	body := []byte(`{` +
+		`"binding_token":"` + binding + `",` +
+		`"machine_guid":"guid-hostile",` +
+		`"hostname":"DESKTOP-` + invalidUTF8 + `",` +
+		`"os_name":"Windows 11",` +
+		`"os_build":"22631",` +
+		`"arch":"amd64",` +
+		`"agent_version":"2.1.0",` +
+		`"hardware":{"cpu":"i5` + nulEscape + `8400"}` +
+		`}`)
+
+	req := httptest.NewRequest("POST", "/agent/enroll", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	s.setupRoutes().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("a hostile passport got %d, want 201: %s", rr.Code, rr.Body.String())
 	}
 }
 

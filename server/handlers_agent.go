@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -142,15 +143,12 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 
-		hardware := req.Hardware
-		if len(hardware) == 0 {
-			hardware = json.RawMessage("{}")
-		}
 		computer, err := q.UpsertComputerByGUID(ctx, db.UpsertComputerByGUIDParams{
 			AccountID: binding.AccountID, MachineGuid: req.MachineGUID,
-			Hostname: req.Hostname, OsName: req.OSName, OsBuild: req.OSBuild,
-			Arch: req.Arch, AgentVersion: req.AgentVersion,
-			Hardware: hardware, TokenHash: agentHash,
+			Hostname: sanitizeText(req.Hostname), OsName: sanitizeText(req.OSName),
+			OsBuild: sanitizeText(req.OSBuild), Arch: sanitizeText(req.Arch),
+			AgentVersion: sanitizeText(req.AgentVersion),
+			Hardware:     sanitizeJSONObject(req.Hardware), TokenHash: agentHash,
 		})
 		if err != nil {
 			return err
@@ -159,7 +157,10 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 			AccountID:  binding.AccountID,
 			ComputerID: &computer.ID,
 			Type:       "computer.enrolled",
-			Payload:    map[string]any{"hostname": req.Hostname, "agent_version": req.AgentVersion},
+			Payload: map[string]any{
+				"hostname":      sanitizeText(req.Hostname),
+				"agent_version": sanitizeText(req.AgentVersion),
+			},
 		})
 	})
 	if err != nil {
@@ -262,6 +263,13 @@ func (s *Server) handleAgentSync(w http.ResponseWriter, r *http.Request) {
 
 // readRuntime collects the volatile half of the passport the agent reports on
 // every sync. Anything it cannot vouch for becomes an empty object.
+func readRuntime(r *http.Request) []byte {
+	return sanitizeJSONObject([]byte(r.URL.Query().Get("runtime")))
+}
+
+// sanitizeJSONObject decodes raw as a JSON object and re-encodes it, so the
+// bytes handed to a jsonb column are ones Postgres will actually accept.
+// Anything it cannot vouch for becomes an empty object.
 //
 // json.Valid is NOT a sufficient gate: it accepts things jsonb rejects. Both of
 // these are valid JSON and both make Postgres error —
@@ -269,19 +277,19 @@ func (s *Server) handleAgentSync(w http.ResponseWriter, r *http.Request) {
 //	a JSON string holding a NUL escape    ERROR: unsupported Unicode escape sequence
 //	a JSON string holding invalid UTF-8   ERROR: invalid byte sequence for encoding "UTF8"
 //
-// — and a Windows username on a non-UTF-8 codepage is exactly how the second one
-// reaches us. So the value is decoded and re-encoded: decoding replaces invalid
-// UTF-8 with U+FFFD, requiring an object rejects the scalars the column is not
-// meant to hold, and the NUL escape is checked for explicitly because Go emits
-// it again on the way out.
-func readRuntime(r *http.Request) []byte {
+// — and a Windows machine on a non-UTF-8 codepage is exactly how the second one
+// reaches us, in agent telemetry (readRuntime) as much as in the hardware
+// inventory sent at enrollment. So the value is decoded and re-encoded:
+// decoding replaces invalid UTF-8 with U+FFFD, requiring an object rejects the
+// scalars the column is not meant to hold, and the NUL escape is checked for
+// explicitly because Go emits it again on the way out.
+func sanitizeJSONObject(raw []byte) []byte {
 	const empty = `{}`
-	raw := r.URL.Query().Get("runtime")
-	if raw == "" {
+	if len(raw) == 0 {
 		return []byte(empty)
 	}
 	var probe map[string]any
-	if err := json.Unmarshal([]byte(raw), &probe); err != nil {
+	if err := json.Unmarshal(raw, &probe); err != nil {
 		return []byte(empty)
 	}
 	encoded, err := json.Marshal(probe)
@@ -295,4 +303,16 @@ func readRuntime(r *http.Request) []byte {
 		return []byte(empty)
 	}
 	return encoded
+}
+
+// sanitizeText makes a plain string safe for a Postgres text column, the same
+// destination sanitizeJSONObject protects for jsonb. A Postgres text column
+// rejects an embedded NUL outright, and rejects bytes that are not valid
+// UTF-8 — exactly the two shapes a machine on a non-UTF-8 codepage can put in
+// a hostname, OS name, build, or architecture string. Unlike jsonb there is no
+// decode/re-encode round trip available for a bare string, so the two
+// failures are handled directly: NUL bytes are stripped, and anything left
+// that is not valid UTF-8 is replaced rather than rejected.
+func sanitizeText(s string) string {
+	return strings.ToValidUTF8(strings.ReplaceAll(s, "\x00", ""), "�")
 }
