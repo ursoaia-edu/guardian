@@ -50,10 +50,10 @@ cd mobile && flutter pub run flutter_launcher_icons
 - `middleware.go` — `SessionAuth` (cabinet: cookie or Bearer session token) and `AgentAuth` (per-agent Bearer token)
 - `tenant.go` — `Tenant`/context plumbing and `inAccount`, which scopes every query inside a transaction via the `app.account_id` Postgres GUC
 - `auth.go` — argon2id password hashing, session/agent/binding token minting (SHA-256 digests)
-- `handlers_auth.go`, `handlers_rooms.go`, `handlers_members.go`, `handlers_computers.go`, `handlers_agent.go`, `events.go` — HTTP handlers grouped by resource; `handlers.go` keeps only `/health` and server info
+- `handlers_auth.go`, `handlers_rooms.go`, `handlers_members.go`, `handlers_computers.go`, `handlers_agent.go`, `events.go` — HTTP handlers grouped by resource; `handlers.go` keeps only `/health`
 - `migrate.go` — embeds and runs `db/migrations/*.sql` (goose) against `MIGRATE_DATABASE_URL`
 - `db/migrations/` (goose SQL, schema owned by `guardian_owner`), `db/queries/` (sqlc sources), `internal/db/` (generated sqlc code, see `sqlc.yaml`)
-- `models.go` — only the agent's wire format (`ClientApplication`, `ClientEntry`, `ClientSyncResponse`, unchanged on purpose) plus `ErrorResponse`/`ServerInfoResponse`
+- `models.go` — only the agent's wire format (`ClientApplication`, `ClientEntry`, `ClientSyncResponse`, unchanged on purpose) plus `ErrorResponse`
 - PostgreSQL row-level security (RLS) is the tenancy boundary, not handler code: `guardian_app`, the role the service connects as, owns no table and has no `BYPASSRLS`
 - Two auth paths, no shared secret token anywhere: a session (cookie or Bearer) for the cabinet, a per-agent Bearer token (minted at `/agent/enroll`) for agents; both resolve to a `Tenant{AccountID, ...}` server-side
 - Postgres tables: `users`, `accounts`, `account_members`, `sessions`, `rooms`, `room_members`, `applications`, `computers`, `binding_tokens`, `events`

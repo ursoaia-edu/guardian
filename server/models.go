@@ -23,9 +23,3 @@ type ClientEntry struct {
 	Name   string `json:"name"`
 	Status bool   `json:"status"`
 }
-
-// ServerInfoResponse represents server information
-type ServerInfoResponse struct {
-	Version string `json:"version"`
-	Status  string `json:"status"`
-}

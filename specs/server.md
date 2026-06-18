@@ -24,9 +24,9 @@ every account authenticates its own users (via a session) and its own agents
 | `handlers_computers.go`  | computer listing and reassignment/blocking                     |
 | `handlers_agent.go`      | binding tokens, agent enrollment, agent sync                   |
 | `events.go`              | account activity feed                                          |
-| `handlers.go`            | `/health` and server info only                                 |
+| `handlers.go`            | `/health` only                                                 |
 | `migrate.go`             | embeds and runs `db/migrations/*.sql` via goose                |
-| `models.go`              | the agent's wire format (`ClientApplication`, `ClientEntry`, `ClientSyncResponse`) plus `ErrorResponse`/`ServerInfoResponse` |
+| `models.go`              | the agent's wire format (`ClientApplication`, `ClientEntry`, `ClientSyncResponse`) plus `ErrorResponse` |
 | `helpers.go`             | JSON writer, `.env` loader, small utilities                    |
 | `db/migrations/`         | goose SQL migrations — schema owned by `guardian_owner`        |
 | `db/queries/`            | sqlc query sources                                              |
