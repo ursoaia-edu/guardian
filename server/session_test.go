@@ -165,3 +165,25 @@ func TestSessionResolvesToItsOwnAccount(t *testing.T) {
 		t.Fatalf("two accounts resolved to the same id %s", a.AccountID)
 	}
 }
+
+// A database outage during session lookup is not the same fact as "this
+// session expired", and must not be reported as one: the same defect R9,
+// R10 and R15 already closed in handleLogin, writeLookupError and
+// handleEnroll would otherwise survive on the one path every authenticated
+// request takes, telling every signed-in parent their session expired during
+// a thirty-second Postgres blip and sending them all back to the sign-in
+// screen at once.
+func TestSessionAuthReportsOutageAsAnOutage(t *testing.T) {
+	s := &Server{pool: testPool(t)}
+	c := registerAndLogin(t, s, "parent@example.com")
+
+	// Simulate the database becoming unreachable mid-session: GetSession's
+	// query now fails with something other than pgx.ErrNoRows.
+	s.pool.Close()
+
+	rr := doJSON(t, s.setupRoutes(), "GET", "/api/v1/me", nil, c)
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("a database outage during session lookup got %d %q, want 500",
+			rr.Code, rr.Body.String())
+	}
+}

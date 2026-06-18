@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -40,12 +41,32 @@ func (s *Server) SessionAuth(next http.Handler) http.Handler {
 
 		session, err := q.GetSession(ctx, hashToken(plain))
 		if err != nil {
-			writeJSON(w, http.StatusUnauthorized, ErrorResponse{Error: "Session expired"})
+			// No rows is a genuinely unknown or expired token. Anything else is
+			// a database problem, not a fact about this session — reporting it
+			// as an expired session tells every signed-in user their session
+			// expired during an outage, and hides the outage in the logs behind
+			// what looks like mass sign-out. Same rule as writeLookupError.
+			if !errors.Is(err, pgx.ErrNoRows) {
+				slog.Error("look up session", "error", err)
+				writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "Internal error"})
+				return
+			}
+			writeJSON(w, http.StatusUnauthorized, ErrorResponse{Error: "Not signed in"})
 			return
 		}
 		accounts, err := q.ListAccessibleAccounts(ctx, session.UserID)
-		if err != nil || len(accounts) == 0 {
-			slog.Warn("session without an account", "user_id", session.UserID, "error", err)
+		if err != nil {
+			if !errors.Is(err, pgx.ErrNoRows) {
+				slog.Error("list accessible accounts", "user_id", session.UserID, "error", err)
+				writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "Internal error"})
+				return
+			}
+			slog.Warn("session without an account", "user_id", session.UserID)
+			writeJSON(w, http.StatusForbidden, ErrorResponse{Error: "No account"})
+			return
+		}
+		if len(accounts) == 0 {
+			slog.Warn("session without an account", "user_id", session.UserID)
 			writeJSON(w, http.StatusForbidden, ErrorResponse{Error: "No account"})
 			return
 		}
