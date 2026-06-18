@@ -5583,9 +5583,16 @@ git commit -m "feat(server): scope room guests to the rooms they were granted"
 git rm server/db.go
 ```
 
-From `server/handlers.go`, delete `handleClientSync`, `handleGetAllApplications`, `handleAddApplication`, `handleUpdateApplication`, `handleRemoveApplication`, `handleResetApplications`, `handleGetStatus`, `handleUpdateStatus`, `handleGetClient`, `handleUpdateClient`, `handleGetComputers`, `handleUpdateComputer`, `handleResetComputers`, `handleBlockAllComputers`. Keep `handleHealth` and `handleGetServerInfo` — rewrite the latter to report only version and status, since "mode" is now a property of a room and not of the server.
+From `server/handlers.go`, delete `handleClientSync`, `handleGetAllApplications`, `handleAddApplication`, `handleUpdateApplication`, `handleRemoveApplication`, `handleResetApplications`, `handleGetStatus`, `handleUpdateStatus`, `handleGetClient`, `handleUpdateClient`, `handleGetComputers`, `handleUpdateComputer`, `handleResetComputers`, `handleBlockAllComputers`. Keep `handleHealth`. **Delete `handleGetServerInfo` too**: it was routed only by the `AdminAuth`
+group this task removes, so keeping it leaves a handler no router reaches. An endpoint reporting the
+server version is a reasonable thing to want, but it has no caller until the cabinet exists, and a
+handler with no route is dead code that reads like a live feature.
 
-From `server/models.go`, delete `Application` (superseded by `db.Application`), `StatusResponse`, `ApplicationsResponse`, `ClientEntryResponse`, `Computer`, `ComputersResponse`. Keep `ClientApplication`, `ClientEntry`, `ClientSyncResponse` (the agent's wire format, unchanged on purpose so existing agents keep parsing it) and `ErrorResponse`.
+From `server/models.go`, delete `Application` (superseded by `db.Application`), `StatusResponse`, `ApplicationsResponse`, `ClientEntryResponse`, `Computer`, `ComputersResponse` **and `ServerInfoResponse`** (which existed only to serve the handler above). Keep `ClientApplication`, `ClientEntry`, `ClientSyncResponse` (the agent's wire format, unchanged on purpose so existing agents keep parsing it) and `ErrorResponse`.
+
+From `server/helpers.go`, delete `appCacheKey`, `parseIntParam`, `getCurrentTime` and `getLocalIP` —
+each was used only by the handlers and caches this task removes, and each is now referenced nowhere.
+Keep `writeJSON`, `orEmpty` and `loadEnvFile`.
 
 - [ ] **Step 2: Tighten CORS**
 
@@ -5676,5 +5683,7 @@ git commit -m "refactor(server): remove the single-tenant SQLite server"
 
 - `go test ./...` in `server/` passes with a live Postgres, including `TestCrossAccountAccessIsAlways404`.
 - `go run ./fakeagent` enrolls against a freshly migrated database and syncs the room's policy after the machine is assigned to a room.
-- No occurrence of `mILp9n6shk3G9SGSaS2nmP6YlLHwsP1Z`, `AdminAuth`, `ClientAuth`, `appsCache` or `modernc.org/sqlite` remains in `server/`.
+- No occurrence of `mILp9n6shk3G9SGSaS2nmP6YlLHwsP1Z`, `AdminAuth`, `ClientAuth` or `appsCache` remains in `server/`, and `modernc.org/sqlite` appears in no `.go` file and in no `require` directive in `server/go.mod`.
+
+  **`go.sum` is excluded from that check, deliberately.** It records checksums for the whole module graph, including the *test* dependencies of modules we depend on — `go mod why -m modernc.org/sqlite` shows it reaching the graph only through `github.com/pressly/goose/v3.test`. Those lines are not a SQLite dependency of this server, `go mod tidy` puts them back if they are removed by hand, and a hand-trimmed `go.sum` is a build that fails in the next environment that verifies modules. The invariant is about our code and our requirements, not about the string never appearing in a generated lock file.
 - `specs/server.md`, `specs/api.md` and `CLAUDE.md` describe the server that now exists.
