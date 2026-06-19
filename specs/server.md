@@ -330,6 +330,53 @@ running the `migrate` subcommand once, before the service using
 `DATABASE_URL` is (re)started. See `server/build.sh` for the deploy-order
 comment.
 
+### Production role prerequisites
+
+`00001_init.sql` runs `GRANT ... TO guardian_app`, so that role must already
+exist the first time `guardian-server migrate` runs. In the dev compose
+stack this is invisible: `server/db/init/01-roles.sql` creates `guardian_app`
+and the `postgres` image's `POSTGRES_USER` env var creates `guardian_owner`
+as a superuser, but **both of those are Docker-image bootstrap behaviour that
+only runs when initialising a fresh volume.** A production Postgres instance
+has neither. An operator who follows the deploy order above with nothing
+else prepared gets `role "guardian_app" does not exist` on the very first
+migration.
+
+Before running `guardian-server migrate` against a fresh production
+database, a superuser must create both roles by hand, once:
+
+```sql
+-- The owner role that runs "guardian-server migrate". It must own the
+-- schema (or the whole database) so it can CREATE/ALTER/DROP and so its
+-- GRANTs below and inside migrations actually have something to grant from.
+CREATE ROLE guardian_owner LOGIN PASSWORD 'CHANGE_ME';
+ALTER DATABASE guardian OWNER TO guardian_owner;
+-- (or, creating the database at the same time: CREATE DATABASE guardian OWNER guardian_owner;)
+
+-- The application role the running service connects as. No CREATE, no
+-- ALTER, no DROP, no BYPASSRLS — see "The application role owns nothing"
+-- above. 00001_init.sql grants it DML on every table once guardian_owner
+-- runs the migration.
+CREATE ROLE guardian_app LOGIN PASSWORD 'CHANGE_ME';
+GRANT CONNECT ON DATABASE guardian TO guardian_app;
+GRANT USAGE ON SCHEMA public TO guardian_app;
+```
+
+These `CREATE ROLE` statements are deliberately **not** in a migration: a
+migration file is committed to the repository, and a role's password must
+not be.
+
+**The owner role must stay the same role for every migration, forever.**
+`ALTER DEFAULT PRIVILEGES` (in `00001_init.sql`) records the default
+privileges *for the role that ran it* — it is not a schema-wide setting.
+If a later migration runs under some other role (a different admin's
+personal login, a rotated deploy credential under a new name), the tables
+*that* migration creates silently get no default grant to `guardian_app` at
+all, and the service 500s reading or writing them with no RLS-related
+explanation, because the failure is a bare permissions error, not a policy
+rejection. `MIGRATE_DATABASE_URL` must name `guardian_owner` — the exact
+same role — on every environment and every run, indefinitely.
+
 ## Startup Behavior
 
 1. `go run . migrate` — separate invocation, exits after applying migrations
