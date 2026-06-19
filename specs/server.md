@@ -377,6 +377,42 @@ wildcard origin cannot legally coexist with credentialed (cookie) requests;
 browsers refuse the combination, and allowing it would have meant any site
 could act as the signed-in cabinet user.
 
+## Rate Limiting and Body Size
+
+The three unauthenticated routes — `POST /api/v1/auth/register`,
+`POST /api/v1/auth/login`, and `POST /agent/enroll` — carry two protections
+nothing else in `routes.go` needs, because they are the only routes a caller
+reaches with no session and no agent token:
+
+- **`http.MaxBytesReader`** (`maxBody` in `routes.go`), capping the request
+  body at `maxUnauthenticatedBodyBytes` (1 MiB). A body over the cap fails in
+  the handler's existing JSON decode and is reported as a 400, not spent as
+  memory or turned into a 500.
+- **A per-IP rate limit** (`perIP` in `routes.go`, built on
+  `github.com/go-chi/httprate`): `loginRateLimit` and `registerRateLimit`
+  (10/minute) protect the argon2id work `handleLogin` deliberately spends on
+  every attempt, hit or miss, to close the timing oracle described under
+  **Key Design Decisions** below — without a limiter that same correctness
+  fix is a memory-amplification denial of service, needing no authentication.
+  `enrollRateLimit` (20/minute) is higher on purpose: an installer run across
+  a fleet of machines behind one NAT — a school, an office — is legitimate
+  traffic, not abuse.
+
+The client IP the limiter keys on is resolved by
+`middleware.ClientIPFromXFFTrustedProxies(1)`, installed once at the top of
+`setupRoutes`: this deployment sits behind exactly one reverse proxy (Caddy,
+see `specs/2026-09-05-saas-design.md`'s deploy section), so the single
+X-Forwarded-For entry that proxy adds is the real client. A deployment that
+puts another proxy in front of Caddy (a CDN, a second load balancer) must
+update the trusted-proxy count here or every client is bucketed together.
+
+**Per-email keying is not implemented in this plan.** The design spec asks
+for login to be rate-limited "per email and per IP". `httprate` supports a
+custom key function that could read the email from the body, but doing so
+would mean consuming the body before `maxBody`'s `MaxBytesReader` wraps it,
+which is the wrong order. Per-IP is the whole of the limiter for plan 1;
+per-target (email) keying arrives with the cabinet in a later plan.
+
 ## Configuration
 
 Loaded from `.env` in the working directory; real environment variables take
@@ -405,6 +441,7 @@ precedence.
 | `github.com/pressly/goose/v3`  | SQL migrations                            |
 | `github.com/go-chi/chi/v5`     | HTTP router                               |
 | `github.com/go-chi/cors`       | CORS middleware                           |
+| `github.com/go-chi/httprate`   | per-IP rate limiting on register/login/enroll |
 | `golang.org/x/crypto`          | argon2id password hashing                 |
 | `github.com/google/uuid`       | account/user/room/computer identifiers    |
 | `log/slog` (stdlib)            | structured JSON logging                   |
