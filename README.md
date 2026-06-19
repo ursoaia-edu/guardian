@@ -1,8 +1,15 @@
 <div align="center">
 
-<img src="mobile/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_foreground.webp" alt="Guardian logo" width="160" />
-
-# Guardian
+<img src="docs/guardian-mark.png" alt="Guardian shield" width="120" />
+<div align="center"><pre>
+   ██████╗ ██╗   ██╗ █████╗ ██████╗ ██████╗ ██╗ █████╗ ███╗   ██╗
+  ██╔════╝ ██║   ██║██╔══██╗██╔══██╗██╔══██╗██║██╔══██╗████╗  ██║
+  ██║  ███╗██║   ██║███████║██████╔╝██║  ██║██║███████║██╔██╗ ██║
+  ██║   ██║██║   ██║██╔══██║██╔══██╗██║  ██║██║██╔══██║██║╚██╗██║
+  ╚██████╔╝╚██████╔╝██║  ██║██║  ██║██████╔╝██║██║  ██║██║ ╚████║
+   ╚═════╝  ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚═════╝ ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝
+            Remote process monitoring & control for Windows fleets
+</pre></div>
 
 **Process monitoring and control system — block or whitelist applications across Windows machines, manage them remotely from an Android app, all coordinated through a central server.**
 
@@ -50,7 +57,7 @@ SERVER_ADDRESS=http://0.0.0.0:8080
 TOKEN=your_token_here
 ADMIN_TOKEN=your_admin_token_here
 ```
-## Running the Server
+#### Running the Server
 
 **Option A: Run directly**
 
