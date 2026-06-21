@@ -1,15 +1,11 @@
 <div align="center">
 
-<img src="docs/guardian-mark.png" alt="Guardian shield" width="120" />
-<div align="center"><pre>
-   ██████╗ ██╗   ██╗ █████╗ ██████╗ ██████╗ ██╗ █████╗ ███╗   ██╗
-  ██╔════╝ ██║   ██║██╔══██╗██╔══██╗██╔══██╗██║██╔══██╗████╗  ██║
-  ██║  ███╗██║   ██║███████║██████╔╝██║  ██║██║███████║██╔██╗ ██║
-  ██║   ██║██║   ██║██╔══██║██╔══██╗██║  ██║██║██╔══██║██║╚██╗██║
-  ╚██████╔╝╚██████╔╝██║  ██║██║  ██║██████╔╝██║██║  ██║██║ ╚████║
-   ╚═════╝  ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚═════╝ ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝
-            Remote process monitoring & control for Windows fleets
-</pre></div>
+<p align="center">
+  <img src="docs/guardian-mark.png" alt="Guardian" width="130">
+</p>
+
+<img src="docs/guardian-banner.png" alt="Guardian shield" />
+
 
 **Process monitoring and control system — block or whitelist applications across Windows machines, manage them remotely from an Android app, all coordinated through a central server.**
 
@@ -28,7 +24,7 @@
 
 ## Quick Start
 
-Pre-built binaries are available in the `dist/` directory:
+Pre-built binaries live in the `dist/` directory:
 
 ```
 dist/
@@ -41,12 +37,12 @@ dist/
 └── agent/
     ├── agent.env                    # Agent config template
     ├── Install-Guardian.bat         # Auto-detect arch and install agent
-    └── Uninstall-Guardian.bat       # Auto-detect arch and uninstall 
+    └── Uninstall-Guardian.bat       # Auto-detect arch and uninstall
 ```
 
 ### 1. Server (Linux)
 
-Copy the `dist/server/` folder to your server. Rename the env file and configure it:
+Copy `dist/server/` to your server, then rename and configure the env file:
 
 ```bash
 cp server.env .env
@@ -57,27 +53,14 @@ SERVER_ADDRESS=http://0.0.0.0:8080
 TOKEN=your_token_here
 ADMIN_TOKEN=your_admin_token_here
 ```
-#### Running the Server
 
-**Option A: Run directly**
-
-```bash
-./guardian-server
-```
-
-**Option B: Install as systemd service**
+Run it one of three ways:
 
 ```bash
-sudo ./install.sh
+./guardian-server        # Option A — run directly
+sudo ./install.sh        # Option B — install as a systemd service
+docker compose up -d     # Option C — Docker (env is optional; pass vars via compose)
 ```
-
-**Option C: Docker**
-
-```bash
-docker compose up -d
-```
-
-The `.env` file is optional with Docker — you can pass environment variables directly via `docker-compose.yml` or `docker run --env-file`.
 
 ### 2. Agent (Windows)
 
@@ -88,13 +71,13 @@ SERVER_ADDRESS=your_server_address
 TOKEN=your_token_here
 ```
 
-Double-click `Install-Guardian.bat` (auto-detects 32/64-bit and runs the appropriate installer as admin). The installer will prompt for an optional `IDENTITY` number to register the computer with the server.
+Double-click `Install-Guardian.bat` (auto-detects 32/64-bit and runs the right installer as admin). The installer prompts for an optional `IDENTITY` number to register the computer with the server. To remove it, double-click `Uninstall-Guardian.bat`.
 
-To uninstall, double-click `Uninstall-Guardian.bat`.
+### 3. Mobile app (Android)
 
-### 3. Mobile App (Android)
+Install `guardian.apk`, open the app, go to **Settings**, and set the server address and admin token.
 
-Install `guardian.apk` on your Android device. Open the app, go to Settings, and configure the server address and admin token.
+---
 
 ## Architecture
 
@@ -107,9 +90,9 @@ Install `guardian.apk` on your Android device. Open the app, go to Settings, and
                        [SQLite]
 ```
 
-- **Server** -- Go REST API with SQLite. Manages blocked applications, modes, computer registrations, and client entries. Runs as a Linux systemd service.
-- **Agent** -- Go process monitor. Polls the server for its configuration, scans running processes every second, and kills matches. Runs as a Windows service (also supports Linux/macOS).
-- **Mobile** -- Flutter Android app. Provides a UI to manage blocked apps, toggle modes, control computers, and trigger system actions like remote shutdown.
+The Android app talks to the server with the **admin** token; agents talk to it with the **client** token. The server keeps blocked apps, modes, computer registrations, and client entries in SQLite, with in-memory caches in front.
+
+---
 
 ## Modes
 
@@ -117,17 +100,19 @@ Install `guardian.apk` on your Android device. Open the app, go to Settings, and
 |---|---|
 | **blacklist** | Only processes in the block list are killed |
 | **whitelist** | All processes NOT in the allow list are killed (system processes excluded) |
-| **free** | No processes are killed (returned when server is disabled or computer is unblocked) |
+| **free** | No processes are killed (returned when the server is disabled or a computer is unblocked) |
+
+---
 
 ## API Reference
 
-All endpoints except `/health` require a `Authorization: Bearer <token>` header.
+All endpoints except `/health` require an `Authorization: Bearer <token>` header.
 
 ### Client (TOKEN auth)
 
 | Method | Endpoint | Description |
 |---|---|---|
-| GET | `/client/sync?identity={id}` | Agent sync -- returns applications, mode, and client entries |
+| GET | `/client/sync?identity={id}` | Agent sync — returns applications, mode, and client entries |
 
 ### Admin (ADMIN_TOKEN auth)
 
@@ -171,9 +156,13 @@ All endpoints except `/health` require a `Authorization: Bearer <token>` header.
 |---|---|---|
 | GET | `/health` | Health check |
 
+---
+
 ## Remote Shutdown
 
-Setting the `power` client entry to `false` via the `/client` endpoint triggers a system shutdown on all connected agents. On Windows, this uses the `InitiateSystemShutdownExW` API to force-close applications and power off the machine.
+Setting the `power` client entry to `false` via the `/client` endpoint triggers a system shutdown on all connected agents. On Windows this uses the `InitiateSystemShutdownExW` API to force-close applications and power off the machine.
+
+---
 
 ## Configuration
 
@@ -191,6 +180,8 @@ Setting the `power` client entry to `false` via the `/client` endpoint triggers 
 |---|---|---|
 | `SERVER_ADDRESS` | Server URL | `http://192.168.1.10:8080` |
 | `TOKEN` | Client auth token (must match server) | `your_token_here` |
+
+---
 
 ## Build Requirements
 
