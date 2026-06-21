@@ -1,0 +1,580 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Guardian — Process control for Windows fleets</title>
+  <meta name="description" content="Guardian blocks or whitelists applications on every Windows machine you run — managed from one Android app and a single lightweight Go server." />
+  <link rel="icon" type="image/png" href="assets/guardian-mark.png" />
+
+  <!-- Open Graph -->
+  <meta property="og:title" content="Guardian — Process control for Windows fleets" />
+  <meta property="og:description" content="Block or whitelist apps across every Windows machine, manage them from your phone, coordinated through one lightweight server." />
+  <meta property="og:image" content="assets/guardian-banner.png" />
+  <meta property="og:type" content="website" />
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
+
+  <!-- Tailwind -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            void:    '#07090A',
+            panel:   '#0E1412',
+            raised:  '#121A17',
+            line:    '#1E2A24',
+            'line-soft': '#16201B',
+            guardian:'#4ADE80',
+            signal:  '#6EFF9B',
+            danger:  '#FF5C6C',
+            amber:   '#F5C451',
+            ink:     '#E6F0EA',
+            muted:   '#8FA39A',
+            dim:     '#5E6F67',
+          },
+          fontFamily: {
+            display: ['"Space Grotesk"', 'system-ui', 'sans-serif'],
+            sans:    ['Inter', 'system-ui', 'sans-serif'],
+            mono:    ['"JetBrains Mono"', 'ui-monospace', 'monospace'],
+          },
+          maxWidth: { shell: '1160px' },
+        },
+      },
+    };
+  </script>
+
+  <style>
+    :root { color-scheme: dark; }
+    html { -webkit-text-size-adjust: 100%; }
+    body {
+      background-color: #07090A;
+      background-image:
+        radial-gradient(70% 55% at 50% -12%, rgba(74,222,128,0.12), transparent 72%),
+        linear-gradient(to right, rgba(74,222,128,0.035) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(74,222,128,0.035) 1px, transparent 1px);
+      background-size: 100% 100%, 52px 52px, 52px 52px;
+      background-attachment: fixed;
+    }
+
+    /* Eyebrow / system label */
+    .kicker {
+      font-family: '"JetBrains Mono"', ui-monospace, monospace;
+      font-size: 0.72rem;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      color: #4ADE80;
+    }
+    .kicker .slash { color: #5E6F67; }
+
+    /* Section heading scale */
+    .h-section { font-family: '"Space Grotesk"', sans-serif; font-weight: 700; letter-spacing: -0.02em; line-height: 1.05; }
+
+    /* Glow text accent */
+    .glow { text-shadow: 0 0 24px rgba(74,222,128,0.45); }
+
+    /* Buttons */
+    .btn { font-family: '"JetBrains Mono"', monospace; font-weight: 600; letter-spacing: 0.02em; transition: transform .18s ease, box-shadow .25s ease, background-color .2s ease, border-color .2s ease; }
+    .btn-primary { background:#4ADE80; color:#07090A; box-shadow: 0 0 0 1px rgba(110,255,155,.25), 0 12px 36px -14px rgba(74,222,128,.7); }
+    .btn-primary:hover { background:#6EFF9B; transform: translateY(-2px); box-shadow: 0 0 0 1px rgba(110,255,155,.5), 0 18px 44px -14px rgba(74,222,128,.9); }
+    .btn-ghost { border:1px solid #1E2A24; color:#E6F0EA; background: rgba(18,26,23,.4); }
+    .btn-ghost:hover { border-color:#4ADE80; color:#6EFF9B; transform: translateY(-2px); }
+
+    /* Cards */
+    .card { background: linear-gradient(180deg, rgba(18,26,23,.7), rgba(14,20,18,.5)); border:1px solid #16201B; transition: border-color .25s ease, transform .25s ease, box-shadow .25s ease; }
+    .card:hover { border-color: rgba(74,222,128,.5); transform: translateY(-3px); box-shadow: 0 22px 48px -28px rgba(74,222,128,.5); }
+
+    /* Console window */
+    .console { background: #090D0B; border:1px solid #1E2A24; box-shadow: 0 40px 90px -40px rgba(0,0,0,.9), 0 0 0 1px rgba(74,222,128,.05) inset; }
+    .console-bar { background: linear-gradient(180deg, #0E1412, #0A0F0D); border-bottom:1px solid #16201B; }
+    .scan { position:absolute; inset:0; pointer-events:none; background:repeating-linear-gradient(to bottom, rgba(110,255,155,.025) 0 1px, transparent 1px 3px); mix-blend-mode: screen; }
+
+    /* Tile status dot pulse */
+    .dot { width:7px; height:7px; border-radius:9999px; }
+    @keyframes pulse-ok { 0%,100%{ box-shadow:0 0 0 0 rgba(74,222,128,.55);} 50%{ box-shadow:0 0 0 4px rgba(74,222,128,0);} }
+    @keyframes alarm { 0%,100%{ background:#FF5C6C; box-shadow:0 0 0 0 rgba(255,92,108,.6);} 50%{ background:#FF5C6C; box-shadow:0 0 0 5px rgba(255,92,108,0);} }
+    @keyframes flash-row { 0%{ background: rgba(255,92,108,.22);} 100%{ background: transparent; } }
+
+    .dot-ok { background:#4ADE80; animation: pulse-ok 2.6s ease-in-out infinite; }
+    .tile-alarm .dot { animation: alarm 1s ease-in-out infinite; }
+    .tile-alarm { border-color: rgba(255,92,108,.55) !important; }
+
+    /* Reveal on load / scroll */
+    .reveal { opacity:0; transform: translateY(14px); }
+    .reveal.in { opacity:1; transform:none; transition: opacity .7s cubic-bezier(.2,.7,.2,1), transform .7s cubic-bezier(.2,.7,.2,1); }
+
+    .pixel-banner { image-rendering: pixelated; filter: drop-shadow(0 0 20px rgba(74,222,128,.35)); }
+
+    /* link underline animation */
+    .nav-link { position:relative; }
+    .nav-link::after { content:''; position:absolute; left:0; bottom:-4px; height:1px; width:0; background:#4ADE80; transition: width .25s ease; }
+    .nav-link:hover::after { width:100%; }
+
+    a:focus-visible, button:focus-visible { outline:2px solid #6EFF9B; outline-offset:3px; border-radius:4px; }
+
+    @media (prefers-reduced-motion: reduce) {
+      .reveal { opacity:1 !important; transform:none !important; transition:none !important; }
+      .dot-ok, .tile-alarm .dot { animation:none !important; }
+      html { scroll-behavior:auto; }
+    }
+  </style>
+</head>
+
+<body class="font-sans text-ink antialiased selection:bg-guardian selection:text-void">
+
+  <!-- ============ NAV ============ -->
+  <header class="sticky top-0 z-50 border-b border-line-soft/80 bg-void/70 backdrop-blur-md">
+    <nav class="mx-auto flex max-w-shell items-center justify-between px-5 py-3.5 sm:px-8">
+      <a href="#top" class="flex items-center gap-2.5" aria-label="Guardian home">
+        <img src="assets/guardian-mark.png" alt="" width="30" height="30" class="h-7 w-7" />
+        <span class="font-mono text-sm font-700 tracking-[0.28em] text-ink">GUARDIAN</span>
+      </a>
+
+      <div class="hidden items-center gap-8 md:flex">
+        <a href="#features" class="nav-link font-mono text-[0.8rem] text-muted hover:text-ink">Features</a>
+        <a href="#how" class="nav-link font-mono text-[0.8rem] text-muted hover:text-ink">How it works</a>
+        <a href="#modes" class="nav-link font-mono text-[0.8rem] text-muted hover:text-ink">Modes</a>
+        <a href="#deploy" class="nav-link font-mono text-[0.8rem] text-muted hover:text-ink">Deploy</a>
+        <a href="https://github.com" target="_blank" rel="noopener" class="btn btn-ghost rounded-lg px-4 py-2 text-[0.8rem]">GitHub ↗</a>
+      </div>
+
+      <button id="menuBtn" class="md:hidden text-ink" aria-label="Open menu" aria-expanded="false">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+      </button>
+    </nav>
+
+    <div id="mobileMenu" class="hidden border-t border-line-soft bg-void/95 px-5 py-4 md:hidden">
+      <div class="flex flex-col gap-1 font-mono text-sm">
+        <a href="#features" class="rounded-lg px-3 py-2.5 text-muted hover:bg-raised hover:text-ink">Features</a>
+        <a href="#how" class="rounded-lg px-3 py-2.5 text-muted hover:bg-raised hover:text-ink">How it works</a>
+        <a href="#modes" class="rounded-lg px-3 py-2.5 text-muted hover:bg-raised hover:text-ink">Modes</a>
+        <a href="#deploy" class="rounded-lg px-3 py-2.5 text-muted hover:bg-raised hover:text-ink">Deploy</a>
+        <a href="https://github.com" target="_blank" rel="noopener" class="rounded-lg px-3 py-2.5 text-guardian hover:bg-raised">GitHub ↗</a>
+      </div>
+    </div>
+  </header>
+
+  <main id="top">
+
+    <!-- ============ HERO ============ -->
+    <section class="mx-auto max-w-shell px-5 pb-20 pt-16 sm:px-8 sm:pt-24">
+      <div class="grid items-center gap-14 lg:grid-cols-[1.05fr_1fr]">
+
+        <!-- Left: message -->
+        <div>
+          <div class="reveal flex items-center gap-3" style="animation-delay:0ms">
+            <img src="assets/guardian-banner.png" alt="Guardian" class="pixel-banner h-9 w-auto sm:h-11" />
+          </div>
+
+          <p class="reveal kicker mt-6"><span class="slash">//</span> Process control for Windows fleets</p>
+
+          <h1 class="reveal h-section mt-4 text-[2.6rem] leading-[1.04] sm:text-6xl">
+            Control every process<br class="hidden sm:block" />
+            <span class="text-guardian glow">across your fleet.</span>
+          </h1>
+
+          <p class="reveal mt-6 max-w-xl text-[1.05rem] leading-relaxed text-muted">
+            Guardian blocks or whitelists applications on every Windows machine you run —
+            managed from one Android app and a single lightweight server. Set a policy once;
+            agents enforce it everywhere, every second.
+          </p>
+
+          <div class="reveal mt-9 flex flex-wrap items-center gap-3">
+            <a href="#deploy" class="btn btn-primary rounded-xl px-6 py-3.5 text-sm">Get started</a>
+            <a href="https://github.com" target="_blank" rel="noopener" class="btn btn-ghost rounded-xl px-6 py-3.5 text-sm">View on GitHub ↗</a>
+          </div>
+
+          <div class="reveal mt-10 flex flex-wrap items-center gap-x-6 gap-y-3 font-mono text-[0.8rem] text-dim">
+            <span class="flex items-center gap-2"><span class="dot dot-ok"></span> Block apps</span>
+            <span class="flex items-center gap-2"><span class="dot bg-amber"></span> Lock down PCs</span>
+            <span class="flex items-center gap-2"><span class="dot bg-danger"></span> Power off remotely</span>
+          </div>
+        </div>
+
+        <!-- Right: signature — live fleet console -->
+        <div class="reveal" style="animation-delay:120ms">
+          <div class="console relative overflow-hidden rounded-2xl">
+            <div class="scan"></div>
+
+            <!-- title bar -->
+            <div class="console-bar flex items-center gap-2 px-4 py-3">
+              <span class="h-3 w-3 rounded-full bg-danger/80"></span>
+              <span class="h-3 w-3 rounded-full bg-amber/80"></span>
+              <span class="h-3 w-3 rounded-full bg-guardian/80"></span>
+              <span class="ml-3 font-mono text-xs text-dim">guardian://fleet</span>
+              <span class="ml-auto font-mono text-[0.7rem] text-muted">mode <span class="text-danger">blacklist</span></span>
+            </div>
+
+            <div class="relative p-4 sm:p-5">
+              <div class="mb-3 flex items-center justify-between font-mono text-[0.7rem] uppercase tracking-widest text-dim">
+                <span>Fleet · <span id="onlineCount" class="text-guardian">4</span> online</span>
+                <span>last sync 1s</span>
+              </div>
+
+              <!-- machine tiles -->
+              <div id="fleetGrid" class="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+                <!-- tiles injected by JS -->
+              </div>
+
+              <!-- log stream -->
+              <div class="mt-4 border-t border-line-soft pt-3">
+                <div class="mb-2 font-mono text-[0.7rem] uppercase tracking-widest text-dim">enforcement log</div>
+                <div id="log" class="h-[150px] space-y-1.5 overflow-hidden font-mono text-[0.78rem] leading-relaxed"></div>
+              </div>
+            </div>
+          </div>
+          <p class="mt-3 text-center font-mono text-[0.7rem] text-dim">Live preview · agents kill blocked processes in &lt;1s</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ FEATURES ============ -->
+    <section id="features" class="mx-auto max-w-shell px-5 py-20 sm:px-8">
+      <div class="reveal mb-12 max-w-2xl">
+        <p class="kicker"><span class="slash">//</span> Capabilities</p>
+        <h2 class="h-section mt-3 text-3xl sm:text-[2.6rem]">Everything you need to lock down a fleet.</h2>
+      </div>
+
+      <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <!-- 1 -->
+        <article class="reveal card rounded-2xl p-6">
+          <div class="mb-5 flex h-11 w-11 items-center justify-center rounded-xl border border-line bg-void text-guardian">
+            <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 5-3.5 7.5-8 9-4.5-1.5-8-4-8-9V6l8-3z"/><path d="M9 12l2 2 4-4"/></svg>
+          </div>
+          <h3 class="font-display text-lg font-600">Allowlist or blocklist</h3>
+          <p class="mt-2 text-sm leading-relaxed text-muted">Run <span class="font-mono text-ink">blacklist</span> to kill named apps, or <span class="font-mono text-ink">whitelist</span> to kill everything you didn't approve. System processes are always spared.</p>
+        </article>
+
+        <!-- 2 -->
+        <article class="reveal card rounded-2xl p-6">
+          <div class="mb-5 flex h-11 w-11 items-center justify-center rounded-xl border border-line bg-void text-guardian">
+            <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"><rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18.5h2"/></svg>
+          </div>
+          <h3 class="font-display text-lg font-600">Manage from your phone</h3>
+          <p class="mt-2 text-sm leading-relaxed text-muted">The Guardian Android app is your console: add blocked apps, lock machines, and switch modes from anywhere — no desktop login required.</p>
+        </article>
+
+        <!-- 3 -->
+        <article class="reveal card rounded-2xl p-6">
+          <div class="mb-5 flex h-11 w-11 items-center justify-center rounded-xl border border-line bg-void text-guardian">
+            <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"><path d="M13 2L4 14h7l-1 8 9-12h-7l1-8z"/></svg>
+          </div>
+          <h3 class="font-display text-lg font-600">Sub-second enforcement</h3>
+          <p class="mt-2 text-sm leading-relaxed text-muted">Agents scan running processes every second and terminate anything that isn't allowed — before a user gets far with it.</p>
+        </article>
+
+        <!-- 4 -->
+        <article class="reveal card rounded-2xl p-6">
+          <div class="mb-5 flex h-11 w-11 items-center justify-center rounded-xl border border-line bg-void text-danger">
+            <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"><path d="M12 3v9"/><path d="M6.5 7a8 8 0 1 0 11 0"/></svg>
+          </div>
+          <h3 class="font-display text-lg font-600">Remote power-off</h3>
+          <p class="mt-2 text-sm leading-relaxed text-muted">Send one command to force-close apps and shut down every connected machine at once — useful at closing time or in an incident.</p>
+        </article>
+
+        <!-- 5 -->
+        <article class="reveal card rounded-2xl p-6">
+          <div class="mb-5 flex h-11 w-11 items-center justify-center rounded-xl border border-line bg-void text-guardian">
+            <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"><rect x="3" y="4" width="8" height="7" rx="1.5"/><rect x="13" y="4" width="8" height="7" rx="1.5"/><rect x="3" y="13" width="8" height="7" rx="1.5"/><rect x="13" y="13" width="8" height="7" rx="1.5"/></svg>
+          </div>
+          <h3 class="font-display text-lg font-600">Per-machine control</h3>
+          <p class="mt-2 text-sm leading-relaxed text-muted">Register each computer, see when it was last online, and block or release machines one by one — or all of them together.</p>
+        </article>
+
+        <!-- 6 -->
+        <article class="reveal card rounded-2xl p-6">
+          <div class="mb-5 flex h-11 w-11 items-center justify-center rounded-xl border border-line bg-void text-guardian">
+            <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"><path d="M12 2l8 4v6c0 4-3 7-8 10-5-3-8-6-8-10V6l8-4z"/></svg>
+          </div>
+          <h3 class="font-display text-lg font-600">Lightweight by design</h3>
+          <p class="mt-2 text-sm leading-relaxed text-muted">A single Go binary with embedded SQLite — no CGO, no database server. Run it directly, as a systemd service, or in Docker.</p>
+        </article>
+      </div>
+    </section>
+
+    <!-- ============ HOW IT WORKS ============ -->
+    <section id="how" class="mx-auto max-w-shell px-5 py-20 sm:px-8">
+      <div class="reveal mb-12 max-w-2xl">
+        <p class="kicker"><span class="slash">//</span> Topology</p>
+        <h2 class="h-section mt-3 text-3xl sm:text-[2.6rem]">Three parts, two tokens, one source of truth.</h2>
+        <p class="mt-4 text-muted">You set policy in the app. The server stores it. Agents sync and enforce. Each link is authenticated with its own bearer token.</p>
+      </div>
+
+      <div class="grid items-stretch gap-3 lg:grid-cols-[1fr_auto_1fr_auto_1fr]">
+        <!-- Mobile -->
+        <div class="reveal card rounded-2xl p-6">
+          <div class="flex items-center justify-between">
+            <span class="font-mono text-[0.7rem] uppercase tracking-widest text-guardian">Mobile</span>
+            <span class="rounded-md border border-line px-2 py-0.5 font-mono text-[0.65rem] text-muted">admin token</span>
+          </div>
+          <h3 class="mt-3 font-display text-xl font-600">Guardian app</h3>
+          <p class="mt-2 text-sm leading-relaxed text-muted">Android control panel for blocked apps, modes, computers and power.</p>
+        </div>
+
+        <div class="hidden items-center justify-center lg:flex" aria-hidden="true">
+          <span class="font-mono text-2xl text-dim">→</span>
+        </div>
+
+        <!-- Server -->
+        <div class="reveal card rounded-2xl border-guardian/30 p-6">
+          <div class="flex items-center justify-between">
+            <span class="font-mono text-[0.7rem] uppercase tracking-widest text-guardian">Server</span>
+            <span class="rounded-md border border-line px-2 py-0.5 font-mono text-[0.65rem] text-muted">Linux · SQLite</span>
+          </div>
+          <h3 class="mt-3 font-display text-xl font-600">Go backend</h3>
+          <p class="mt-2 text-sm leading-relaxed text-muted">REST API holds apps, modes and registrations, with in-memory caches in front.</p>
+        </div>
+
+        <div class="hidden items-center justify-center lg:flex" aria-hidden="true">
+          <span class="font-mono text-2xl text-dim">←</span>
+        </div>
+
+        <!-- Agent -->
+        <div class="reveal card rounded-2xl p-6">
+          <div class="flex items-center justify-between">
+            <span class="font-mono text-[0.7rem] uppercase tracking-widest text-guardian">Agent</span>
+            <span class="rounded-md border border-line px-2 py-0.5 font-mono text-[0.65rem] text-muted">client token</span>
+          </div>
+          <h3 class="mt-3 font-display text-xl font-600">Windows service</h3>
+          <p class="mt-2 text-sm leading-relaxed text-muted">Polls for the latest policy and terminates processes that break it.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ MODES ============ -->
+    <section id="modes" class="mx-auto max-w-shell px-5 py-20 sm:px-8">
+      <div class="reveal mb-12 max-w-2xl">
+        <p class="kicker"><span class="slash">//</span> Enforcement modes</p>
+        <h2 class="h-section mt-3 text-3xl sm:text-[2.6rem]">Pick how strict each machine should be.</h2>
+      </div>
+
+      <div class="grid gap-4 md:grid-cols-3">
+        <div class="reveal card rounded-2xl p-6">
+          <div class="flex items-center gap-2.5">
+            <span class="dot bg-danger"></span>
+            <span class="font-mono text-sm font-700 text-ink">blacklist</span>
+          </div>
+          <p class="mt-4 text-sm leading-relaxed text-muted">Only processes on the block list are killed. Everything else runs freely. Good for banning specific apps.</p>
+        </div>
+
+        <div class="reveal card rounded-2xl p-6">
+          <div class="flex items-center gap-2.5">
+            <span class="dot bg-amber"></span>
+            <span class="font-mono text-sm font-700 text-ink">whitelist</span>
+          </div>
+          <p class="mt-4 text-sm leading-relaxed text-muted">Everything <em class="not-italic text-ink">not</em> on the allow list is killed — system processes excluded. Lockdown for kiosks and classrooms.</p>
+        </div>
+
+        <div class="reveal card rounded-2xl p-6">
+          <div class="flex items-center gap-2.5">
+            <span class="dot bg-guardian"></span>
+            <span class="font-mono text-sm font-700 text-ink">free</span>
+          </div>
+          <p class="mt-4 text-sm leading-relaxed text-muted">Nothing is killed. Returned automatically when the server is disabled or a machine is unblocked.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ DEPLOY ============ -->
+    <section id="deploy" class="mx-auto max-w-shell px-5 py-20 sm:px-8">
+      <div class="reveal mb-12 max-w-2xl">
+        <p class="kicker"><span class="slash">//</span> Deploy</p>
+        <h2 class="h-section mt-3 text-3xl sm:text-[2.6rem]">Up and running in three steps.</h2>
+        <p class="mt-4 text-muted">Pre-built binaries ship in the <span class="font-mono text-ink">dist/</span> directory. Copy, configure, go.</p>
+      </div>
+
+      <div class="grid gap-4 lg:grid-cols-3">
+        <!-- step 1 -->
+        <article class="reveal card rounded-2xl p-6">
+          <div class="flex items-baseline justify-between">
+            <span class="font-mono text-3xl font-700 text-guardian/40">01</span>
+            <span class="font-mono text-[0.7rem] uppercase tracking-widest text-dim">Linux</span>
+          </div>
+          <h3 class="mt-4 font-display text-lg font-600">Run the server</h3>
+          <p class="mt-2 text-sm leading-relaxed text-muted">Set your <span class="font-mono text-ink">TOKEN</span> and <span class="font-mono text-ink">ADMIN_TOKEN</span>, then start it.</p>
+          <pre class="mt-4 overflow-x-auto rounded-lg border border-line-soft bg-void p-3 font-mono text-[0.78rem] text-guardian"><code>cp server.env .env
+docker compose up -d</code></pre>
+        </article>
+
+        <!-- step 2 -->
+        <article class="reveal card rounded-2xl p-6">
+          <div class="flex items-baseline justify-between">
+            <span class="font-mono text-3xl font-700 text-guardian/40">02</span>
+            <span class="font-mono text-[0.7rem] uppercase tracking-widest text-dim">Windows</span>
+          </div>
+          <h3 class="mt-4 font-display text-lg font-600">Install agents</h3>
+          <p class="mt-2 text-sm leading-relaxed text-muted">Run the installer on each PC and give it an identity number.</p>
+          <pre class="mt-4 overflow-x-auto rounded-lg border border-line-soft bg-void p-3 font-mono text-[0.78rem] text-guardian"><code>Install-Guardian.bat
+&gt; IDENTITY: 04</code></pre>
+        </article>
+
+        <!-- step 3 -->
+        <article class="reveal card rounded-2xl p-6">
+          <div class="flex items-baseline justify-between">
+            <span class="font-mono text-3xl font-700 text-guardian/40">03</span>
+            <span class="font-mono text-[0.7rem] uppercase tracking-widest text-dim">Android</span>
+          </div>
+          <h3 class="mt-4 font-display text-lg font-600">Open the app</h3>
+          <p class="mt-2 text-sm leading-relaxed text-muted">Install the APK, add your server address and admin token, start enforcing.</p>
+          <pre class="mt-4 overflow-x-auto rounded-lg border border-line-soft bg-void p-3 font-mono text-[0.78rem] text-guardian"><code>guardian.apk
+Settings → server + token</code></pre>
+        </article>
+      </div>
+
+      <!-- final CTA -->
+      <div class="reveal mt-12 overflow-hidden rounded-2xl border border-line bg-gradient-to-br from-raised to-void p-8 text-center sm:p-12">
+        <h3 class="h-section text-2xl sm:text-3xl">Ready to take the fleet?</h3>
+        <p class="mx-auto mt-3 max-w-md text-muted">Grab the binaries, wire up three components, and you're enforcing policy across every machine.</p>
+        <div class="mt-7 flex flex-wrap justify-center gap-3">
+          <a href="https://github.com" target="_blank" rel="noopener" class="btn btn-primary rounded-xl px-6 py-3.5 text-sm">Get Guardian ↗</a>
+          <a href="#top" class="btn btn-ghost rounded-xl px-6 py-3.5 text-sm">Back to top</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ============ FOOTER ============ -->
+  <footer class="border-t border-line-soft">
+    <div class="mx-auto flex max-w-shell flex-col gap-6 px-5 py-10 sm:flex-row sm:items-center sm:justify-between sm:px-8">
+      <div class="flex items-center gap-2.5">
+        <img src="assets/guardian-mark.png" alt="" width="26" height="26" class="h-6 w-6" />
+        <span class="font-mono text-sm tracking-[0.24em] text-muted">GUARDIAN</span>
+      </div>
+      <div class="flex flex-wrap items-center gap-x-6 gap-y-2 font-mono text-[0.78rem] text-dim">
+        <span>Server · Go</span>
+        <span>Agent · Windows</span>
+        <span>Mobile · Flutter</span>
+        <a href="https://github.com" target="_blank" rel="noopener" class="text-muted hover:text-guardian">GitHub ↗</a>
+      </div>
+      <p class="font-mono text-[0.72rem] text-dim">MIT Licensed · © 2026</p>
+    </div>
+  </footer>
+
+  <script>
+    // ---- Mobile menu ----
+    const menuBtn = document.getElementById('menuBtn');
+    const mobileMenu = document.getElementById('mobileMenu');
+    menuBtn.addEventListener('click', () => {
+      const open = mobileMenu.classList.toggle('hidden') === false;
+      menuBtn.setAttribute('aria-expanded', String(open));
+    });
+    mobileMenu.querySelectorAll('a').forEach(a => a.addEventListener('click', () => {
+      mobileMenu.classList.add('hidden');
+      menuBtn.setAttribute('aria-expanded', 'false');
+    }));
+
+    // ---- Reveal on load + scroll ----
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const reveals = document.querySelectorAll('.reveal');
+    if (reduce) {
+      reveals.forEach(el => el.classList.add('in'));
+    } else {
+      // staged hero reveal
+      const io = new IntersectionObserver((entries) => {
+        entries.forEach((e, i) => {
+          if (e.isIntersecting) {
+            const el = e.target;
+            setTimeout(() => el.classList.add('in'), 0);
+            io.unobserve(el);
+          }
+        });
+      }, { threshold: 0.12 });
+      reveals.forEach((el, i) => {
+        // initial hero batch animates with a small stagger
+        io.observe(el);
+      });
+    }
+
+    // ---- Live fleet console ----
+    const machines = [
+      { id: 'WS-01', state: 'ok' },
+      { id: 'WS-02', state: 'ok' },
+      { id: 'WS-03', state: 'ok' },
+      { id: 'WS-04', state: 'ok' },
+    ];
+    const grid = document.getElementById('fleetGrid');
+    grid.innerHTML = machines.map(m => `
+      <div data-id="${m.id}" class="tile rounded-lg border border-line-soft bg-void/60 p-2.5">
+        <div class="flex items-center justify-between">
+          <span class="font-mono text-[0.72rem] text-ink">${m.id}</span>
+          <span class="dot dot-ok"></span>
+        </div>
+        <div class="mt-2 font-mono text-[0.62rem] text-dim">procs <span class="pc text-muted">—</span></div>
+      </div>
+    `).join('');
+
+    const log = document.getElementById('log');
+    const apps = ['chrome.exe', 'steam.exe', 'discord.exe', 'game.exe', 'torrent.exe', 'tiktok.exe'];
+    const okApps = ['explorer.exe', 'svchost.exe', 'notepad.exe'];
+
+    function line(kind, id, text) {
+      const colors = { sync: 'text-dim', launch: 'text-amber', kill: 'text-danger', ok: 'text-guardian' };
+      const marks = { sync: '>', launch: '+', kill: '!', ok: '>' };
+      const el = document.createElement('div');
+      el.className = 'flex items-center gap-2 ' + (colors[kind] || 'text-muted');
+      el.innerHTML = `<span class="text-dim">${marks[kind]}</span><span class="text-muted">${id}</span> ${text}`;
+      el.style.opacity = '0';
+      el.style.transform = 'translateY(4px)';
+      log.appendChild(el);
+      requestAnimationFrame(() => {
+        el.style.transition = 'opacity .35s ease, transform .35s ease';
+        el.style.opacity = '1';
+        el.style.transform = 'none';
+      });
+      while (log.childElementCount > 6) log.removeChild(log.firstChild);
+    }
+
+    function setProcCounts() {
+      machines.forEach(m => {
+        const tile = grid.querySelector(`[data-id="${m.id}"] .pc`);
+        if (tile) tile.textContent = String(40 + Math.floor(Math.random() * 60));
+      });
+    }
+
+    function rand(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+
+    function killSequence() {
+      const m = rand(machines);
+      const tile = grid.querySelector(`[data-id="${m.id}"]`);
+      const app = rand(apps);
+      line('launch', m.id, `launch <span class="text-ink">${app}</span>`);
+      setTimeout(() => {
+        if (tile) tile.classList.add('tile-alarm');
+        line('kill', m.id, `kill <span class="text-ink">${app}</span> <span class="text-danger">[TERMINATED]</span>`);
+      }, 650);
+      setTimeout(() => { if (tile) tile.classList.remove('tile-alarm'); }, 1900);
+    }
+
+    function syncLine() {
+      const m = rand(machines);
+      line('sync', m.id, `sync ok · 12 rules`);
+    }
+
+    if (!reduce) {
+      setProcCounts();
+      // seed
+      line('ok', 'WS-01', 'sync ok · 12 rules');
+      line('ok', 'WS-03', 'sync ok · 12 rules');
+      let beat = 0;
+      setInterval(() => {
+        beat++;
+        if (beat % 3 === 0) killSequence();
+        else syncLine();
+        if (beat % 4 === 0) setProcCounts();
+      }, 1800);
+    } else {
+      // static end-state for reduced motion
+      machines.forEach(m => { const t = grid.querySelector(`[data-id="${m.id}"] .pc`); if (t) t.textContent = '57'; });
+      line('ok', 'WS-01', 'sync ok · 12 rules');
+      line('launch', 'WS-02', 'launch <span class="text-ink">game.exe</span>');
+      line('kill', 'WS-02', 'kill <span class="text-ink">game.exe</span> <span class="text-danger">[TERMINATED]</span>');
+      line('ok', 'WS-04', 'sync ok · 12 rules');
+    }
+  </script>
+</body>
+</html>
