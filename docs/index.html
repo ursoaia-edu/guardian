@@ -94,6 +94,18 @@
     .console-bar { background: linear-gradient(180deg, #0E1412, #0A0F0D); border-bottom:1px solid #16201B; }
     .scan { position:absolute; inset:0; pointer-events:none; background:repeating-linear-gradient(to bottom, rgba(110,255,155,.025) 0 1px, transparent 1px 3px); mix-blend-mode: screen; }
 
+    /* Language select */
+    .lang-select {
+      font-family: '"JetBrains Mono"', monospace; font-size: 0.72rem; letter-spacing: 0.08em;
+      color:#8FA39A; background-color:#0E1412; border:1px solid #1E2A24; border-radius:8px;
+      padding:0.42rem 1.7rem 0.42rem 0.65rem; appearance:none; -webkit-appearance:none;
+      background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238FA39A' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+      background-repeat:no-repeat; background-position:right 0.5rem center; background-size:0.7rem;
+      cursor:pointer; transition: border-color .2s ease, color .2s ease;
+    }
+    .lang-select:hover { border-color:#4ADE80; color:#E6F0EA; }
+    .lang-select option { background:#0E1412; color:#E6F0EA; }
+
     /* Tile status dot pulse */
     .dot { width:7px; height:7px; border-radius:9999px; }
     @keyframes pulse-ok { 0%,100%{ box-shadow:0 0 0 0 rgba(74,222,128,.55);} 50%{ box-shadow:0 0 0 4px rgba(74,222,128,0);} }
@@ -115,7 +127,7 @@
     .nav-link::after { content:''; position:absolute; left:0; bottom:-4px; height:1px; width:0; background:#4ADE80; transition: width .25s ease; }
     .nav-link:hover::after { width:100%; }
 
-    a:focus-visible, button:focus-visible { outline:2px solid #6EFF9B; outline-offset:3px; border-radius:4px; }
+    a:focus-visible, button:focus-visible, select:focus-visible { outline:2px solid #6EFF9B; outline-offset:3px; border-radius:4px; }
 
     @media (prefers-reduced-motion: reduce) {
       .reveal { opacity:1 !important; transform:none !important; transition:none !important; }
@@ -135,25 +147,35 @@
         <span class="font-mono text-sm font-700 tracking-[0.28em] text-ink">GUARDIAN</span>
       </a>
 
-      <div class="hidden items-center gap-8 md:flex">
-        <a href="#features" class="nav-link font-mono text-[0.8rem] text-muted hover:text-ink">Features</a>
-        <a href="#how" class="nav-link font-mono text-[0.8rem] text-muted hover:text-ink">How it works</a>
-        <a href="#modes" class="nav-link font-mono text-[0.8rem] text-muted hover:text-ink">Modes</a>
-        <a href="#deploy" class="nav-link font-mono text-[0.8rem] text-muted hover:text-ink">Deploy</a>
-        <a href="https://github.com/ursoaia-edu/guardian" target="_blank" rel="noopener" class="btn btn-ghost rounded-lg px-4 py-2 text-[0.8rem]">GitHub ↗</a>
-      </div>
+      <div class="flex items-center gap-3">
+        <div class="hidden items-center gap-8 md:flex">
+          <a href="#features" class="nav-link font-mono text-[0.8rem] text-muted hover:text-ink" data-i18n="nav_features">Features</a>
+          <a href="#how" class="nav-link font-mono text-[0.8rem] text-muted hover:text-ink" data-i18n="nav_how">How it works</a>
+          <a href="#modes" class="nav-link font-mono text-[0.8rem] text-muted hover:text-ink" data-i18n="nav_modes">Modes</a>
+          <a href="#deploy" class="nav-link font-mono text-[0.8rem] text-muted hover:text-ink" data-i18n="nav_deploy">Deploy</a>
+          <a href="https://github.com/ursoaia-edu/guardian" target="_blank" rel="noopener" class="btn btn-ghost rounded-lg px-4 py-2 text-[0.8rem]">GitHub ↗</a>
+        </div>
 
-      <button id="menuBtn" class="md:hidden text-ink" aria-label="Open menu" aria-expanded="false">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
-      </button>
+        <select id="langSelect" class="lang-select" aria-label="Language">
+          <option value="en">EN</option>
+          <option value="ro">RO</option>
+          <option value="ru">RU</option>
+          <option value="es">ES</option>
+          <option value="de">DE</option>
+        </select>
+
+        <button id="menuBtn" class="md:hidden text-ink" aria-label="Open menu" aria-expanded="false">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+        </button>
+      </div>
     </nav>
 
     <div id="mobileMenu" class="hidden border-t border-line-soft bg-void/95 px-5 py-4 md:hidden">
       <div class="flex flex-col gap-1 font-mono text-sm">
-        <a href="#features" class="rounded-lg px-3 py-2.5 text-muted hover:bg-raised hover:text-ink">Features</a>
-        <a href="#how" class="rounded-lg px-3 py-2.5 text-muted hover:bg-raised hover:text-ink">How it works</a>
-        <a href="#modes" class="rounded-lg px-3 py-2.5 text-muted hover:bg-raised hover:text-ink">Modes</a>
-        <a href="#deploy" class="rounded-lg px-3 py-2.5 text-muted hover:bg-raised hover:text-ink">Deploy</a>
+        <a href="#features" class="rounded-lg px-3 py-2.5 text-muted hover:bg-raised hover:text-ink" data-i18n="nav_features">Features</a>
+        <a href="#how" class="rounded-lg px-3 py-2.5 text-muted hover:bg-raised hover:text-ink" data-i18n="nav_how">How it works</a>
+        <a href="#modes" class="rounded-lg px-3 py-2.5 text-muted hover:bg-raised hover:text-ink" data-i18n="nav_modes">Modes</a>
+        <a href="#deploy" class="rounded-lg px-3 py-2.5 text-muted hover:bg-raised hover:text-ink" data-i18n="nav_deploy">Deploy</a>
         <a href="https://github.com/ursoaia-edu/guardian" target="_blank" rel="noopener" class="rounded-lg px-3 py-2.5 text-guardian hover:bg-raised">GitHub ↗</a>
       </div>
     </div>
@@ -167,37 +189,37 @@
 
         <!-- Left: message -->
         <div>
-          <div class="reveal flex items-center gap-3" style="animation-delay:0ms">
+          <div class="reveal flex items-center gap-3">
             <img src="assets/guardian-banner.png" alt="Guardian" class="pixel-banner h-9 w-auto sm:h-11" />
           </div>
 
-          <p class="reveal kicker mt-6"><span class="slash">//</span> Process control for Windows fleets</p>
+          <p class="reveal kicker mt-6"><span class="slash">//</span> <span data-i18n="hero_kicker">Process control for Windows fleets</span></p>
 
-          <h1 class="reveal h-section mt-4 text-[2.6rem] leading-[1.04] sm:text-6xl">
+          <h1 class="reveal h-section mt-4 text-[2.6rem] leading-[1.04] sm:text-6xl" data-i18n="hero_h1">
             Control every process<br class="hidden sm:block" />
             <span class="text-guardian glow">across your fleet.</span>
           </h1>
 
-          <p class="reveal mt-6 max-w-xl text-[1.05rem] leading-relaxed text-muted">
+          <p class="reveal mt-6 max-w-xl text-[1.05rem] leading-relaxed text-muted" data-i18n="hero_sub">
             Guardian blocks or whitelists applications on every Windows machine you run —
             managed from one Android app and a single lightweight server. Set a policy once;
             agents enforce it everywhere, every second.
           </p>
 
           <div class="reveal mt-9 flex flex-wrap items-center gap-3">
-            <a href="#deploy" class="btn btn-primary rounded-xl px-6 py-3.5 text-sm">Get started</a>
-            <a href="https://github.com/ursoaia-edu/guardian" target="_blank" rel="noopener" class="btn btn-ghost rounded-xl px-6 py-3.5 text-sm">View on GitHub ↗</a>
+            <a href="#deploy" class="btn btn-primary rounded-xl px-6 py-3.5 text-sm" data-i18n="cta_get_started">Get started</a>
+            <a href="https://github.com/ursoaia-edu/guardian" target="_blank" rel="noopener" class="btn btn-ghost rounded-xl px-6 py-3.5 text-sm" data-i18n="cta_view_github">View on GitHub ↗</a>
           </div>
 
           <div class="reveal mt-10 flex flex-wrap items-center gap-x-6 gap-y-3 font-mono text-[0.8rem] text-dim">
-            <span class="flex items-center gap-2"><span class="dot dot-ok"></span> Block apps</span>
-            <span class="flex items-center gap-2"><span class="dot bg-amber"></span> Lock down PCs</span>
-            <span class="flex items-center gap-2"><span class="dot bg-danger"></span> Power off remotely</span>
+            <span class="flex items-center gap-2"><span class="dot dot-ok"></span> <span data-i18n="chip_block">Block apps</span></span>
+            <span class="flex items-center gap-2"><span class="dot bg-amber"></span> <span data-i18n="chip_lock">Lock down PCs</span></span>
+            <span class="flex items-center gap-2"><span class="dot bg-danger"></span> <span data-i18n="chip_power">Power off remotely</span></span>
           </div>
         </div>
 
         <!-- Right: signature — live fleet console -->
-        <div class="reveal" style="animation-delay:120ms">
+        <div class="reveal">
           <div class="console relative overflow-hidden rounded-2xl">
             <div class="scan"></div>
 
@@ -207,13 +229,13 @@
               <span class="h-3 w-3 rounded-full bg-amber/80"></span>
               <span class="h-3 w-3 rounded-full bg-guardian/80"></span>
               <span class="ml-3 font-mono text-xs text-dim">guardian://fleet</span>
-              <span class="ml-auto font-mono text-[0.7rem] text-muted">mode <span class="text-danger">blacklist</span></span>
+              <span class="ml-auto font-mono text-[0.7rem] text-muted"><span data-i18n="console_mode">mode</span> <span class="text-danger">blacklist</span></span>
             </div>
 
             <div class="relative p-4 sm:p-5">
               <div class="mb-3 flex items-center justify-between font-mono text-[0.7rem] uppercase tracking-widest text-dim">
-                <span>Fleet · <span id="onlineCount" class="text-guardian">4</span> online</span>
-                <span>last sync 1s</span>
+                <span><span data-i18n="console_fleet">Fleet</span> · <span id="onlineCount" class="text-guardian">4</span> <span data-i18n="console_online">online</span></span>
+                <span><span data-i18n="console_lastsync">last sync</span> 1s</span>
               </div>
 
               <!-- machine tiles -->
@@ -223,12 +245,12 @@
 
               <!-- log stream -->
               <div class="mt-4 border-t border-line-soft pt-3">
-                <div class="mb-2 font-mono text-[0.7rem] uppercase tracking-widest text-dim">enforcement log</div>
+                <div class="mb-2 font-mono text-[0.7rem] uppercase tracking-widest text-dim" data-i18n="console_log">enforcement log</div>
                 <div id="log" class="h-[150px] space-y-1.5 overflow-hidden font-mono text-[0.78rem] leading-relaxed"></div>
               </div>
             </div>
           </div>
-          <p class="mt-3 text-center font-mono text-[0.7rem] text-dim">Live preview · agents kill blocked processes in &lt;1s</p>
+          <p class="mt-3 text-center font-mono text-[0.7rem] text-dim" data-i18n="console_preview">Live preview · agents kill blocked processes in &lt;1s</p>
         </div>
       </div>
     </section>
@@ -236,8 +258,8 @@
     <!-- ============ FEATURES ============ -->
     <section id="features" class="mx-auto max-w-shell px-5 py-20 sm:px-8">
       <div class="reveal mb-12 max-w-2xl">
-        <p class="kicker"><span class="slash">//</span> Capabilities</p>
-        <h2 class="h-section mt-3 text-3xl sm:text-[2.6rem]">Everything you need to lock down a fleet.</h2>
+        <p class="kicker"><span class="slash">//</span> <span data-i18n="feat_kicker">Capabilities</span></p>
+        <h2 class="h-section mt-3 text-3xl sm:text-[2.6rem]" data-i18n="feat_h2">Everything you need to lock down a fleet.</h2>
       </div>
 
       <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -246,8 +268,8 @@
           <div class="mb-5 flex h-11 w-11 items-center justify-center rounded-xl border border-line bg-void text-guardian">
             <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 5-3.5 7.5-8 9-4.5-1.5-8-4-8-9V6l8-3z"/><path d="M9 12l2 2 4-4"/></svg>
           </div>
-          <h3 class="font-display text-lg font-600">Allowlist or blocklist</h3>
-          <p class="mt-2 text-sm leading-relaxed text-muted">Run <span class="font-mono text-ink">blacklist</span> to kill named apps, or <span class="font-mono text-ink">whitelist</span> to kill everything you didn't approve. System processes are always spared.</p>
+          <h3 class="font-display text-lg font-600" data-i18n="feat1_t">Allowlist or blocklist</h3>
+          <p class="mt-2 text-sm leading-relaxed text-muted" data-i18n="feat1_b">Run <span class="font-mono text-ink">blacklist</span> to kill named apps, or <span class="font-mono text-ink">whitelist</span> to kill everything you didn't approve. System processes are always spared.</p>
         </article>
 
         <!-- 2 -->
@@ -255,8 +277,8 @@
           <div class="mb-5 flex h-11 w-11 items-center justify-center rounded-xl border border-line bg-void text-guardian">
             <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"><rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18.5h2"/></svg>
           </div>
-          <h3 class="font-display text-lg font-600">Manage from your phone</h3>
-          <p class="mt-2 text-sm leading-relaxed text-muted">The Guardian Android app is your console: add blocked apps, lock machines, and switch modes from anywhere — no desktop login required.</p>
+          <h3 class="font-display text-lg font-600" data-i18n="feat2_t">Manage from your phone</h3>
+          <p class="mt-2 text-sm leading-relaxed text-muted" data-i18n="feat2_b">The Guardian Android app is your console: add blocked apps, lock machines, and switch modes from anywhere — no desktop login required.</p>
         </article>
 
         <!-- 3 -->
@@ -264,8 +286,8 @@
           <div class="mb-5 flex h-11 w-11 items-center justify-center rounded-xl border border-line bg-void text-guardian">
             <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"><path d="M13 2L4 14h7l-1 8 9-12h-7l1-8z"/></svg>
           </div>
-          <h3 class="font-display text-lg font-600">Sub-second enforcement</h3>
-          <p class="mt-2 text-sm leading-relaxed text-muted">Agents scan running processes every second and terminate anything that isn't allowed — before a user gets far with it.</p>
+          <h3 class="font-display text-lg font-600" data-i18n="feat3_t">Sub-second enforcement</h3>
+          <p class="mt-2 text-sm leading-relaxed text-muted" data-i18n="feat3_b">Agents scan running processes every second and terminate anything that isn't allowed — before a user gets far with it.</p>
         </article>
 
         <!-- 4 -->
@@ -273,8 +295,8 @@
           <div class="mb-5 flex h-11 w-11 items-center justify-center rounded-xl border border-line bg-void text-danger">
             <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"><path d="M12 3v9"/><path d="M6.5 7a8 8 0 1 0 11 0"/></svg>
           </div>
-          <h3 class="font-display text-lg font-600">Remote power-off</h3>
-          <p class="mt-2 text-sm leading-relaxed text-muted">Send one command to force-close apps and shut down every connected machine at once — useful at closing time or in an incident.</p>
+          <h3 class="font-display text-lg font-600" data-i18n="feat4_t">Remote power-off</h3>
+          <p class="mt-2 text-sm leading-relaxed text-muted" data-i18n="feat4_b">Send one command to force-close apps and shut down every connected machine at once — useful at closing time or in an incident.</p>
         </article>
 
         <!-- 5 -->
@@ -282,8 +304,8 @@
           <div class="mb-5 flex h-11 w-11 items-center justify-center rounded-xl border border-line bg-void text-guardian">
             <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"><rect x="3" y="4" width="8" height="7" rx="1.5"/><rect x="13" y="4" width="8" height="7" rx="1.5"/><rect x="3" y="13" width="8" height="7" rx="1.5"/><rect x="13" y="13" width="8" height="7" rx="1.5"/></svg>
           </div>
-          <h3 class="font-display text-lg font-600">Per-machine control</h3>
-          <p class="mt-2 text-sm leading-relaxed text-muted">Register each computer, see when it was last online, and block or release machines one by one — or all of them together.</p>
+          <h3 class="font-display text-lg font-600" data-i18n="feat5_t">Per-machine control</h3>
+          <p class="mt-2 text-sm leading-relaxed text-muted" data-i18n="feat5_b">Register each computer, see when it was last online, and block or release machines one by one — or all of them together.</p>
         </article>
 
         <!-- 6 -->
@@ -291,8 +313,8 @@
           <div class="mb-5 flex h-11 w-11 items-center justify-center rounded-xl border border-line bg-void text-guardian">
             <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"><path d="M12 2l8 4v6c0 4-3 7-8 10-5-3-8-6-8-10V6l8-4z"/></svg>
           </div>
-          <h3 class="font-display text-lg font-600">Lightweight by design</h3>
-          <p class="mt-2 text-sm leading-relaxed text-muted">A single Go binary with embedded SQLite — no CGO, no database server. Run it directly, as a systemd service, or in Docker.</p>
+          <h3 class="font-display text-lg font-600" data-i18n="feat6_t">Lightweight by design</h3>
+          <p class="mt-2 text-sm leading-relaxed text-muted" data-i18n="feat6_b">A single Go binary with embedded SQLite — no CGO, no database server. Run it directly, as a systemd service, or in Docker.</p>
         </article>
       </div>
     </section>
@@ -300,20 +322,20 @@
     <!-- ============ HOW IT WORKS ============ -->
     <section id="how" class="mx-auto max-w-shell px-5 py-20 sm:px-8">
       <div class="reveal mb-12 max-w-2xl">
-        <p class="kicker"><span class="slash">//</span> Topology</p>
-        <h2 class="h-section mt-3 text-3xl sm:text-[2.6rem]">Three parts, two tokens, one source of truth.</h2>
-        <p class="mt-4 text-muted">You set policy in the app. The server stores it. Agents sync and enforce. Each link is authenticated with its own bearer token.</p>
+        <p class="kicker"><span class="slash">//</span> <span data-i18n="how_kicker">Topology</span></p>
+        <h2 class="h-section mt-3 text-3xl sm:text-[2.6rem]" data-i18n="how_h2">Three parts, two tokens, one source of truth.</h2>
+        <p class="mt-4 text-muted" data-i18n="how_intro">You set policy in the app. The server stores it. Agents sync and enforce. Each link is authenticated with its own bearer token.</p>
       </div>
 
       <div class="grid items-stretch gap-3 lg:grid-cols-[1fr_auto_1fr_auto_1fr]">
         <!-- Mobile -->
         <div class="reveal card rounded-2xl p-6">
           <div class="flex items-center justify-between">
-            <span class="font-mono text-[0.7rem] uppercase tracking-widest text-guardian">Mobile</span>
+            <span class="font-mono text-[0.7rem] uppercase tracking-widest text-guardian" data-i18n="how_mobile_tag">Mobile</span>
             <span class="rounded-md border border-line px-2 py-0.5 font-mono text-[0.65rem] text-muted">admin token</span>
           </div>
-          <h3 class="mt-3 font-display text-xl font-600">Guardian app</h3>
-          <p class="mt-2 text-sm leading-relaxed text-muted">Android control panel for blocked apps, modes, computers and power.</p>
+          <h3 class="mt-3 font-display text-xl font-600" data-i18n="how_mobile_t">Guardian app</h3>
+          <p class="mt-2 text-sm leading-relaxed text-muted" data-i18n="how_mobile_b">Android control panel for blocked apps, modes, computers and power.</p>
         </div>
 
         <div class="hidden items-center justify-center lg:flex" aria-hidden="true">
@@ -323,11 +345,11 @@
         <!-- Server -->
         <div class="reveal card rounded-2xl border-guardian/30 p-6">
           <div class="flex items-center justify-between">
-            <span class="font-mono text-[0.7rem] uppercase tracking-widest text-guardian">Server</span>
+            <span class="font-mono text-[0.7rem] uppercase tracking-widest text-guardian" data-i18n="how_server_tag">Server</span>
             <span class="rounded-md border border-line px-2 py-0.5 font-mono text-[0.65rem] text-muted">Linux · SQLite</span>
           </div>
-          <h3 class="mt-3 font-display text-xl font-600">Go backend</h3>
-          <p class="mt-2 text-sm leading-relaxed text-muted">REST API holds apps, modes and registrations, with in-memory caches in front.</p>
+          <h3 class="mt-3 font-display text-xl font-600" data-i18n="how_server_t">Go backend</h3>
+          <p class="mt-2 text-sm leading-relaxed text-muted" data-i18n="how_server_b">REST API holds apps, modes and registrations, with in-memory caches in front.</p>
         </div>
 
         <div class="hidden items-center justify-center lg:flex" aria-hidden="true">
@@ -337,11 +359,11 @@
         <!-- Agent -->
         <div class="reveal card rounded-2xl p-6">
           <div class="flex items-center justify-between">
-            <span class="font-mono text-[0.7rem] uppercase tracking-widest text-guardian">Agent</span>
+            <span class="font-mono text-[0.7rem] uppercase tracking-widest text-guardian" data-i18n="how_agent_tag">Agent</span>
             <span class="rounded-md border border-line px-2 py-0.5 font-mono text-[0.65rem] text-muted">client token</span>
           </div>
-          <h3 class="mt-3 font-display text-xl font-600">Windows service</h3>
-          <p class="mt-2 text-sm leading-relaxed text-muted">Polls for the latest policy and terminates processes that break it.</p>
+          <h3 class="mt-3 font-display text-xl font-600" data-i18n="how_agent_t">Windows service</h3>
+          <p class="mt-2 text-sm leading-relaxed text-muted" data-i18n="how_agent_b">Polls for the latest policy and terminates processes that break it.</p>
         </div>
       </div>
     </section>
@@ -349,8 +371,8 @@
     <!-- ============ MODES ============ -->
     <section id="modes" class="mx-auto max-w-shell px-5 py-20 sm:px-8">
       <div class="reveal mb-12 max-w-2xl">
-        <p class="kicker"><span class="slash">//</span> Enforcement modes</p>
-        <h2 class="h-section mt-3 text-3xl sm:text-[2.6rem]">Pick how strict each machine should be.</h2>
+        <p class="kicker"><span class="slash">//</span> <span data-i18n="modes_kicker">Enforcement modes</span></p>
+        <h2 class="h-section mt-3 text-3xl sm:text-[2.6rem]" data-i18n="modes_h2">Pick how strict each machine should be.</h2>
       </div>
 
       <div class="grid gap-4 md:grid-cols-3">
@@ -359,7 +381,7 @@
             <span class="dot bg-danger"></span>
             <span class="font-mono text-sm font-700 text-ink">blacklist</span>
           </div>
-          <p class="mt-4 text-sm leading-relaxed text-muted">Only processes on the block list are killed. Everything else runs freely. Good for banning specific apps.</p>
+          <p class="mt-4 text-sm leading-relaxed text-muted" data-i18n="mode_bl_b">Only processes on the block list are killed. Everything else runs freely. Good for banning specific apps.</p>
         </div>
 
         <div class="reveal card rounded-2xl p-6">
@@ -367,7 +389,7 @@
             <span class="dot bg-amber"></span>
             <span class="font-mono text-sm font-700 text-ink">whitelist</span>
           </div>
-          <p class="mt-4 text-sm leading-relaxed text-muted">Everything <em class="not-italic text-ink">not</em> on the allow list is killed — system processes excluded. Lockdown for kiosks and classrooms.</p>
+          <p class="mt-4 text-sm leading-relaxed text-muted" data-i18n="mode_wl_b">Everything <em class="not-italic text-ink">not</em> on the allow list is killed — system processes excluded. Lockdown for kiosks and classrooms.</p>
         </div>
 
         <div class="reveal card rounded-2xl p-6">
@@ -375,7 +397,7 @@
             <span class="dot bg-guardian"></span>
             <span class="font-mono text-sm font-700 text-ink">free</span>
           </div>
-          <p class="mt-4 text-sm leading-relaxed text-muted">Nothing is killed. Returned automatically when the server is disabled or a machine is unblocked.</p>
+          <p class="mt-4 text-sm leading-relaxed text-muted" data-i18n="mode_free_b">Nothing is killed. Returned automatically when the server is disabled or a machine is unblocked.</p>
         </div>
       </div>
     </section>
@@ -383,9 +405,9 @@
     <!-- ============ DEPLOY ============ -->
     <section id="deploy" class="mx-auto max-w-shell px-5 py-20 sm:px-8">
       <div class="reveal mb-12 max-w-2xl">
-        <p class="kicker"><span class="slash">//</span> Deploy</p>
-        <h2 class="h-section mt-3 text-3xl sm:text-[2.6rem]">Up and running in three steps.</h2>
-        <p class="mt-4 text-muted">Pre-built binaries ship in the <span class="font-mono text-ink">dist/</span> directory. Copy, configure, go.</p>
+        <p class="kicker"><span class="slash">//</span> <span data-i18n="deploy_kicker">Deploy</span></p>
+        <h2 class="h-section mt-3 text-3xl sm:text-[2.6rem]" data-i18n="deploy_h2">Up and running in three steps.</h2>
+        <p class="mt-4 text-muted" data-i18n="deploy_intro">Pre-built binaries ship in the <span class="font-mono text-ink">dist/</span> directory. Copy, configure, go.</p>
       </div>
 
       <div class="grid gap-4 lg:grid-cols-3">
@@ -395,8 +417,8 @@
             <span class="font-mono text-3xl font-700 text-guardian/40">01</span>
             <span class="font-mono text-[0.7rem] uppercase tracking-widest text-dim">Linux</span>
           </div>
-          <h3 class="mt-4 font-display text-lg font-600">Run the server</h3>
-          <p class="mt-2 text-sm leading-relaxed text-muted">Set your <span class="font-mono text-ink">TOKEN</span> and <span class="font-mono text-ink">ADMIN_TOKEN</span>, then start it.</p>
+          <h3 class="mt-4 font-display text-lg font-600" data-i18n="deploy1_t">Run the server</h3>
+          <p class="mt-2 text-sm leading-relaxed text-muted" data-i18n="deploy1_b">Set your <span class="font-mono text-ink">TOKEN</span> and <span class="font-mono text-ink">ADMIN_TOKEN</span>, then start it.</p>
           <pre class="mt-4 overflow-x-auto rounded-lg border border-line-soft bg-void p-3 font-mono text-[0.78rem] text-guardian"><code>cp server.env .env
 docker compose up -d</code></pre>
         </article>
@@ -407,8 +429,8 @@ docker compose up -d</code></pre>
             <span class="font-mono text-3xl font-700 text-guardian/40">02</span>
             <span class="font-mono text-[0.7rem] uppercase tracking-widest text-dim">Windows</span>
           </div>
-          <h3 class="mt-4 font-display text-lg font-600">Install agents</h3>
-          <p class="mt-2 text-sm leading-relaxed text-muted">Run the installer on each PC and give it an identity number.</p>
+          <h3 class="mt-4 font-display text-lg font-600" data-i18n="deploy2_t">Install agents</h3>
+          <p class="mt-2 text-sm leading-relaxed text-muted" data-i18n="deploy2_b">Run the installer on each PC and give it an identity number.</p>
           <pre class="mt-4 overflow-x-auto rounded-lg border border-line-soft bg-void p-3 font-mono text-[0.78rem] text-guardian"><code>Install-Guardian.bat
 &gt; IDENTITY: 04</code></pre>
         </article>
@@ -419,8 +441,8 @@ docker compose up -d</code></pre>
             <span class="font-mono text-3xl font-700 text-guardian/40">03</span>
             <span class="font-mono text-[0.7rem] uppercase tracking-widest text-dim">Android</span>
           </div>
-          <h3 class="mt-4 font-display text-lg font-600">Open the app</h3>
-          <p class="mt-2 text-sm leading-relaxed text-muted">Install the APK, add your server address and admin token, start enforcing.</p>
+          <h3 class="mt-4 font-display text-lg font-600" data-i18n="deploy3_t">Open the app</h3>
+          <p class="mt-2 text-sm leading-relaxed text-muted" data-i18n="deploy3_b">Install the APK, add your server address and admin token, start enforcing.</p>
           <pre class="mt-4 overflow-x-auto rounded-lg border border-line-soft bg-void p-3 font-mono text-[0.78rem] text-guardian"><code>guardian.apk
 Settings → server + token</code></pre>
         </article>
@@ -428,11 +450,11 @@ Settings → server + token</code></pre>
 
       <!-- final CTA -->
       <div class="reveal mt-12 overflow-hidden rounded-2xl border border-line bg-gradient-to-br from-raised to-void p-8 text-center sm:p-12">
-        <h3 class="h-section text-2xl sm:text-3xl">Ready to take the fleet?</h3>
-        <p class="mx-auto mt-3 max-w-md text-muted">Grab the binaries, wire up three components, and you're enforcing policy across every machine.</p>
+        <h3 class="h-section text-2xl sm:text-3xl" data-i18n="cta_h3">Ready to take the fleet?</h3>
+        <p class="mx-auto mt-3 max-w-md text-muted" data-i18n="cta_b">Grab the binaries, wire up three components, and you're enforcing policy across every machine.</p>
         <div class="mt-7 flex flex-wrap justify-center gap-3">
-          <a href="https://github.com/ursoaia-edu/guardian" target="_blank" rel="noopener" class="btn btn-primary rounded-xl px-6 py-3.5 text-sm">Get Guardian ↗</a>
-          <a href="#top" class="btn btn-ghost rounded-xl px-6 py-3.5 text-sm">Back to top</a>
+          <a href="https://github.com/ursoaia-edu/guardian" target="_blank" rel="noopener" class="btn btn-primary rounded-xl px-6 py-3.5 text-sm" data-i18n="cta_get_guardian">Get Guardian ↗</a>
+          <a href="#top" class="btn btn-ghost rounded-xl px-6 py-3.5 text-sm" data-i18n="cta_back_top">Back to top</a>
         </div>
       </div>
     </section>
@@ -456,7 +478,224 @@ Settings → server + token</code></pre>
   </footer>
 
   <script>
-    // ---- Mobile menu ----
+    // ============ i18n ============
+    const I18N = {
+      en: {
+        nav_features: "Features", nav_how: "How it works", nav_modes: "Modes", nav_deploy: "Deploy",
+        hero_kicker: "Process control for Windows fleets",
+        hero_h1: "Control every process<br class='hidden sm:block'> <span class='text-guardian glow'>across your fleet.</span>",
+        hero_sub: "Guardian blocks or whitelists applications on every Windows machine you run — managed from one Android app and a single lightweight server. Set a policy once; agents enforce it everywhere, every second.",
+        cta_get_started: "Get started", cta_view_github: "View on GitHub ↗",
+        chip_block: "Block apps", chip_lock: "Lock down PCs", chip_power: "Power off remotely",
+        console_mode: "mode", console_fleet: "Fleet", console_online: "online", console_lastsync: "last sync",
+        console_log: "enforcement log", console_preview: "Live preview · agents kill blocked processes in &lt;1s",
+        feat_kicker: "Capabilities", feat_h2: "Everything you need to lock down a fleet.",
+        feat1_t: "Allowlist or blocklist", feat1_b: "Run <span class='font-mono text-ink'>blacklist</span> to kill named apps, or <span class='font-mono text-ink'>whitelist</span> to kill everything you didn't approve. System processes are always spared.",
+        feat2_t: "Manage from your phone", feat2_b: "The Guardian Android app is your console: add blocked apps, lock machines, and switch modes from anywhere — no desktop login required.",
+        feat3_t: "Sub-second enforcement", feat3_b: "Agents scan running processes every second and terminate anything that isn't allowed — before a user gets far with it.",
+        feat4_t: "Remote power-off", feat4_b: "Send one command to force-close apps and shut down every connected machine at once — useful at closing time or in an incident.",
+        feat5_t: "Per-machine control", feat5_b: "Register each computer, see when it was last online, and block or release machines one by one — or all of them together.",
+        feat6_t: "Lightweight by design", feat6_b: "A single Go binary with embedded SQLite — no CGO, no database server. Run it directly, as a systemd service, or in Docker.",
+        how_kicker: "Topology", how_h2: "Three parts, two tokens, one source of truth.",
+        how_intro: "You set policy in the app. The server stores it. Agents sync and enforce. Each link is authenticated with its own bearer token.",
+        how_mobile_tag: "Mobile", how_mobile_t: "Guardian app", how_mobile_b: "Android control panel for blocked apps, modes, computers and power.",
+        how_server_tag: "Server", how_server_t: "Go backend", how_server_b: "REST API holds apps, modes and registrations, with in-memory caches in front.",
+        how_agent_tag: "Agent", how_agent_t: "Windows service", how_agent_b: "Polls for the latest policy and terminates processes that break it.",
+        modes_kicker: "Enforcement modes", modes_h2: "Pick how strict each machine should be.",
+        mode_bl_b: "Only processes on the block list are killed. Everything else runs freely. Good for banning specific apps.",
+        mode_wl_b: "Everything <em class='not-italic text-ink'>not</em> on the allow list is killed — system processes excluded. Lockdown for kiosks and classrooms.",
+        mode_free_b: "Nothing is killed. Returned automatically when the server is disabled or a machine is unblocked.",
+        deploy_kicker: "Deploy", deploy_h2: "Up and running in three steps.",
+        deploy_intro: "Pre-built binaries ship in the <span class='font-mono text-ink'>dist/</span> directory. Copy, configure, go.",
+        deploy1_t: "Run the server", deploy1_b: "Set your <span class='font-mono text-ink'>TOKEN</span> and <span class='font-mono text-ink'>ADMIN_TOKEN</span>, then start it.",
+        deploy2_t: "Install agents", deploy2_b: "Run the installer on each PC and give it an identity number.",
+        deploy3_t: "Open the app", deploy3_b: "Install the APK, add your server address and admin token, start enforcing.",
+        cta_h3: "Ready to take the fleet?", cta_b: "Grab the binaries, wire up three components, and you're enforcing policy across every machine.",
+        cta_get_guardian: "Get Guardian ↗", cta_back_top: "Back to top",
+        __title: "Guardian — Process control for Windows fleets",
+        __desc: "Guardian blocks or whitelists applications on every Windows machine you run — managed from one Android app and a single lightweight Go server.",
+        __menu: "Open menu",
+      },
+      ro: {
+        nav_features: "Funcții", nav_how: "Cum funcționează", nav_modes: "Moduri", nav_deploy: "Instalare",
+        hero_kicker: "Control al proceselor pentru flote Windows",
+        hero_h1: "Controlează fiecare proces<br class='hidden sm:block'> <span class='text-guardian glow'>din toată flota ta.</span>",
+        hero_sub: "Guardian blochează sau permite aplicații pe fiecare mașină Windows pe care o administrezi — gestionate dintr-o singură aplicație Android și un singur server ușor. Setezi politica o dată; agenții o aplică peste tot, în fiecare secundă.",
+        cta_get_started: "Începe acum", cta_view_github: "Vezi pe GitHub ↗",
+        chip_block: "Blochează aplicații", chip_lock: "Blochează PC-uri", chip_power: "Oprire de la distanță",
+        console_mode: "mod", console_fleet: "Flotă", console_online: "online", console_lastsync: "ultima sincronizare",
+        console_log: "jurnal de aplicare", console_preview: "Previzualizare live · agenții opresc procesele blocate în &lt;1s",
+        feat_kicker: "Capabilități", feat_h2: "Tot ce-ți trebuie ca să blochezi o flotă.",
+        feat1_t: "Listă albă sau listă neagră", feat1_b: "Rulează <span class='font-mono text-ink'>blacklist</span> ca să oprești aplicațiile numite, sau <span class='font-mono text-ink'>whitelist</span> ca să oprești tot ce n-ai aprobat. Procesele de sistem sunt mereu protejate.",
+        feat2_t: "Gestionează de pe telefon", feat2_b: "Aplicația Android Guardian e consola ta: adaugi aplicații blocate, blochezi mașini și schimbi modurile de oriunde — fără autentificare pe desktop.",
+        feat3_t: "Aplicare sub o secundă", feat3_b: "Agenții scanează procesele active în fiecare secundă și opresc orice nu e permis — înainte ca utilizatorul să apuce să-l folosească.",
+        feat4_t: "Oprire de la distanță", feat4_b: "Trimiți o singură comandă ca să închizi forțat aplicațiile și să oprești toate mașinile conectate deodată — util la închidere sau într-un incident.",
+        feat5_t: "Control per mașină", feat5_b: "Înregistrezi fiecare computer, vezi când a fost ultima dată online și blochezi sau eliberezi mașinile una câte una — sau pe toate odată.",
+        feat6_t: "Ușor prin concepție", feat6_b: "Un singur binar Go cu SQLite încorporat — fără CGO, fără server de baze de date. Îl rulezi direct, ca serviciu systemd sau în Docker.",
+        how_kicker: "Topologie", how_h2: "Trei părți, două token-uri, o singură sursă de adevăr.",
+        how_intro: "Setezi politica în aplicație. Serverul o stochează. Agenții se sincronizează și o aplică. Fiecare legătură e autentificată cu propriul token bearer.",
+        how_mobile_tag: "Mobil", how_mobile_t: "Aplicația Guardian", how_mobile_b: "Panou de control Android pentru aplicații blocate, moduri, computere și alimentare.",
+        how_server_tag: "Server", how_server_t: "Backend Go", how_server_b: "API-ul REST păstrează aplicațiile, modurile și înregistrările, cu cache-uri în memorie în față.",
+        how_agent_tag: "Agent", how_agent_t: "Serviciu Windows", how_agent_b: "Interoghează cea mai recentă politică și oprește procesele care o încalcă.",
+        modes_kicker: "Moduri de aplicare", modes_h2: "Alege cât de strictă e fiecare mașină.",
+        mode_bl_b: "Sunt oprite doar procesele din lista de blocare. Restul rulează liber. Bun pentru a interzice aplicații anume.",
+        mode_wl_b: "Tot ce <em class='not-italic text-ink'>nu</em> e pe lista permisă e oprit — procesele de sistem sunt excluse. Blocare totală pentru chioșcuri și săli de clasă.",
+        mode_free_b: "Nimic nu e oprit. Se activează automat când serverul e dezactivat sau o mașină e deblocată.",
+        deploy_kicker: "Instalare", deploy_h2: "Gata de funcționare în trei pași.",
+        deploy_intro: "Binarele precompilate vin în directorul <span class='font-mono text-ink'>dist/</span>. Copiezi, configurezi, gata.",
+        deploy1_t: "Pornește serverul", deploy1_b: "Setează-ți <span class='font-mono text-ink'>TOKEN</span> și <span class='font-mono text-ink'>ADMIN_TOKEN</span>, apoi pornește-l.",
+        deploy2_t: "Instalează agenții", deploy2_b: "Rulează installerul pe fiecare PC și dă-i un număr de identitate.",
+        deploy3_t: "Deschide aplicația", deploy3_b: "Instalează APK-ul, adaugi adresa serverului și token-ul de admin, începi aplicarea.",
+        cta_h3: "Gata să preiei flota?", cta_b: "Iei binarele, conectezi cele trei componente și aplici politica pe fiecare mașină.",
+        cta_get_guardian: "Descarcă Guardian ↗", cta_back_top: "Înapoi sus",
+        __title: "Guardian — Control al proceselor pentru flote Windows",
+        __desc: "Guardian blochează sau permite aplicații pe fiecare mașină Windows — gestionate dintr-o aplicație Android și un singur server ușor.",
+        __menu: "Deschide meniul",
+      },
+      ru: {
+        nav_features: "Возможности", nav_how: "Как это работает", nav_modes: "Режимы", nav_deploy: "Установка",
+        hero_kicker: "Контроль процессов для парка Windows-машин",
+        hero_h1: "Контролируйте каждый процесс<br class='hidden sm:block'> <span class='text-guardian glow'>на всём вашем парке.</span>",
+        hero_sub: "Guardian блокирует или разрешает приложения на каждой Windows-машине — управление из одного Android-приложения и единого лёгкого сервера. Задайте политику один раз; агенты применяют её везде, каждую секунду.",
+        cta_get_started: "Начать", cta_view_github: "Открыть на GitHub ↗",
+        chip_block: "Блокировка приложений", chip_lock: "Блокировка ПК", chip_power: "Удалённое выключение",
+        console_mode: "режим", console_fleet: "Парк", console_online: "онлайн", console_lastsync: "посл. синхр.",
+        console_log: "журнал применения", console_preview: "Демо в реальном времени · агенты убивают запрещённые процессы за &lt;1с",
+        feat_kicker: "Возможности", feat_h2: "Всё, что нужно, чтобы запереть парк машин.",
+        feat1_t: "Белый или чёрный список", feat1_b: "Запустите <span class='font-mono text-ink'>blacklist</span>, чтобы убивать названные приложения, или <span class='font-mono text-ink'>whitelist</span>, чтобы убивать всё, что вы не одобрили. Системные процессы всегда защищены.",
+        feat2_t: "Управление с телефона", feat2_b: "Android-приложение Guardian — ваша консоль: добавляйте заблокированные приложения, блокируйте машины и переключайте режимы откуда угодно — без входа на десктопе.",
+        feat3_t: "Применение меньше чем за секунду", feat3_b: "Агенты сканируют запущенные процессы каждую секунду и завершают всё, что не разрешено — раньше, чем пользователь успеет этим воспользоваться.",
+        feat4_t: "Удалённое выключение", feat4_b: "Одной командой принудительно закройте приложения и выключите сразу все подключённые машины — удобно в конце дня или при инциденте.",
+        feat5_t: "Управление по машинам", feat5_b: "Регистрируйте каждый компьютер, смотрите, когда он был онлайн, и блокируйте или разблокируйте машины по одной — или все сразу.",
+        feat6_t: "Лёгкий по своей сути", feat6_b: "Один бинарник на Go со встроенной SQLite — без CGO, без отдельного сервера БД. Запускайте напрямую, как службу systemd или в Docker.",
+        how_kicker: "Топология", how_h2: "Три части, два токена, один источник истины.",
+        how_intro: "Вы задаёте политику в приложении. Сервер её хранит. Агенты синхронизируются и применяют её. Каждое соединение аутентифицируется своим bearer-токеном.",
+        how_mobile_tag: "Мобильное", how_mobile_t: "Приложение Guardian", how_mobile_b: "Android-панель управления для заблокированных приложений, режимов, компьютеров и питания.",
+        how_server_tag: "Сервер", how_server_t: "Backend на Go", how_server_b: "REST API хранит приложения, режимы и регистрации, с кэшами в памяти впереди.",
+        how_agent_tag: "Агент", how_agent_t: "Служба Windows", how_agent_b: "Опрашивает актуальную политику и завершает процессы, которые её нарушают.",
+        modes_kicker: "Режимы применения", modes_h2: "Выберите, насколько строга каждая машина.",
+        mode_bl_b: "Убиваются только процессы из списка блокировки. Всё остальное работает свободно. Подходит, чтобы запретить конкретные приложения.",
+        mode_wl_b: "Убивается всё, чего <em class='not-italic text-ink'>нет</em> в списке разрешённых — системные процессы исключены. Полная блокировка для киосков и учебных классов.",
+        mode_free_b: "Ничего не убивается. Включается автоматически, когда сервер выключен или машина разблокирована.",
+        deploy_kicker: "Установка", deploy_h2: "Запуск за три шага.",
+        deploy_intro: "Готовые бинарники лежат в каталоге <span class='font-mono text-ink'>dist/</span>. Скопируйте, настройте, поехали.",
+        deploy1_t: "Запустите сервер", deploy1_b: "Задайте <span class='font-mono text-ink'>TOKEN</span> и <span class='font-mono text-ink'>ADMIN_TOKEN</span>, затем запустите.",
+        deploy2_t: "Установите агентов", deploy2_b: "Запустите установщик на каждом ПК и присвойте ему номер идентификации.",
+        deploy3_t: "Откройте приложение", deploy3_b: "Установите APK, укажите адрес сервера и admin-токен, начинайте применять.",
+        cta_h3: "Готовы взять парк под контроль?", cta_b: "Возьмите бинарники, соедините три компонента — и политика применяется на каждой машине.",
+        cta_get_guardian: "Скачать Guardian ↗", cta_back_top: "Наверх",
+        __title: "Guardian — Контроль процессов для парка Windows-машин",
+        __desc: "Guardian блокирует или разрешает приложения на каждой Windows-машине — управление из Android-приложения и единого лёгкого сервера.",
+        __menu: "Открыть меню",
+      },
+      es: {
+        nav_features: "Funciones", nav_how: "Cómo funciona", nav_modes: "Modos", nav_deploy: "Despliegue",
+        hero_kicker: "Control de procesos para flotas Windows",
+        hero_h1: "Controla cada proceso<br class='hidden sm:block'> <span class='text-guardian glow'>en toda tu flota.</span>",
+        hero_sub: "Guardian bloquea o permite aplicaciones en cada máquina Windows que administras — gestionadas desde una sola app Android y un único servidor ligero. Define la política una vez; los agentes la aplican en todas partes, cada segundo.",
+        cta_get_started: "Empezar", cta_view_github: "Ver en GitHub ↗",
+        chip_block: "Bloquear apps", chip_lock: "Bloquear PCs", chip_power: "Apagado remoto",
+        console_mode: "modo", console_fleet: "Flota", console_online: "en línea", console_lastsync: "últ. sincron.",
+        console_log: "registro de aplicación", console_preview: "Vista previa en vivo · los agentes matan procesos bloqueados en &lt;1s",
+        feat_kicker: "Capacidades", feat_h2: "Todo lo que necesitas para blindar una flota.",
+        feat1_t: "Lista blanca o lista negra", feat1_b: "Usa <span class='font-mono text-ink'>blacklist</span> para matar apps concretas, o <span class='font-mono text-ink'>whitelist</span> para matar todo lo que no apruebes. Los procesos del sistema siempre están protegidos.",
+        feat2_t: "Gestiona desde el móvil", feat2_b: "La app Android de Guardian es tu consola: añade apps bloqueadas, bloquea máquinas y cambia de modo desde cualquier lugar — sin inicio de sesión en el escritorio.",
+        feat3_t: "Aplicación en menos de un segundo", feat3_b: "Los agentes escanean los procesos en ejecución cada segundo y terminan todo lo que no esté permitido — antes de que el usuario llegue lejos con ello.",
+        feat4_t: "Apagado remoto", feat4_b: "Envía una sola orden para cerrar apps a la fuerza y apagar todas las máquinas conectadas a la vez — útil al cierre o ante un incidente.",
+        feat5_t: "Control por máquina", feat5_b: "Registra cada equipo, mira cuándo estuvo en línea por última vez y bloquea o libera máquinas una a una — o todas juntas.",
+        feat6_t: "Ligero por diseño", feat6_b: "Un único binario Go con SQLite integrado — sin CGO, sin servidor de base de datos. Ejecútalo directamente, como servicio systemd o en Docker.",
+        how_kicker: "Topología", how_h2: "Tres partes, dos tokens, una sola fuente de verdad.",
+        how_intro: "Defines la política en la app. El servidor la guarda. Los agentes se sincronizan y la aplican. Cada enlace se autentica con su propio token bearer.",
+        how_mobile_tag: "Móvil", how_mobile_t: "App Guardian", how_mobile_b: "Panel de control Android para apps bloqueadas, modos, equipos y apagado.",
+        how_server_tag: "Servidor", how_server_t: "Backend Go", how_server_b: "La API REST guarda apps, modos y registros, con cachés en memoria por delante.",
+        how_agent_tag: "Agente", how_agent_t: "Servicio Windows", how_agent_b: "Consulta la política más reciente y termina los procesos que la incumplen.",
+        modes_kicker: "Modos de aplicación", modes_h2: "Elige qué tan estricta es cada máquina.",
+        mode_bl_b: "Solo se matan los procesos de la lista de bloqueo. Todo lo demás se ejecuta libremente. Ideal para vetar apps concretas.",
+        mode_wl_b: "Se mata todo lo que <em class='not-italic text-ink'>no</em> esté en la lista permitida — los procesos del sistema quedan excluidos. Bloqueo total para kioscos y aulas.",
+        mode_free_b: "No se mata nada. Se activa automáticamente cuando el servidor está desactivado o una máquina está desbloqueada.",
+        deploy_kicker: "Despliegue", deploy_h2: "En marcha en tres pasos.",
+        deploy_intro: "Los binarios precompilados vienen en el directorio <span class='font-mono text-ink'>dist/</span>. Copia, configura y listo.",
+        deploy1_t: "Arranca el servidor", deploy1_b: "Define tu <span class='font-mono text-ink'>TOKEN</span> y <span class='font-mono text-ink'>ADMIN_TOKEN</span>, y luego arráncalo.",
+        deploy2_t: "Instala los agentes", deploy2_b: "Ejecuta el instalador en cada PC y dale un número de identidad.",
+        deploy3_t: "Abre la app", deploy3_b: "Instala el APK, añade la dirección del servidor y el token de admin, y empieza a aplicar.",
+        cta_h3: "¿Listo para tomar el control de la flota?", cta_b: "Toma los binarios, conecta los tres componentes y estarás aplicando la política en cada máquina.",
+        cta_get_guardian: "Obtener Guardian ↗", cta_back_top: "Volver arriba",
+        __title: "Guardian — Control de procesos para flotas Windows",
+        __desc: "Guardian bloquea o permite aplicaciones en cada máquina Windows — gestionadas desde una app Android y un único servidor ligero.",
+        __menu: "Abrir menú",
+      },
+      de: {
+        nav_features: "Funktionen", nav_how: "So funktioniert's", nav_modes: "Modi", nav_deploy: "Einrichtung",
+        hero_kicker: "Prozesskontrolle für Windows-Flotten",
+        hero_h1: "Kontrolliere jeden Prozess<br class='hidden sm:block'> <span class='text-guardian glow'>in deiner ganzen Flotte.</span>",
+        hero_sub: "Guardian blockiert oder erlaubt Anwendungen auf jeder Windows-Maschine, die du betreibst — verwaltet über eine einzige Android-App und einen einzigen leichtgewichtigen Server. Lege die Richtlinie einmal fest; Agenten setzen sie überall durch, jede Sekunde.",
+        cta_get_started: "Loslegen", cta_view_github: "Auf GitHub ansehen ↗",
+        chip_block: "Apps blockieren", chip_lock: "PCs sperren", chip_power: "Aus der Ferne herunterfahren",
+        console_mode: "Modus", console_fleet: "Flotte", console_online: "online", console_lastsync: "letzte Sync",
+        console_log: "Durchsetzungsprotokoll", console_preview: "Live-Vorschau · Agenten beenden blockierte Prozesse in &lt;1s",
+        feat_kicker: "Funktionen", feat_h2: "Alles, was du brauchst, um eine Flotte abzuriegeln.",
+        feat1_t: "Erlaubnis- oder Sperrliste", feat1_b: "Nutze <span class='font-mono text-ink'>blacklist</span>, um benannte Apps zu beenden, oder <span class='font-mono text-ink'>whitelist</span>, um alles zu beenden, was du nicht freigegeben hast. Systemprozesse bleiben immer verschont.",
+        feat2_t: "Vom Handy aus verwalten", feat2_b: "Die Guardian-Android-App ist deine Konsole: blockierte Apps hinzufügen, Maschinen sperren und Modi von überall umschalten — ohne Desktop-Anmeldung.",
+        feat3_t: "Durchsetzung in unter einer Sekunde", feat3_b: "Agenten scannen laufende Prozesse jede Sekunde und beenden alles Unerlaubte — bevor ein Nutzer damit weit kommt.",
+        feat4_t: "Herunterfahren aus der Ferne", feat4_b: "Sende einen einzigen Befehl, um Apps zwangsweise zu schließen und alle verbundenen Maschinen auf einmal herunterzufahren — praktisch zum Feierabend oder bei einem Vorfall.",
+        feat5_t: "Steuerung pro Maschine", feat5_b: "Registriere jeden Computer, sieh, wann er zuletzt online war, und sperre oder gib Maschinen einzeln frei — oder alle zusammen.",
+        feat6_t: "Leichtgewichtig konzipiert", feat6_b: "Eine einzige Go-Binärdatei mit eingebettetem SQLite — kein CGO, kein Datenbankserver. Direkt ausführen, als systemd-Dienst oder in Docker.",
+        how_kicker: "Topologie", how_h2: "Drei Teile, zwei Tokens, eine Quelle der Wahrheit.",
+        how_intro: "Du legst die Richtlinie in der App fest. Der Server speichert sie. Agenten synchronisieren und setzen sie durch. Jede Verbindung wird mit ihrem eigenen Bearer-Token authentifiziert.",
+        how_mobile_tag: "Mobil", how_mobile_t: "Guardian-App", how_mobile_b: "Android-Steuerzentrale für blockierte Apps, Modi, Computer und Stromversorgung.",
+        how_server_tag: "Server", how_server_t: "Go-Backend", how_server_b: "Die REST-API hält Apps, Modi und Registrierungen vor, mit In-Memory-Caches davor.",
+        how_agent_tag: "Agent", how_agent_t: "Windows-Dienst", how_agent_b: "Fragt die aktuelle Richtlinie ab und beendet Prozesse, die sie verletzen.",
+        modes_kicker: "Durchsetzungsmodi", modes_h2: "Wähle, wie streng jede Maschine ist.",
+        mode_bl_b: "Nur Prozesse auf der Sperrliste werden beendet. Alles andere läuft frei. Gut, um bestimmte Apps zu verbieten.",
+        mode_wl_b: "Alles, was <em class='not-italic text-ink'>nicht</em> auf der Erlaubnisliste steht, wird beendet — Systemprozesse ausgenommen. Komplette Sperre für Kioske und Klassenräume.",
+        mode_free_b: "Es wird nichts beendet. Wird automatisch aktiv, wenn der Server deaktiviert oder eine Maschine entsperrt ist.",
+        deploy_kicker: "Einrichtung", deploy_h2: "In drei Schritten startklar.",
+        deploy_intro: "Vorgefertigte Binärdateien liegen im Verzeichnis <span class='font-mono text-ink'>dist/</span>. Kopieren, konfigurieren, los.",
+        deploy1_t: "Server starten", deploy1_b: "Setze deinen <span class='font-mono text-ink'>TOKEN</span> und <span class='font-mono text-ink'>ADMIN_TOKEN</span> und starte ihn dann.",
+        deploy2_t: "Agenten installieren", deploy2_b: "Führe den Installer auf jedem PC aus und gib ihm eine Identitätsnummer.",
+        deploy3_t: "App öffnen", deploy3_b: "Installiere das APK, trage Serveradresse und Admin-Token ein und beginne mit der Durchsetzung.",
+        cta_h3: "Bereit, die Flotte zu übernehmen?", cta_b: "Schnapp dir die Binärdateien, verbinde die drei Komponenten und du setzt die Richtlinie auf jeder Maschine durch.",
+        cta_get_guardian: "Guardian holen ↗", cta_back_top: "Nach oben",
+        __title: "Guardian — Prozesskontrolle für Windows-Flotten",
+        __desc: "Guardian blockiert oder erlaubt Anwendungen auf jeder Windows-Maschine — verwaltet über eine Android-App und einen einzigen leichtgewichtigen Server.",
+        __menu: "Menü öffnen",
+      },
+    };
+
+    const SUPPORTED = ['en', 'ro', 'ru', 'es', 'de'];
+    const langSelect = document.getElementById('langSelect');
+
+    function applyLang(lang) {
+      const dict = I18N[lang] || I18N.en;
+      document.documentElement.lang = lang;
+      document.querySelectorAll('[data-i18n]').forEach(el => {
+        const v = dict[el.dataset.i18n];
+        if (v != null) el.innerHTML = v;
+      });
+      if (dict.__title) document.title = dict.__title;
+      const setMeta = (sel, val) => { const m = document.querySelector(sel); if (m && val) m.setAttribute('content', val); };
+      setMeta('meta[name="description"]', dict.__desc);
+      setMeta('meta[property="og:title"]', dict.__title);
+      setMeta('meta[property="og:description"]', dict.__desc);
+      const mb = document.getElementById('menuBtn'); if (mb && dict.__menu) mb.setAttribute('aria-label', dict.__menu);
+      langSelect.value = lang;
+      try { localStorage.setItem('lang', lang); } catch (e) {}
+    }
+
+    function initLang() {
+      let lang;
+      try { lang = localStorage.getItem('lang'); } catch (e) {}
+      if (!SUPPORTED.includes(lang)) {
+        const nav = (navigator.language || 'en').slice(0, 2).toLowerCase();
+        lang = SUPPORTED.includes(nav) ? nav : 'en';
+      }
+      applyLang(lang);
+    }
+
+    langSelect.addEventListener('change', e => applyLang(e.target.value));
+    initLang();
+
+    // ============ Mobile menu ============
     const menuBtn = document.getElementById('menuBtn');
     const mobileMenu = document.getElementById('mobileMenu');
     menuBtn.addEventListener('click', () => {
@@ -468,29 +707,21 @@ Settings → server + token</code></pre>
       menuBtn.setAttribute('aria-expanded', 'false');
     }));
 
-    // ---- Reveal on load + scroll ----
+    // ============ Reveal on load + scroll ============
     const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const reveals = document.querySelectorAll('.reveal');
     if (reduce) {
       reveals.forEach(el => el.classList.add('in'));
     } else {
-      // staged hero reveal
       const io = new IntersectionObserver((entries) => {
-        entries.forEach((e, i) => {
-          if (e.isIntersecting) {
-            const el = e.target;
-            setTimeout(() => el.classList.add('in'), 0);
-            io.unobserve(el);
-          }
+        entries.forEach((e) => {
+          if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
         });
       }, { threshold: 0.12 });
-      reveals.forEach((el, i) => {
-        // initial hero batch animates with a small stagger
-        io.observe(el);
-      });
+      reveals.forEach(el => io.observe(el));
     }
 
-    // ---- Live fleet console ----
+    // ============ Live fleet console ============
     const machines = [
       { id: 'WS-01', state: 'ok' },
       { id: 'WS-02', state: 'ok' },
@@ -510,7 +741,6 @@ Settings → server + token</code></pre>
 
     const log = document.getElementById('log');
     const apps = ['chrome.exe', 'steam.exe', 'discord.exe', 'game.exe', 'torrent.exe', 'tiktok.exe'];
-    const okApps = ['explorer.exe', 'svchost.exe', 'notepad.exe'];
 
     function line(kind, id, text) {
       const colors = { sync: 'text-dim', launch: 'text-amber', kill: 'text-danger', ok: 'text-guardian' };
@@ -557,7 +787,6 @@ Settings → server + token</code></pre>
 
     if (!reduce) {
       setProcCounts();
-      // seed
       line('ok', 'WS-01', 'sync ok · 12 rules');
       line('ok', 'WS-03', 'sync ok · 12 rules');
       let beat = 0;
@@ -568,7 +797,6 @@ Settings → server + token</code></pre>
         if (beat % 4 === 0) setProcCounts();
       }, 1800);
     } else {
-      // static end-state for reduced motion
       machines.forEach(m => { const t = grid.querySelector(`[data-id="${m.id}"] .pc`); if (t) t.textContent = '57'; });
       line('ok', 'WS-01', 'sync ok · 12 rules');
       line('launch', 'WS-02', 'launch <span class="text-ink">game.exe</span>');
