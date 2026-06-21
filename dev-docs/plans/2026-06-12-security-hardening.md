@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Remediate the findings in `specs/audit-2026-06-12.md` — eliminate fail-open auth and enforcement paths, make the agent unable to brick hosts, harden deployment, and bootstrap an automated test suite.
+**Goal:** Remediate the findings in `dev-docs/audit-2026-06-12.md` — eliminate fail-open auth and enforcement paths, make the agent unable to brick hosts, harden deployment, and bootstrap an automated test suite.
 
 **Architecture:** The server stays a single Go binary (chi + modernc.org/sqlite) with in-memory caches; we add startup token validation, default-deny sync semantics, body/rate limits, and optional TLS. The agent's matching logic is extracted into pure, testable functions and the shared state pointer becomes `atomic.Pointer`. Deployment moves to a non-root systemd unit with generated tokens.
 
@@ -11,7 +11,7 @@
 **Conventions for all tasks:**
 - Server commands run from `/Users/poligon/Workspace/guardian/server`, agent commands from `/Users/poligon/Workspace/guardian/agent`, mobile from `/Users/poligon/Workspace/guardian/mobile`.
 - Server tests: `go test ./...` — agent tests: `go test ./...` (agent's Windows files are excluded by build tags on macOS/Linux; additionally typecheck with `GOOS=windows go build ./...` after touching `service_windows.go`; agent normally builds with `CGO_ENABLED=1` but plain `go build` suffices for typechecking).
-- Audit finding IDs (SEC-*, BUG-*, IMP-*) refer to `specs/audit-2026-06-12.md`.
+- Audit finding IDs (SEC-*, BUG-*, IMP-*) refer to `dev-docs/audit-2026-06-12.md`.
 - Spec updates for all code changes are batched in Task 19 (repo rule from CLAUDE.md).
 
 ---
@@ -1791,20 +1791,20 @@ git commit -m "fix(mobile): test connection validates the admin token (IMP-07)"
 ### Task 20: Update specs and CLAUDE.md (repo rule)
 
 **Files:**
-- Modify: `specs/server.md`, `specs/api.md`, `specs/agent.md`, `CLAUDE.md`
+- Modify: `dev-docs/server.md`, `dev-docs/api.md`, `dev-docs/agent.md`, `CLAUDE.md`
 
 - [ ] **Step 1: Update the docs to reflect all changes in this plan**
 
 Cover, at minimum:
-- `specs/server.md`: mandatory token validation at startup (min 16 chars, distinct, no placeholders); new env vars `TLS_CERT`/`TLS_KEY`; rate limit (300 req/min/IP) and 1 MiB body cap; SQLite WAL + busy_timeout, single connection; `NewServer(dbPath)`; state directory `/var/lib/guardian`; non-root systemd unit; app-name validation rules; `PUT /status` partial-update semantics (`enabled` optional); computers upsert preserving `datetime`; unknown computers default-blocked on sync.
-- `specs/api.md`: 401 on missing/placeholder tokens (no fallback); 429 responses; 400 for oversized bodies and invalid app names; `PUT /status` with optional `enabled`; `/client/sync` default-deny semantics for unknown identities.
-- `specs/agent.md`: TOKEN now mandatory (no fallback); matching is per-process-name with system-process protection in **both** modes; kills are exact-name (`taskkill /IM`, `pkill -x` quoted); power check precedes the empty-list skip; `mode=free` honored in service mode; state files 0600; `atomic.Pointer` sync state.
+- `dev-docs/server.md`: mandatory token validation at startup (min 16 chars, distinct, no placeholders); new env vars `TLS_CERT`/`TLS_KEY`; rate limit (300 req/min/IP) and 1 MiB body cap; SQLite WAL + busy_timeout, single connection; `NewServer(dbPath)`; state directory `/var/lib/guardian`; non-root systemd unit; app-name validation rules; `PUT /status` partial-update semantics (`enabled` optional); computers upsert preserving `datetime`; unknown computers default-blocked on sync.
+- `dev-docs/api.md`: 401 on missing/placeholder tokens (no fallback); 429 responses; 400 for oversized bodies and invalid app names; `PUT /status` with optional `enabled`; `/client/sync` default-deny semantics for unknown identities.
+- `dev-docs/agent.md`: TOKEN now mandatory (no fallback); matching is per-process-name with system-process protection in **both** modes; kills are exact-name (`taskkill /IM`, `pkill -x` quoted); power check precedes the empty-list skip; `mode=free` honored in service mode; state files 0600; `atomic.Pointer` sync state.
 - `CLAUDE.md`: add `go test ./...` (server, agent) to Build Commands; note `httprate` dependency; correct the dist description (`/var/lib/guardian` state dir, generated tokens, no `procsentinel-server.tar.gz`); add the new test files to the architecture listing.
 
 - [ ] **Step 2: Commit**
 
 ```bash
-git add specs/server.md specs/api.md specs/agent.md CLAUDE.md
+git add dev-docs/server.md dev-docs/api.md dev-docs/agent.md CLAUDE.md
 git commit -m "docs: sync specs and CLAUDE.md with security hardening changes"
 ```
 

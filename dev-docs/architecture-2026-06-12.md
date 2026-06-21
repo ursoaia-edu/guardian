@@ -1,6 +1,6 @@
 # ProcSentinel Architecture Review — 2026-06-12
 
-Companion to `specs/audit-2026-06-12.md` (security/UX findings). This document assesses the
+Companion to `dev-docs/audit-2026-06-12.md` (security/UX findings). This document assesses the
 architecture itself and sets the direction and roadmap. Deployment context: **internet-exposed
 server, personal use** — one admin, a handful of mostly-Windows machines. That context drives
 every recommendation: security and operability outrank scale and features.
@@ -76,7 +76,7 @@ Three options were considered:
 
 - **Identity layer:** per-agent tokens issued through one-time-code enrollment; the server
   derives identity from the token, never from request parameters. Designed in
-  `docs/superpowers/specs/2026-06-12-agent-enrollment-design.md`.
+  `dev-docs/2026-06-12-agent-enrollment-design.md`.
 - **Registry:** `computers` becomes the source of truth — server-assigned identity, friendly
   name, agent-reported hostname/OS/version, last-seen.
 - **Event log (M4):** append-only `events` table (`ts, computer, type, detail`); agents batch
@@ -101,7 +101,7 @@ Three options were considered:
 
 | Milestone | Content | Status / precondition |
 |---|---|---|
-| **M1 Security hardening** | 28 tasks: kill fallback tokens, default-deny, TLS, rate/body limits, non-root, agent kill-safety, mobile UX fixes | **Planned** — `docs/superpowers/plans/2026-06-12-security-hardening.md`. Prerequisite for everything below. |
+| **M1 Security hardening** | 28 tasks: kill fallback tokens, default-deny, TLS, rate/body limits, non-root, agent kill-safety, mobile UX fixes | **Planned** — `dev-docs/plans/2026-06-12-security-hardening.md`. Prerequisite for everything below. |
 | **M2 Agent enrollment & identity** | One-time-code enrollment, per-agent tokens, revocation, named computers with hostname/OS metadata | **Designed** — next to plan. Depends on M1 (test harness, rate limiting). |
 | **M3 Schedules** | Time-based policy: school-hours blacklist, bedtime block-all, per-day rules | After M2 (schedules per computer need trusted identity). |
 | **M4 Activity log + notifications** | Kill/online/offline/admin events; activity screen; optional push (e.g. ntfy) | After M2 (events from spoofable agents are noise). Includes the command-channel rework. |
