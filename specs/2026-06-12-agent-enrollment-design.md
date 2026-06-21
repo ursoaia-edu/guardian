@@ -3,9 +3,9 @@
 **Date:** 2026-06-12
 **Status:** Approved (design review in session)
 **Depends on:** security-hardening plan executed first
-(`dev-docs/plans/2026-06-12-security-hardening.md` — test harness, token validation,
+(`specs/plans/2026-06-12-security-hardening.md` — test harness, token validation,
 rate limiting, default-deny).
-**Context:** internet-exposed personal server. See `dev-docs/architecture-2026-06-12.md` (M2).
+**Context:** internet-exposed personal server. See `specs/architecture-2026-06-12.md` (M2).
 
 ## Problem
 
