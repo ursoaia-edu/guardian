@@ -6,5 +6,10 @@ build/
 guardian.db
 .DS_Store
 
+# Build artefact: server/build.sh copies the compiled binary here. It must
+# never be committed — a stale one shipped a hardcoded credential the
+# server no longer has (see the saas-multitenant-core branch's final review).
+dist/server/guardian-server
+
 .superpowers/
 .claude/worktrees/

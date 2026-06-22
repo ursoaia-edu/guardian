@@ -1,14 +1,64 @@
+# The "one container + Postgres" deploy from specs/2026-09-05-saas-design.md.
+# Copy server.env to .env in this directory first and fill in every
+# CHANGE_ME (including POSTGRES_OWNER_PASSWORD and GUARDIAN_APP_PASSWORD,
+# which must match the passwords embedded in MIGRATE_DATABASE_URL and
+# DATABASE_URL respectively), then: docker compose up -d --build
+#
+# Build the guardian-server binary first (server/build.sh copies it here) —
+# the Dockerfile packages an already-built binary, it does not compile Go.
+#
+# Named explicitly: docker compose otherwise derives the project name from
+# this directory's basename, which is "server" — identical to
+# server/docker-compose.dev.yml's default project name. Without this,
+# running both from a checkout collides on container/volume names and one
+# "docker compose down" can silently tear down the other's Postgres data.
+name: guardian-server
 services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: guardian_owner
+      POSTGRES_PASSWORD: ${POSTGRES_OWNER_PASSWORD:?set POSTGRES_OWNER_PASSWORD in .env}
+      POSTGRES_DB: guardian
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Creates guardian_app on first init only — see db-init/01-roles.sh.
+      # guardian_owner itself comes from POSTGRES_USER/POSTGRES_PASSWORD
+      # above, which is the image's own bootstrap behaviour.
+      - ./db-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U guardian_owner -d guardian"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  # Runs once per "docker compose up" and exits 0; "server" below will not
+  # start until it succeeds. The service's own role (guardian_app,
+  # DATABASE_URL) cannot alter the schema at all — see specs/server.md's
+  # Row-Level Security section — so this is the only thing here allowed to
+  # run DDL, matching the deploy order server/build.sh documents.
+  migrate:
+    build: .
+    command: ["guardian-server", "migrate"]
+    env_file:
+      - path: .env
+        required: false
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   server:
     build: .
     ports:
       - "8080:8080"
-    volumes:
-      - data:/data
     env_file:
       - path: .env
         required: false
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
     restart: unless-stopped
 
 volumes:
-  data:
+  pgdata:
