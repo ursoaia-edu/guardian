@@ -65,6 +65,15 @@ cd mobile && flutter pub run flutter_launcher_icons
 - Windows service support via `service_windows.go`, `shutdown_windows.go`, `main_windows.go`
 - Non-Windows stubs: `main_stub.go`, `service_stub.go`
 - Special commands: `force_poweroff`, `force_shutdown`
+- **Does not work against the current server.** The multi-tenant Postgres
+  server (see `specs/server.md`) serves `/agent/sync`, not `/client/sync`,
+  and authenticates with a per-machine token minted at `POST /agent/enroll`,
+  not the old shared `TOKEN`. This code still targets the old route and
+  credential, so every poll 404s. The wire format itself
+  (`ClientSyncResponse`/`ClientApplication`/`ClientEntry`) is unchanged on
+  purpose, so rewriting this file for the new server (plan 3) is a URL and
+  credential change, not a protocol change — but until that rewrite lands,
+  no agent build in this repo can talk to the current server.
 
 ### Mobile (`mobile/lib/`)
 - 4 screens: `HomeScreen` (blocked apps), `SystemScreen`, `ComputersScreen`, `SettingsScreen`

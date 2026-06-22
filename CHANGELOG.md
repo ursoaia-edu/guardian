@@ -10,7 +10,7 @@ All notable changes to this project will be documented in this file.
 - Replace the shared `TOKEN`/`ADMIN_TOKEN` bearer secrets with per-principal credentials: a session per signed-in user and a per-machine agent token minted at enrollment (`POST /agent/enroll`, replacing the old `/client/sync` identity parameter)
 - Add `guardian-server migrate`, running schema migrations (goose) under a separate owner role; the running service's own database role can read and write but cannot alter the schema
 - Remove `server/db.go`, the old `applications`/`server`/`client`/`computers` SQLite tables and in-memory caches, and the `modernc.org/sqlite` dependency
-- The agent's own wire format (`/agent/sync`'s `applications`/`mode`/`client` shape) is unchanged on purpose, so agents already in the field keep working
+- The agent's own wire format (`/agent/sync`'s `applications`/`mode`/`client` shape) is unchanged on purpose, so the plan 3 agent rewrite is a URL and credential change rather than a protocol change — **no client that ships today works against this server.** The route moved from `/client/sync` to `/agent/sync` and the shared `TOKEN` to a per-machine one, and the current `agent/main.go` still calls the old route with the old credential, so every deployed agent 404s on every poll; the Flutter app's five calls all target `/manage/*` with `ADMIN_TOKEN`, which no longer exists, so it is entirely non-functional against this server. Both are expected — the agent is plan 3 and the Flutter migration is separate — but neither currently works, unlike a plain reading of "agents already in the field keep working" would suggest
 - Tighten CORS to an explicit, credentialed `CABINET_ORIGIN` allow-list instead of a wildcard
 
 ### Guardian Console (new)
