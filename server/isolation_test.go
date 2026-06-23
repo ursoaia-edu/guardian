@@ -41,6 +41,21 @@ func TestCrossAccountAccessIsAlways404(t *testing.T) {
 	decodeInto(t, doJSON(t, h, "GET", "/api/v1/computers", nil, ca), &listA)
 	computerA := listA.Computers[0].ID
 
+	// A real membership on A's room, so the DELETE case below tests removing
+	// an actual row rather than a no-op on a nonexistent one.
+	cg := registerAndLogin(t, s, "guest@example.com")
+	if rr := doJSON(t, h, "POST", "/api/v1/rooms/"+roomA+"/members",
+		map[string]string{"email": "guest@example.com"}, ca); rr.Code != 201 {
+		t.Fatalf("setup: grant guest access to A's room: %d %s", rr.Code, rr.Body.String())
+	}
+	var guestMe struct {
+		UserID string `json:"user_id"`
+	}
+	decodeInto(t, doJSON(t, h, "GET", "/api/v1/me", nil, cg), &guestMe)
+	if guestMe.UserID == "" {
+		t.Fatal("setup: the guest's own /me returned no user_id")
+	}
+
 	cb := registerAndLogin(t, s, "b@example.com")
 
 	cases := []struct {
@@ -56,6 +71,7 @@ func TestCrossAccountAccessIsAlways404(t *testing.T) {
 		{"DELETE", "/api/v1/rooms/" + roomA + "/applications/" + appA, nil},
 		{"GET", "/api/v1/rooms/" + roomA + "/members", nil},
 		{"POST", "/api/v1/rooms/" + roomA + "/members", map[string]string{"email": "b@example.com"}},
+		{"DELETE", "/api/v1/rooms/" + roomA + "/members/" + guestMe.UserID, nil},
 		{"PATCH", "/api/v1/computers/" + computerA, map[string]any{"display_name": "stolen"}},
 		{"PATCH", "/api/v1/computers/" + computerA, map[string]any{"blocked": true}},
 	}
@@ -69,6 +85,91 @@ func TestCrossAccountAccessIsAlways404(t *testing.T) {
 			if rr.Code != http.StatusNotFound {
 				t.Fatalf("got %d, want 404 — account B reached account A's data: %s",
 					rr.Code, rr.Body.String())
+			}
+		})
+	}
+}
+
+// Nothing in TestCrossAccountAccessIsAlways404 asserts that the rightful
+// owner still gets a success response on those same paths, so a refactor
+// that broke a route for everyone — not just for account B — would leave
+// that suite green: every case would still be a 404. This branch broke a
+// route for everyone three separate times during execution and each time
+// the isolation suite noticed nothing, because it only ever checks the
+// negative. This test is the positive control: account A, acting as its
+// own room's owner, walks the same paths and must succeed on every one.
+//
+// Ordered so destructive calls (the DELETEs) run last, after every
+// non-destructive case that depends on the room/application/membership
+// still existing has already run.
+func TestOwnerCanReachEveryRouteTheIsolationSuiteChecks(t *testing.T) {
+	s := &Server{pool: testPool(t)}
+	h := s.setupRoutes()
+
+	ca := registerAndLogin(t, s, "a@example.com")
+	roomA := createRoom(t, s, ca, "A's room")
+	enroll(t, s, mintBindingToken(t, s, ca), "guid-owner", "PC-OWNER")
+
+	cg := registerAndLogin(t, s, "guest-owner-test@example.com")
+
+	var listA struct {
+		Computers []struct {
+			ID string `json:"id"`
+		} `json:"computers"`
+	}
+	decodeInto(t, doJSON(t, h, "GET", "/api/v1/computers", nil, ca), &listA)
+	if len(listA.Computers) != 1 {
+		t.Fatalf("setup: expected one computer, got %d", len(listA.Computers))
+	}
+	computerA := listA.Computers[0].ID
+
+	var appRow struct {
+		ID string `json:"id"`
+	}
+	decodeInto(t, doJSON(t, h, "POST", "/api/v1/rooms/"+roomA+"/applications",
+		map[string]string{"name": "steam.exe", "list": "blacklist"}, ca), &appRow)
+	if appRow.ID == "" {
+		t.Fatal("setup: the application was created but returned no id")
+	}
+	appA := appRow.ID
+
+	if rr := doJSON(t, h, "POST", "/api/v1/rooms/"+roomA+"/members",
+		map[string]string{"email": "guest-owner-test@example.com"}, ca); rr.Code != http.StatusCreated {
+		t.Fatalf("setup: grant guest access to A's room: %d %s", rr.Code, rr.Body.String())
+	}
+	var guestMe struct {
+		UserID string `json:"user_id"`
+	}
+	decodeInto(t, doJSON(t, h, "GET", "/api/v1/me", nil, cg), &guestMe)
+	if guestMe.UserID == "" {
+		t.Fatal("setup: the guest's own /me returned no user_id")
+	}
+
+	cases := []struct {
+		method string
+		path   string
+		body   any
+		want   int
+	}{
+		{"GET", "/api/v1/rooms/" + roomA, nil, http.StatusOK},
+		{"PATCH", "/api/v1/rooms/" + roomA, map[string]any{"name": "renamed"}, http.StatusOK},
+		{"GET", "/api/v1/rooms/" + roomA + "/applications", nil, http.StatusOK},
+		{"GET", "/api/v1/rooms/" + roomA + "/members", nil, http.StatusOK},
+		{"PATCH", "/api/v1/computers/" + computerA, map[string]any{"display_name": "kids-pc"}, http.StatusOK},
+		{"PATCH", "/api/v1/computers/" + computerA, map[string]any{"blocked": true}, http.StatusOK},
+		{"PATCH", "/api/v1/computers/" + computerA, map[string]any{"blocked": false}, http.StatusOK},
+		// Destructive: order matters from here down.
+		{"DELETE", "/api/v1/rooms/" + roomA + "/applications/" + appA, nil, http.StatusNoContent},
+		{"DELETE", "/api/v1/rooms/" + roomA + "/members/" + guestMe.UserID, nil, http.StatusNoContent},
+		{"DELETE", "/api/v1/rooms/" + roomA, nil, http.StatusNoContent},
+	}
+
+	for _, tc := range cases {
+		t.Run(fmt.Sprintf("%s %s %v", tc.method, tc.path, tc.body), func(t *testing.T) {
+			rr := doJSON(t, h, tc.method, tc.path, tc.body, ca)
+			if rr.Code != tc.want {
+				t.Fatalf("got %d, want %d — the owner was denied its own data: %s",
+					rr.Code, tc.want, rr.Body.String())
 			}
 		})
 	}
