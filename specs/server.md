@@ -177,6 +177,39 @@ Every one of these is a deliberate, narrow, and reasoned-about hole — not an
 oversight. Adding a table to this list is a decision that needs the same
 justification as the four above, not a default.
 
+### The composed pre-scope exposure (accepted for plan 1, closes in plan 2)
+
+Each pre-scope hole above is individually justified against the table it
+sits on. What the individual justifications do not cover is what an
+unscoped connection can see by combining them: `accounts`, `account_members`
+and `room_members` are each readable with no account scope, and `users` has
+no RLS at all (it isn't a multi-tenant table — see **Database Schema**
+below). Joined together in one query, an unscoped connection can read every
+customer's email, account name, role and room-sharing graph across the
+entire fleet in a single statement — not one account's worth, all of them.
+This was demonstrated live against this database during the final review.
+
+Nothing today grants an attacker an unscoped connection — `guardian_app`
+itself sits behind RLS on every table that has it, and the four pre-scope
+holes exist because a handler legitimately runs before a scope can be set,
+not because any handler hands out an unscoped connection to a caller. The
+risk is compositional and forward-looking: each hole is correct in
+isolation, but a future handler that runs a query against one of these four
+tables and simply forgets to call `s.inAccount` — the one mistake this
+whole architecture is otherwise built to make impossible — would not fail
+closed the way it would on every other table. It would succeed, and return
+every customer's data in the four tables above.
+
+The fix is an `app.user_id` GUC that narrows all four policies to the
+calling user's own row and their own account memberships, mirroring
+`app.account_id` and `current_account_id()`. It is not implemented in this
+plan: plan 1 has no code path that reads any of these four tables without
+already going through `inAccount` or one of the two intentionally-unscoped
+lookups (`GetActiveBindingToken`, `account_for_agent_token`), so there is
+no live exposure today — only a narrower margin for the next handler
+written against these tables than exists everywhere else in the schema.
+Plan 2 closes it.
+
 ### `account_for_agent_token`: why a function instead of a policy
 
 The obvious alternative to the function described under **Agent auth** would
@@ -237,6 +270,25 @@ Within the rooms they *have* been granted, a guest can:
   to a machine that happens to sit in their room right now) and not move it
   into a room they were not granted (`assertRoomVisible`, not the weaker
   `GetRoom`, gates the target room on a computer PATCH).
+
+### Email enumeration via add-member (accepted for now, closes in plan 2)
+
+`POST /rooms/{id}/members` (`handleAddRoomMember`) answers 404 for an email
+with no Guardian account and 201 for one that has one, so any registered
+user can test whether a given address belongs to a Guardian customer by
+attempting to add it to a room they manage. This is a known, accepted
+tradeoff, not an oversight:
+
+- the endpoint is manager-only and sits behind a registered account — the
+  prerequisite for the login oracle R9 closed (any unauthenticated caller,
+  no account needed) — so the exposure is materially smaller;
+- the 404 is truthful on purpose: the room owner needs to know their
+  invitation failed so they can tell the guest to register first, and a
+  vaguer "invitation sent either way" answer would silently strand every
+  owner who mistyped or misremembered an email;
+- the real fix is real email invitations, where "invitation sent" is the
+  uniform answer regardless of whether the address already has an account —
+  arriving with the cabinet in plan 2, not before.
 
 ## Database Schema
 
