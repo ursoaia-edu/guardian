@@ -50,7 +50,8 @@ cd mobile && flutter pub run flutter_launcher_icons
 - `middleware.go` — `SessionAuth` (cabinet: cookie or Bearer session token) and `AgentAuth` (per-agent Bearer token)
 - `tenant.go` — `Tenant`/context plumbing and `inAccount`, which scopes every query inside a transaction via the `app.account_id` Postgres GUC
 - `auth.go` — argon2id password hashing, session/agent/binding token minting (SHA-256 digests)
-- `handlers_auth.go`, `handlers_rooms.go`, `handlers_members.go`, `handlers_computers.go`, `handlers_agent.go`, `events.go` — HTTP handlers grouped by resource; `handlers.go` keeps only `/health`
+- `handlers_auth.go`, `handlers_rooms.go`, `handlers_members.go`, `handlers_computers.go`, `handlers_agent.go`, `events.go` — HTTP handlers grouped by resource; `handlers.go` keeps only `/health` (which pings Postgres)
+- `logging.go` — `clientIP` (proxy-aware, the only way an IP is read), slog request logger, panic recoverer
 - `migrate.go` — embeds and runs `db/migrations/*.sql` (goose) against `MIGRATE_DATABASE_URL`
 - `db/migrations/` (goose SQL, schema owned by `guardian_owner`), `db/queries/` (sqlc sources), `internal/db/` (generated sqlc code, see `sqlc.yaml`)
 - `models.go` — only the agent's wire format (`ClientApplication`, `ClientEntry`, `ClientSyncResponse`, unchanged on purpose) plus `ErrorResponse`
@@ -97,7 +98,7 @@ cd mobile && flutter pub run flutter_launcher_icons
 - `/api/v1/computers`, `/api/v1/computers/{computerID}` — computer listing and reassignment/blocking (session auth)
 - `/api/v1/binding-tokens` — mint/revoke the installer's enrollment token (session auth)
 - `GET /api/v1/events` — recent account activity (session auth)
-- `GET /health` — health check (unauthenticated)
+- `GET /health` — health check (unauthenticated; `503` when Postgres is unreachable)
 - Session requests may set `X-Guardian-Account: <account-id>` to act as a different one of the caller's own proven memberships (e.g. a guest room grant) — see `specs/api.md`
 - Full request/response reference: `specs/api.md`
 
@@ -118,7 +119,7 @@ dist/
                      # and Guardian.exe (the console)
 ```
 
-Server installs to `/usr/local/bin/procsentinel/` as a systemd service. Both agent and server read `.env` files for configuration; the agent's is `SERVER_ADDRESS`/`TOKEN`, the server's is `DATABASE_URL`/`MIGRATE_DATABASE_URL`/`CABINET_ORIGIN`/`SERVER_ADDRESS` (see `dist/server/server.env` and `specs/server.md`). Deploy order for the server: run `./guardian-server migrate` once with `MIGRATE_DATABASE_URL` set, then start the service — the running service's own role cannot alter the schema.
+Server installs to `/usr/local/bin/guardian/` as a systemd service running as the unprivileged `guardian` user (sandboxed unit; `install.sh` creates the user and never overwrites an existing `.env`). Both agent and server read `.env` files for configuration; the agent's is `SERVER_ADDRESS`/`TOKEN`, the server's is `DATABASE_URL`/`MIGRATE_DATABASE_URL`/`CABINET_ORIGIN`/`SERVER_ADDRESS`/`TRUSTED_PROXIES` (see `dist/server/server.env` and `specs/server.md`). `TRUSTED_PROXIES` is the number of reverse-proxy hops in front of the server — `0` (default, X-Forwarded-For ignored) bare, `1` behind Caddy/nginx. `dist/server/docker-compose.yml` runs Postgres + migrate + server + Caddy (TLS for `GUARDIAN_DOMAIN`) and sets `TRUSTED_PROXIES=1` itself; the server is not published outside the compose network. `server/build.sh` produces a static Linux binary (`CGO_ENABLED=0`; `GOARCH=amd64 ./build.sh` when cross-building) because the Dockerfile runs it on Alpine. Deploy order for the server: run `./guardian-server migrate` once (it reads `MIGRATE_DATABASE_URL` from `.env` in its working directory, like the service), then start the service — the running service's own role cannot alter the schema.
 
 ## Rules
 
@@ -130,6 +131,7 @@ Server installs to `/usr/local/bin/procsentinel/` as a systemd service. Both age
   then `TEST_DATABASE_URL` and `TEST_APP_DATABASE_URL` as in `specs/plans/2026-09-05-saas-multitenant-core.md`
 - `server/fakeagent` enrolls and syncs like the Windows agent, for exercising the API without Windows
 - `server/isolation_test.go` is mandatory: every new account-scoped endpoint gets a row in its table
+- CI: `.github/workflows/server.yml` runs gofmt, `go vet`, `sqlc diff` (committed `internal/db/` must match `db/queries/`), the full suite against a Postgres 16 service, and the static release build on every push touching `server/`
 - The agent and mobile app still have no automated tests
 - `tools/whitelist-gui/builtin.go` mirrors the hardcoded protected-process list in `agent/main.go` and must be kept in sync by hand
 - `tools/mkico` is a separate module (it needs `golang.org/x/image` only to build the console's icon)

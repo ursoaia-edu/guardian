@@ -1,11 +1,16 @@
-# The "one container + Postgres" deploy from specs/2026-09-05-saas-design.md.
-# Copy server.env to .env in this directory first and fill in every
-# CHANGE_ME (including POSTGRES_OWNER_PASSWORD and GUARDIAN_APP_PASSWORD,
-# which must match the passwords embedded in MIGRATE_DATABASE_URL and
-# DATABASE_URL respectively), then: docker compose up -d --build
+# The "one container + Postgres, Caddy in front" deploy from
+# specs/2026-09-05-saas-design.md. Copy server.env to .env in this directory
+# first and fill in every CHANGE_ME plus GUARDIAN_DOMAIN (the DNS name this
+# host answers on — Caddy fetches a certificate for it, so ports 80 and 443
+# must reach this machine from the internet). POSTGRES_OWNER_PASSWORD and
+# GUARDIAN_APP_PASSWORD must match the passwords embedded in
+# MIGRATE_DATABASE_URL and DATABASE_URL respectively. Then:
 #
-# Build the guardian-server binary first (server/build.sh copies it here) —
-# the Dockerfile packages an already-built binary, it does not compile Go.
+#   docker compose up -d --build
+#
+# Build the guardian-server binary first (GOARCH=amd64 server/build.sh for a
+# typical x86-64 host; it copies the binary here) — the Dockerfile packages
+# an already-built binary, it does not compile Go.
 #
 # Named explicitly: docker compose otherwise derives the project name from
 # this directory's basename, which is "server" — identical to
@@ -50,15 +55,44 @@ services:
 
   server:
     build: .
-    ports:
-      - "8080:8080"
+    # Not published: only Caddy reaches it. Publishing 8080 would bypass TLS
+    # and let a client hand the server its own X-Forwarded-For.
+    expose:
+      - "8080"
     env_file:
       - path: .env
         required: false
+    environment:
+      # Exactly one proxy hop — Caddy — sits between the internet and this
+      # process, whatever .env says for a bare-metal install.
+      TRUSTED_PROXIES: "1"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
     depends_on:
       migrate:
         condition: service_completed_successfully
     restart: unless-stopped
 
+  caddy:
+    image: caddy:2
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      GUARDIAN_DOMAIN: ${GUARDIAN_DOMAIN:?set GUARDIAN_DOMAIN in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - server
+    restart: unless-stopped
+
 volumes:
   pgdata:
+  caddy_data:
+  caddy_config:

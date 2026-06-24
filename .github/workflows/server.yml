@@ -1,0 +1,78 @@
+# The server's only safety net against a tenancy regression is
+# server/isolation_test.go, and a test nobody runs protects nothing. Every
+# push touching the server runs the whole suite against a real Postgres 16 —
+# RLS cannot be tested against a mock even in principle (specs/server.md,
+# Testing) — plus vet, gofmt, a check that the committed sqlc output still
+# matches the queries, and the same static build dist/server ships.
+name: server
+
+on:
+  push:
+    paths:
+      - "server/**"
+      - ".github/workflows/server.yml"
+  pull_request:
+    paths:
+      - "server/**"
+      - ".github/workflows/server.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: guardian_owner
+          POSTGRES_PASSWORD: guardian_owner
+          POSTGRES_DB: guardian
+        ports:
+          - "5432:5432"
+        options: >-
+          --health-cmd "pg_isready -U guardian_owner -d guardian"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    env:
+      OWNER_URL: postgres://guardian_owner:guardian_owner@localhost:5432/guardian
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+
+      # The same bootstrap server/docker-compose.dev.yml gets from the
+      # postgres image's init hook: the DML-only role the service connects
+      # as, which 00001_init.sql GRANTs to and therefore needs to exist.
+      - name: Create the application role
+        run: psql "$OWNER_URL" -v ON_ERROR_STOP=1 -f db/init/01-roles.sql
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "gofmt needed on:" $unformatted
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      # internal/db is committed, not generated at build time; this catches
+      # a query edited without re-running sqlc (or the other way round).
+      - name: sqlc drift
+        run: go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.27.0 diff
+
+      - name: go test
+        env:
+          TEST_DATABASE_URL: postgres://guardian_owner:guardian_owner@localhost:5432/guardian
+          TEST_APP_DATABASE_URL: postgres://guardian_app:guardian_app@localhost:5432/guardian
+        run: go test ./... -count=1
+
+      - name: Release build (static, as dist/server ships it)
+        run: CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /dev/null .

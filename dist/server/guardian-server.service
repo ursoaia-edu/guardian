@@ -1,13 +1,40 @@
 [Unit]
 Description=Guardian Server
-After=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 ExecStart=/usr/local/bin/guardian/guardian-server
 WorkingDirectory=/usr/local/bin/guardian
 Restart=always
 RestartSec=5
-User=root
+
+# An unprivileged account, created by install.sh. The server binds a high
+# port and writes nothing to disk, so root buys it nothing and would hand a
+# handler bug the whole machine.
+User=guardian
+Group=guardian
+
+# Sandboxing. The binary and .env live under /usr/local/bin/guardian, which
+# ProtectSystem=strict leaves readable; the server needs no writable path.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
 
 [Install]
 WantedBy=multi-user.target

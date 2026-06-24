@@ -1,0 +1,13 @@
+# Caddy is the one reverse-proxy hop the server's TRUSTED_PROXIES=1 refers
+# to (docker-compose.yml sets that for the server service). It terminates
+# TLS with an automatic Let's Encrypt certificate for GUARDIAN_DOMAIN, and —
+# because no trusted_proxies are configured here — it discards any
+# X-Forwarded-For a client sends and writes exactly one entry, the real
+# client address, which is what the server's rate limiter keys on.
+#
+# Putting a CDN or another load balancer in front of Caddy means declaring it
+# here (trusted_proxies) AND raising TRUSTED_PROXIES on the server.
+{$GUARDIAN_DOMAIN} {
+	encode gzip
+	reverse_proxy server:8080
+}

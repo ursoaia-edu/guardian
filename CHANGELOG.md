@@ -12,6 +12,16 @@ All notable changes to this project will be documented in this file.
 - Remove `server/db.go`, the old `applications`/`server`/`client`/`computers` SQLite tables and in-memory caches, and the `modernc.org/sqlite` dependency
 - The agent's own wire format (`/agent/sync`'s `applications`/`mode`/`client` shape) is unchanged on purpose, so the plan 3 agent rewrite is a URL and credential change rather than a protocol change — **no client that ships today works against this server.** The route moved from `/client/sync` to `/agent/sync` and the shared `TOKEN` to a per-machine one, and the current `agent/main.go` still calls the old route with the old credential, so every deployed agent 404s on every poll; the Flutter app's five calls all target `/manage/*` with `ADMIN_TOKEN`, which no longer exists, so it is entirely non-functional against this server. Both are expected — the agent is plan 3 and the Flutter migration is separate — but neither currently works, unlike a plain reading of "agents already in the field keep working" would suggest
 - Tighten CORS to an explicit, credentialed `CABINET_ORIGIN` allow-list instead of a wildcard
+- Resolve the client IP from `TRUSTED_PROXIES` (default `0`: the TCP peer, `X-Forwarded-For` ignored) instead of unconditionally trusting one forwarded hop — without a proxy in front, the old behaviour let any client pick its own rate-limit bucket; sessions and failed-login logs now record that resolved IP rather than the proxy's
+- Add per-request structured logging with request ids, a slog-backed panic recoverer, and a 10-second handler timeout
+- `GET /health` pings Postgres and answers `503` during a database outage instead of `200`
+- `guardian-server migrate` reads `.env` from its working directory like the service does
+
+### Deployment
+- `dist/server/docker-compose.yml` adds Caddy (automatic TLS for `GUARDIAN_DOMAIN`, the one trusted proxy hop) and stops publishing the server's port directly; the server has a compose healthcheck
+- `dist/server/Dockerfile` runs as a non-root user and ships CA certificates; `server/build.sh` builds a static Linux binary (`CGO_ENABLED=0`) so it actually starts on Alpine
+- `guardian-server.service` runs as an unprivileged `guardian` user under systemd sandboxing; `install.sh` creates that user, keeps an existing `.env` on re-runs, and restricts `.env` to `root:guardian 0640`
+- Add `.github/workflows/server.yml`: gofmt, vet, sqlc drift check, the full server suite against Postgres 16, and the static release build
 
 ### Guardian Console (new)
 - Windows GUI (`tools/whitelist-gui`) for managing the agent on a single machine
