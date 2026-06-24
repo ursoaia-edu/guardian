@@ -40,6 +40,12 @@ sql:
           # the guard that the tag still applies after a regeneration.
           - column: "computers.token_hash"
             go_struct_tag: 'json:"-"'
+          # Same reasoning as computers.token_hash, applied before anything
+          # actually serialises db.User: nothing does yet, which is exactly
+          # why this is worth doing now rather than once plan 2 adds a
+          # user-shaped endpoint and a handler returns a User verbatim.
+          - column: "users.password_hash"
+            go_struct_tag: 'json:"-"'
           # sqlc maps jsonb to []byte, and encoding/json marshals a []byte field
           # as a base64 string — so without this every response ships
           # "hardware":"e30=" instead of "hardware":{}. json.RawMessage has the

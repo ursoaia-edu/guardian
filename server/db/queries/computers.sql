@@ -1,9 +1,6 @@
 -- name: ListComputers :many
 SELECT * FROM computers ORDER BY COALESCE(NULLIF(display_name, ''), hostname);
 
--- name: GetComputer :one
-SELECT * FROM computers WHERE id = $1;
-
 -- name: CountComputers :one
 SELECT count(*) FROM computers;
 

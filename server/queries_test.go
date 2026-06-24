@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
@@ -42,11 +44,31 @@ func TestCreateAccountWithOwner(t *testing.T) {
 		t.Fatalf("AddAccountMember: %v", err)
 	}
 
-	accounts, err := q.ListAccountsForUser(ctx, user.ID)
+	// ListAccessibleAccounts, not ListAccountsForUser: it is what production
+	// (SessionAuth, handleMe) actually calls, and it is the union that also
+	// covers room-guest access — ListAccountsForUser only ever saw
+	// account_members and had no production caller.
+	accounts, err := q.ListAccessibleAccounts(ctx, user.ID)
 	if err != nil {
-		t.Fatalf("ListAccountsForUser: %v", err)
+		t.Fatalf("ListAccessibleAccounts: %v", err)
 	}
-	if len(accounts) != 1 || accounts[0].ID != account.ID {
-		t.Fatalf("expected exactly the created account, got %+v", accounts)
+	if len(accounts) != 1 || accounts[0].AccountID != account.ID || accounts[0].Role != "owner" {
+		t.Fatalf("expected exactly the created account as owner, got %+v", accounts)
+	}
+}
+
+// No handler serialises db.User today — that is exactly why this is worth
+// guarding now, the same way TestComputerResponseHidesTheTokenHash guards
+// computers.token_hash: sqlc.yaml's json:"-" override on password_hash has
+// to survive a regeneration before plan 2 adds the first user-shaped
+// endpoint, or the hash ships the moment one does.
+func TestUserJSONHidesThePasswordHash(t *testing.T) {
+	u := db.User{ID: [16]byte{1}, Email: "parent@example.com", PasswordHash: "$argon2id$secret-hash-material"}
+	out, err := json.Marshal(u)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(out), "password_hash") || strings.Contains(string(out), "secret-hash-material") {
+		t.Fatalf("password hash leaked into db.User's JSON encoding: %s", out)
 	}
 }

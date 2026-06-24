@@ -276,8 +276,9 @@ digest is stored.
 
 `owner`/`admin` only. Revokes **every** binding token this account has ever
 minted (all rows marked `revoked_at`). Machines already enrolled are
-unaffected — they carry their own per-machine token by then; revoke one of
-those by deleting the computer.
+unaffected — they carry their own per-machine token by then. There is no
+delete-computer endpoint yet to revoke one of those individually —
+unenrolling a machine arrives with the cabinet.
 
 **Response** `204`.
 

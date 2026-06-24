@@ -34,34 +34,6 @@ func (q *Queries) GetAccountComputerLimit(ctx context.Context, id uuid.UUID) (in
 	return computer_limit, err
 }
 
-const getComputer = `-- name: GetComputer :one
-SELECT id, account_id, room_id, display_name, machine_guid, hostname, os_name, os_build, arch, agent_version, hardware, runtime, token_hash, blocked, enrolled_at, last_seen_at FROM computers WHERE id = $1
-`
-
-func (q *Queries) GetComputer(ctx context.Context, id uuid.UUID) (Computer, error) {
-	row := q.db.QueryRow(ctx, getComputer, id)
-	var i Computer
-	err := row.Scan(
-		&i.ID,
-		&i.AccountID,
-		&i.RoomID,
-		&i.DisplayName,
-		&i.MachineGuid,
-		&i.Hostname,
-		&i.OsName,
-		&i.OsBuild,
-		&i.Arch,
-		&i.AgentVersion,
-		&i.Hardware,
-		&i.Runtime,
-		&i.TokenHash,
-		&i.Blocked,
-		&i.EnrolledAt,
-		&i.LastSeenAt,
-	)
-	return i, err
-}
-
 const getComputerByGUID = `-- name: GetComputerByGUID :one
 SELECT id, account_id, room_id, display_name, machine_guid, hostname, os_name, os_build, arch, agent_version, hardware, runtime, token_hash, blocked, enrolled_at, last_seen_at FROM computers WHERE account_id = $1 AND machine_guid = $2
 `

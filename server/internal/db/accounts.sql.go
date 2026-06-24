@@ -63,7 +63,7 @@ RETURNING id, email, password_hash, name, email_verified_at, created_at
 
 type CreateUserParams struct {
 	Email        string `json:"email"`
-	PasswordHash string `json:"password_hash"`
+	PasswordHash string `json:"-"`
 	Name         string `json:"name"`
 }
 
@@ -79,23 +79,6 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.CreatedAt,
 	)
 	return i, err
-}
-
-const getAccountMembership = `-- name: GetAccountMembership :one
-SELECT role FROM account_members
-WHERE account_id = $1 AND user_id = $2
-`
-
-type GetAccountMembershipParams struct {
-	AccountID uuid.UUID `json:"account_id"`
-	UserID    uuid.UUID `json:"user_id"`
-}
-
-func (q *Queries) GetAccountMembership(ctx context.Context, arg GetAccountMembershipParams) (string, error) {
-	row := q.db.QueryRow(ctx, getAccountMembership, arg.AccountID, arg.UserID)
-	var role string
-	err := row.Scan(&role)
-	return role, err
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
@@ -114,41 +97,4 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error
 		&i.CreatedAt,
 	)
 	return i, err
-}
-
-const listAccountsForUser = `-- name: ListAccountsForUser :many
-SELECT a.id, a.name, a.owner_user_id, a.plan, a.computer_limit, a.stripe_customer_id, a.subscription_status, a.grace_until, a.created_at FROM accounts a
-JOIN account_members m ON m.account_id = a.id
-WHERE m.user_id = $1
-ORDER BY a.created_at
-`
-
-func (q *Queries) ListAccountsForUser(ctx context.Context, userID uuid.UUID) ([]Account, error) {
-	rows, err := q.db.Query(ctx, listAccountsForUser, userID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []Account
-	for rows.Next() {
-		var i Account
-		if err := rows.Scan(
-			&i.ID,
-			&i.Name,
-			&i.OwnerUserID,
-			&i.Plan,
-			&i.ComputerLimit,
-			&i.StripeCustomerID,
-			&i.SubscriptionStatus,
-			&i.GraceUntil,
-			&i.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }

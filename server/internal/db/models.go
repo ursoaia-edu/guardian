@@ -109,7 +109,7 @@ type Session struct {
 type User struct {
 	ID              uuid.UUID          `json:"id"`
 	Email           string             `json:"email"`
-	PasswordHash    string             `json:"password_hash"`
+	PasswordHash    string             `json:"-"`
 	Name            string             `json:"name"`
 	EmailVerifiedAt pgtype.Timestamptz `json:"email_verified_at"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`

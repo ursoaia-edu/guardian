@@ -45,8 +45,9 @@ func (s *Server) handleCreateBindingToken(w http.ResponseWriter, r *http.Request
 // A binding token lives for a year and one downloaded installer carries it to
 // every machine, so without a kill switch a leaked installer is a year-long
 // credential with no remedy. Machines already enrolled keep working: they hold
-// their own per-machine tokens by now, and those are revoked one at a time by
-// deleting the computer.
+// their own per-machine tokens by now, unaffected by this. There is no
+// delete-computer endpoint yet to revoke one of those individually —
+// unenrolling a machine arrives with the cabinet.
 func (s *Server) handleRevokeBindingTokens(w http.ResponseWriter, r *http.Request) {
 	t, ok := mustTenant(w, r)
 	if !ok {

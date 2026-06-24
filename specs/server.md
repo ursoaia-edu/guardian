@@ -349,8 +349,9 @@ policy on `computers` only ever tests that row's own `account_id`, never the
 The token an installer carries, shared by every machine downloaded from one
 account's cabinet. `id`, `account_id`, `token_hash` (unique), `expires_at`
 (1 year), `revoked_at`. Revoking is a single account-wide `UPDATE`; per-machine
-credentials (`computers.token_hash`) are unaffected and are revoked one at a
-time by deleting the computer.
+credentials (`computers.token_hash`) are unaffected. There is no
+delete-computer endpoint yet to revoke one of those individually —
+unenrolling a machine arrives with the cabinet.
 
 ### `events`
 An append-only activity feed. `id`, `account_id`, `room_id`/`computer_id`
