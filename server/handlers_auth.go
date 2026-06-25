@@ -157,7 +157,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		stored = user.PasswordHash
 	}
 	if !verifyPassword(stored, req.Password) || err != nil {
-		slog.Warn("failed login", "remote", r.RemoteAddr)
+		slog.Warn("failed login", "ip", clientIP(r))
 		writeJSON(w, http.StatusUnauthorized, ErrorResponse{Error: "Invalid email or password"})
 		return
 	}
@@ -166,7 +166,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	expires := time.Now().Add(sessionTTL)
 	if err := q.CreateSession(ctx, db.CreateSessionParams{
 		TokenHash: hash, UserID: user.ID, ExpiresAt: pgtype.Timestamptz{Time: expires, Valid: true},
-		Ip: r.RemoteAddr, UserAgent: r.UserAgent(),
+		Ip: clientIP(r), UserAgent: r.UserAgent(),
 	}); err != nil {
 		slog.Error("create session", "error", err)
 		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "Could not sign in"})

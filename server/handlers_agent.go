@@ -108,7 +108,7 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "Could not enroll this computer"})
 			return
 		}
-		slog.Warn("enrollment with an invalid binding token", "remote", r.RemoteAddr)
+		slog.Warn("enrollment with an invalid binding token", "ip", clientIP(r))
 		writeJSON(w, http.StatusUnauthorized, ErrorResponse{Error: "This installer's token is no longer valid"})
 		return
 	}
