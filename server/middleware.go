@@ -148,12 +148,12 @@ func (s *Server) AgentAuth(next http.Handler) http.Handler {
 		var accountID *uuid.UUID
 		if err := s.pool.QueryRow(r.Context(),
 			`SELECT account_for_agent_token($1)`, hash).Scan(&accountID); err != nil {
-			slog.Error("resolve agent token", "remote", r.RemoteAddr, "error", err)
+			slog.Error("resolve agent token", "ip", clientIP(r), "error", err)
 			writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "Internal error"})
 			return
 		}
 		if accountID == nil {
-			slog.Warn("agent with an unknown token", "remote", r.RemoteAddr)
+			slog.Warn("agent with an unknown token", "ip", clientIP(r))
 			writeJSON(w, http.StatusUnauthorized, ErrorResponse{Error: "Unauthorized"})
 			return
 		}
@@ -170,7 +170,7 @@ func (s *Server) AgentAuth(next http.Handler) http.Handler {
 			// Either way the agent is not authenticated, but the error is worth
 			// keeping: without it this line cannot be told apart from a bogus
 			// token in the logs.
-			slog.Warn("agent token resolved but its computer did not", "remote", r.RemoteAddr, "error", err)
+			slog.Warn("agent token resolved but its computer did not", "ip", clientIP(r), "error", err)
 			writeJSON(w, http.StatusUnauthorized, ErrorResponse{Error: "Unauthorized"})
 			return
 		}

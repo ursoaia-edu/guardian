@@ -57,15 +57,40 @@ func perIP(limit int) func(http.Handler) http.Handler {
 	})
 }
 
+// requestTimeout cancels a handler's context — and with it every query it
+// has in flight — before the http.Server's 15-second write timeout closes
+// the connection underneath it. Below that limit on purpose: a handler that
+// outlives the connection would finish its work for nobody.
+const requestTimeout = 10 * time.Second
+
+// clientIPMiddleware picks how the client address is resolved from
+// TRUSTED_PROXIES. With no proxy in front (the default), the TCP peer is the
+// client and X-Forwarded-For is ignored — a header the client can write is
+// not evidence of anything. Behind N proxies, the entry N hops from the
+// right of X-Forwarded-For is the client; the compose deploy in dist/server
+// sets 1 for Caddy. Getting the count wrong in either direction is visible
+// rather than exploitable: too low behind a proxy buckets everyone under the
+// proxy's address (an outage of rate limiting, not a bypass), too high sets
+// no IP at all and every limiter shares one bucket.
+func (s *Server) clientIPMiddleware() func(http.Handler) http.Handler {
+	if s.trustedProxies == 0 {
+		return middleware.ClientIPFromRemoteAddr
+	}
+	return middleware.ClientIPFromXFFTrustedProxies(s.trustedProxies)
+}
+
 func (s *Server) setupRoutes() *chi.Mux {
 	r := chi.NewRouter()
 
-	// The server sits behind exactly one reverse proxy in this deployment
-	// (Caddy — see specs/2026-09-05-saas-design.md's deploy section), so the
-	// real client IP is the single entry ClientIPFromXFFTrustedProxies adds
-	// to X-Forwarded-For. Without this, rate limiting below would key on
-	// Caddy's own address and bucket every client together.
-	r.Use(middleware.ClientIPFromXFFTrustedProxies(1))
+	// Order matters: the id and the client IP are resolved first so every
+	// later log line carries them; the logger wraps the recoverer so a panic
+	// is logged as the 500 it became; the timeout sits inside both so its
+	// 504 is logged like any other status.
+	r.Use(middleware.RequestID)
+	r.Use(s.clientIPMiddleware())
+	r.Use(requestLogger)
+	r.Use(recoverer)
+	r.Use(middleware.Timeout(requestTimeout))
 
 	origins := []string{"http://localhost:5173"}
 	if o := os.Getenv("CABINET_ORIGIN"); o != "" {
@@ -80,7 +105,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 	}))
 
 	// Unauthenticated
-	r.Get("/health", handleHealth)
+	r.Get("/health", s.handleHealth)
 
 	// The binding token in the body is this route's gate; see handlers_agent.go.
 	r.With(maxBody, perIP(enrollRateLimit)).Post("/agent/enroll", s.handleEnroll)

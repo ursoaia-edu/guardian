@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -45,14 +46,14 @@ func TestOversizedEnrollBodyIsRejected(t *testing.T) {
 	}
 }
 
-// loginAttemptFrom sends one login attempt as if it arrived through the
-// single trusted reverse proxy, from the given simulated client IP.
+// loginAttemptFrom sends one login attempt carrying the given IP in
+// X-Forwarded-For. Whether the server believes that header is decided by
+// Server.trustedProxies: the proxied tests below set it to 1, the spoofing
+// test leaves it at the zero default.
 func loginAttemptFrom(h http.Handler, ip string) int {
 	body, _ := json.Marshal(map[string]string{"email": "nobody@example.com", "password": "whatever-wrong"})
 	req := httptest.NewRequest("POST", "/api/v1/auth/login", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	// Resolved by middleware.ClientIPFromXFFTrustedProxies(1): one hop, one
-	// entry names the simulated client.
 	req.Header.Set("X-Forwarded-For", ip)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -64,7 +65,7 @@ func loginAttemptFrom(h http.Handler, ip string) int {
 // verification — the sharp edge R9 deliberately left open (every attempt,
 // hit or miss, costs full argon2id work) closed by a limiter instead.
 func TestLoginIsRateLimitedPerIP(t *testing.T) {
-	s := &Server{pool: testPool(t)}
+	s := &Server{pool: testPool(t), trustedProxies: 1}
 	h := s.setupRoutes()
 
 	var lastCode int
@@ -80,7 +81,7 @@ func TestLoginIsRateLimitedPerIP(t *testing.T) {
 // otherwise "per IP" is a lie and one abusive client locks out every other
 // family sharing the service.
 func TestLoginRateLimitIsPerIPNotGlobal(t *testing.T) {
-	s := &Server{pool: testPool(t)}
+	s := &Server{pool: testPool(t), trustedProxies: 1}
 	h := s.setupRoutes()
 
 	var exhausted int
@@ -93,5 +94,24 @@ func TestLoginRateLimitIsPerIPNotGlobal(t *testing.T) {
 
 	if code := loginAttemptFrom(h, "203.0.113.2"); code == http.StatusTooManyRequests {
 		t.Fatal("a second, distinct client IP was rate-limited by the first one's traffic")
+	}
+}
+
+// With no proxy configured, X-Forwarded-For is whatever the client typed. If
+// the limiter believed it anyway, a fresh forged address per request would
+// hand every attempt its own untouched bucket — the limiter would exist and
+// protect nothing. Every attempt here arrives from the same TCP peer
+// (httptest's fixed RemoteAddr) under a different forged header, and the
+// limit must still trip.
+func TestSpoofedXFFDoesNotEscapeTheLimitWithoutAProxy(t *testing.T) {
+	s := &Server{pool: testPool(t)} // trustedProxies == 0
+	h := s.setupRoutes()
+
+	var lastCode int
+	for i := 0; i < loginRateLimit+1; i++ {
+		lastCode = loginAttemptFrom(h, fmt.Sprintf("203.0.113.%d", i+1))
+	}
+	if lastCode != http.StatusTooManyRequests {
+		t.Fatalf("request %d with a forged X-Forwarded-For got %d, want 429: the limiter trusted a header nobody vouched for", loginRateLimit+1, lastCode)
 	}
 }
