@@ -24,7 +24,8 @@ every account authenticates its own users (via a session) and its own agents
 | `handlers_computers.go`  | computer listing and reassignment/blocking                     |
 | `handlers_agent.go`      | binding tokens, agent enrollment, agent sync                   |
 | `events.go`              | account activity feed                                          |
-| `handlers.go`            | `/health` only                                                 |
+| `handlers.go`            | `/health` only (pings Postgres, see **Health**)                |
+| `logging.go`             | `clientIP` (proxy-aware address resolution), slog request logger, panic recoverer |
 | `migrate.go`             | embeds and runs `db/migrations/*.sql` via goose                |
 | `models.go`              | the agent's wire format (`ClientApplication`, `ClientEntry`, `ClientSyncResponse`) plus `ErrorResponse` |
 | `helpers.go`             | JSON writer, `.env` loader, small utilities                    |
@@ -37,13 +38,15 @@ every account authenticates its own users (via a session) and its own agents
 
 ```go
 type Server struct {
-    pool *pgxpool.Pool
+    pool           *pgxpool.Pool
+    trustedProxies int // from TRUSTED_PROXIES; see "Client IP resolution"
 }
 ```
 
 The server holds nothing else — no cache, no mutex, no per-request state.
 Every handler reads and writes through the pool, inside a transaction scoped
-to one account (`s.inAccount`, see below).
+to one account (`s.inAccount`, see below). `trustedProxies` is configuration
+read once at startup, not state.
 
 ## Authentication
 
@@ -432,11 +435,75 @@ same role — on every environment and every run, indefinitely.
 
 ## Startup Behavior
 
-1. `go run . migrate` — separate invocation, exits after applying migrations
-2. Normal startup: load `.env` if present, open a `pgxpool.Pool` against
-   `DATABASE_URL`, ping it (5s timeout), start the HTTP server
-3. Graceful shutdown on `SIGINT`/`SIGTERM`, 5-second drain, then the pool is
+1. `.env` in the working directory is loaded first, for both paths below
+   (real environment variables take precedence)
+2. `guardian-server migrate` — separate invocation, exits after applying
+   migrations using `MIGRATE_DATABASE_URL`
+3. Normal startup: validate `TRUSTED_PROXIES`, open a `pgxpool.Pool` against
+   `DATABASE_URL`, ping it (5s timeout), start the HTTP server. A listen
+   failure is logged and exits 1 after closing the pool.
+4. Graceful shutdown on `SIGINT`/`SIGTERM`, 5-second drain, then the pool is
    closed
+
+## Middleware Stack
+
+Installed once in `setupRoutes`, in this order, on every route:
+
+1. `middleware.RequestID` — a per-request id every later log line carries
+2. the client-IP resolver chosen by `TRUSTED_PROXIES` (see **Client IP
+   resolution**)
+3. `requestLogger` (`logging.go`) — one structured line per request:
+   `request_id`, method, path, status, bytes, `duration_ms`, `ip`.
+   Successful `/health` probes are skipped so an orchestrator polling every
+   two seconds does not bury the lines that matter.
+4. `recoverer` (`logging.go`) — a panicking handler becomes a logged 500
+   (with the stack, through slog, keyed by request id) rather than a dropped
+   connection and a plain-text line on stderr. `http.ErrAbortHandler` is
+   re-panicked, as net/http requires.
+5. `middleware.Timeout(10s)` — cancels the handler's context, and so every
+   query it has in flight, before the server's 15-second write timeout
+   closes the connection underneath it.
+6. CORS (see **CORS**)
+
+### Client IP resolution
+
+Every place the server needs a client address — the per-IP rate limiter,
+the `ip` stored on a session at login, failed-login and bad-token warnings,
+the request log — goes through `clientIP(r)` in `logging.go`, which returns
+what the client-IP middleware resolved and falls back to the TCP peer.
+Nothing else in the package reads `r.RemoteAddr`: behind a proxy that names
+the proxy, and every session and every warning would carry the same
+address.
+
+Which middleware resolves the address is `TRUSTED_PROXIES`:
+
+- **`0` (default)** — `middleware.ClientIPFromRemoteAddr`: the TCP peer is
+  the client and `X-Forwarded-For` is ignored entirely. This is the only
+  safe value when nothing sits in front of the server, and the reason it is
+  the default: a forwarded header the client itself can write is not
+  evidence of anything, and a limiter that believed it would hand every
+  request a fresh bucket for the price of a forged header.
+- **`N ≥ 1`** — `middleware.ClientIPFromXFFTrustedProxies(N)`: the entry
+  `N` hops from the right of `X-Forwarded-For` is the client.
+  `dist/server/docker-compose.yml` sets `1` for its Caddy, which strips any
+  inbound `X-Forwarded-For` and writes exactly one entry. A CDN or second
+  load balancer in front of Caddy means `2`, and declaring it in the
+  Caddyfile's `trusted_proxies`.
+
+Getting the count wrong is visible, not exploitable: too low behind a proxy
+buckets every client under the proxy's address (rate limiting stops
+working, and the logs say so), too high resolves no address at all and every
+limiter shares one bucket. `TestSpoofedXFFDoesNotEscapeTheLimitWithoutAProxy`
+holds the default to its promise.
+
+## Health
+
+`GET /health` pings the pool with a 2-second timeout and answers `200
+{"status":"ok"}` only when Postgres does. During a database outage it
+answers `503 {"status":"degraded","database":"unreachable"}` and logs the
+error. Without the ping the route reported `ok` straight through an outage,
+so the compose healthcheck, a load balancer, or an uptime monitor would
+keep routing to a process that could serve nothing but this one route.
 
 ## API Endpoints
 
@@ -498,13 +565,10 @@ reaches with no session and no agent token:
   a fleet of machines behind one NAT — a school, an office — is legitimate
   traffic, not abuse.
 
-The client IP the limiter keys on is resolved by
-`middleware.ClientIPFromXFFTrustedProxies(1)`, installed once at the top of
-`setupRoutes`: this deployment sits behind exactly one reverse proxy (Caddy,
-see `specs/2026-09-05-saas-design.md`'s deploy section), so the single
-X-Forwarded-For entry that proxy adds is the real client. A deployment that
-puts another proxy in front of Caddy (a CDN, a second load balancer) must
-update the trusted-proxy count here or every client is bucketed together.
+The client IP the limiter keys on is whatever the client-IP middleware
+selected by `TRUSTED_PROXIES` resolved — see **Client IP resolution** under
+the middleware stack above. The count must match the deployment: `0` for a
+bare install, `1` behind the compose file's Caddy.
 
 **Per-email keying is not implemented in this plan.** The design spec asks
 for login to be rate-limited "per email and per IP". `httprate` supports a
@@ -524,14 +588,48 @@ precedence.
 | `MIGRATE_DATABASE_URL`    | `guardian_owner` connection string, used only by `guardian-server migrate` |
 | `CABINET_ORIGIN`          | comma-separated origins allowed to send credentialed requests |
 | `SERVER_ADDRESS`          | listen address (full URL or `host:port`), default `0.0.0.0:8080` |
+| `TRUSTED_PROXIES`         | reverse-proxy hops in front of the server; `0` (default) ignores `X-Forwarded-For`, `1` behind Caddy/nginx. A non-integer or negative value is a startup error |
 
 ## HTTP Server Settings
 
-| Setting        | Value      |
-|----------------|------------|
-| Read timeout   | 15 seconds |
-| Write timeout  | 15 seconds |
-| Idle timeout   | 60 seconds |
+| Setting                    | Value      |
+|----------------------------|------------|
+| Read timeout               | 15 seconds |
+| Write timeout              | 15 seconds |
+| Idle timeout               | 60 seconds |
+| Handler (context) timeout  | 10 seconds (`middleware.Timeout`, below the write timeout on purpose) |
+| Health-check DB ping       | 2 seconds  |
+
+## Deployment
+
+`server/build.sh` builds a **static** Linux binary (`CGO_ENABLED=0
+GOOS=linux`, `-trimpath -ldflags="-s -w"`) into `dist/server/`. Static is
+not cosmetic: `dist/server/Dockerfile` runs the binary on Alpine, whose musl
+libc cannot load a glibc-linked executable, and the failure there is a bare
+"not found" pointing nowhere. `GOARCH` defaults to the building machine —
+`GOARCH=amd64 ./build.sh` when building on an arm64 laptop for an x86-64
+host.
+
+Two supported shapes, both under `dist/server/`:
+
+- **Docker** (`docker-compose.yml`): `postgres` → `migrate` (runs once, must
+  succeed) → `server` → `caddy`. Caddy terminates TLS with an automatic
+  Let's Encrypt certificate for `GUARDIAN_DOMAIN` and is the single proxy
+  hop the compose file's `TRUSTED_PROXIES=1` refers to; the server's port
+  is `expose`d to the compose network only, never published, so nothing
+  can reach it without going through Caddy. The image runs as a non-root
+  user and carries CA certificates for the first outbound HTTPS call. The
+  server has a compose healthcheck against `/health`.
+- **systemd** (`install.sh` + `guardian-server.service`): installs to
+  `/usr/local/bin/guardian/`, runs as the unprivileged `guardian` system
+  user (created by the script) under a sandboxed unit — `ProtectSystem=strict`,
+  `NoNewPrivileges`, an empty capability set, and the rest; the server
+  writes nothing to disk, so it needs no writable path. `.env` is written
+  once (`server.env` is never copied over an existing `.env` on a re-run)
+  and restricted to `root:guardian 0640`. `migrate` runs from the install
+  directory before the service is restarted. Nothing sits in front of the
+  server in this shape unless the operator adds it, so `TRUSTED_PROXIES`
+  stays `0` until they do.
 
 ## Key Dependencies
 
@@ -563,6 +661,13 @@ request path) must both be exported or the suite skips silently. See
 a row asserting that a second account's connection cannot read or write it.
 A new table without a corresponding row there is an unreviewed tenancy claim.
 
+`.github/workflows/server.yml` runs on every push and pull request touching
+`server/`: gofmt, `go vet`, `sqlc diff` (the committed `internal/db/` must
+match `db/queries/` — a query edited without regenerating fails the build),
+the full suite against a Postgres 16 service with both roles created the
+way `docker-compose.dev.yml` does, and the same static release build
+`build.sh` produces. A test nobody runs protects nothing.
+
 ## Key Design Decisions
 
 1. **RLS is the tenancy boundary, not handler code.** Every handler still
@@ -589,3 +694,10 @@ A new table without a corresponding row there is an unreviewed tenancy claim.
    `free` — "blocked" and "no policy at all" must never be the same wire
    response.
 8. **CORS is an explicit allow-list with credentials, never a wildcard.**
+9. **`X-Forwarded-For` is believed only when configuration says a proxy
+   wrote it.** `TRUSTED_PROXIES` defaults to `0`; the compose deploy sets
+   `1` for its own Caddy. Trusting a forwarded hop that nothing vouches for
+   turns every per-IP limit into a suggestion.
+10. **The process runs unprivileged and writes nothing.** Non-root in the
+    container, a sandboxed system user under systemd; the only writable
+    thing it needs is a Postgres connection.

@@ -39,11 +39,19 @@ claim on.
 
 ### `GET /health`
 
-Health check for load balancers and monitoring.
+Health check for load balancers and monitoring. It pings PostgreSQL (2-second
+timeout) and reports `200` only when the database answers, so an orchestrator
+stops routing to a server that can serve nothing but this route. Successful
+probes are not written to the request log.
 
 **Response** `200`
 ```json
 {"status": "ok"}
+```
+
+**Response** `503` — the database is unreachable
+```json
+{"status": "degraded", "database": "unreachable"}
 ```
 
 ---
