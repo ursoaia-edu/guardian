@@ -64,11 +64,12 @@ docker compose up -d     # Option C — Docker (env is optional; pass vars via c
 
 ### 2. Agent (Windows)
 
-Edit `agent.env` with your server details:
+Edit `agent.env` with your server details (the binding token comes from the
+cabinet's installer page; the agent deletes it from its `.env` once enrolled):
 
 ```env
-SERVER_ADDRESS=your_server_address
-TOKEN=your_token_here
+SERVER_ADDRESS=https://guardian.example.com
+BINDING_TOKEN=your_binding_token_here
 ```
 
 Double-click `Install-Guardian.bat` (auto-detects 32/64-bit and runs the right installer as admin). The installer prompts for an optional `IDENTITY` number to register the computer with the server. To remove it, double-click `Uninstall-Guardian.bat`.

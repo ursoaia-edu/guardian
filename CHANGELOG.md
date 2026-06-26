@@ -16,12 +16,21 @@ All notable changes to this project will be documented in this file.
 - Add per-request structured logging with request ids, a slog-backed panic recoverer, and a 10-second handler timeout
 - `GET /health` pings Postgres and answers `503` during a database outage instead of `200`
 - `guardian-server migrate` reads `.env` from its working directory like the service does
+- `/agent/sync` is now `POST` with telemetry in a JSON body (64 KiB cap) instead of a `runtime` query parameter, so telemetry is not written to proxy access logs and cannot grow a computer's row without bound; `hardware` at enrollment is capped the same way
 
 ### Deployment
 - `dist/server/docker-compose.yml` adds Caddy (automatic TLS for `GUARDIAN_DOMAIN`, the one trusted proxy hop) and stops publishing the server's port directly; the server has a compose healthcheck
 - `dist/server/Dockerfile` runs as a non-root user and ships CA certificates; `server/build.sh` builds a static Linux binary (`CGO_ENABLED=0`) so it actually starts on Alpine
 - `guardian-server.service` runs as an unprivileged `guardian` user under systemd sandboxing; `install.sh` creates that user, keeps an existing `.env` on re-runs, and restricts `.env` to `root:guardian 0640`
 - Add `.github/workflows/server.yml`: gofmt, vet, sqlc drift check, the full server suite against Postgres 16, and the static release build
+
+### Agent (rewrite for the multi-tenant server)
+- Enroll once with the cabinet's `BINDING_TOKEN` (`POST /agent/enroll`), save a per-machine token to `agent_credentials.json`, and delete the binding token from `.env`; sync with `POST /agent/sync`. `TOKEN` and `IDENTITY` are gone, and with them the hardcoded fallback token
+- Machine identity is the OS's stable id (Windows `MachineGuid`, `/etc/machine-id`, macOS `IOPlatformUUID`), so a reinstall re-enrolls the same computer instead of adding a duplicate
+- One run loop for console and service mode instead of two diverging copies; the shared policy is mutex-guarded (the documented data race is gone); enrollment refusals (token revoked, plan full, no connection) are three distinct messages; a revoked token keeps the last policy in force
+- Add `-version`; `agentVersion` is stampable with `-ldflags`
+- Add unit tests (`agent/agent_test.go`) — enrollment, the binding-token wipe, revocation, credentials for another server — that run on any platform
+- Console (`tools/whitelist-gui`) and the PowerShell installers collect `BINDING_TOKEN` instead of `TOKEN`/`IDENTITY`; the console reports "enrolled" from `agent_credentials.json` and does not require a token to reinstall over an enrolled agent
 
 ### Guardian Console (new)
 - Windows GUI (`tools/whitelist-gui`) for managing the agent on a single machine

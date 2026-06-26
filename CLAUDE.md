@@ -60,21 +60,14 @@ cd mobile && flutter pub run flutter_launcher_icons
 - Postgres tables: `users`, `accounts`, `account_members`, `sessions`, `rooms`, `room_members`, `applications`, `computers`, `binding_tokens`, `events`
 - See `specs/server.md` for the full architecture (RLS policies, roles, the `account_for_agent_token` function, migrations)
 
-### Agent (`agent/main.go` + platform-specific files)
-- Polls server via `/client/sync` (10s console mode, 20s service mode configurable via `CHECK_INTERVAL`), checks processes every 1s
+### Agent (`agent/`)
+- `main.go` (wire types, flags, console entry, process list/kill, whitelist, `sync.json`), `agent.go` (the single run loop shared by console and service mode: config, enrollment, sync, enforcement, `logger` seam), `client.go` (HTTP client, `agent_credentials.json`, `.env` reading and the binding-token wipe), `passport_windows.go`/`passport_other.go` (machine GUID, OS info)
+- Enrolls once: `.env`'s `BINDING_TOKEN` (from the cabinet's installer) → `POST /agent/enroll` → per-machine token saved to `agent_credentials.json` (`0600`), then the `BINDING_TOKEN` line is deleted from `.env`. Machine identity is the OS's stable id (Windows `MachineGuid`, `/etc/machine-id`, macOS `IOPlatformUUID`)
+- Polls `POST /agent/sync` with the agent token (10s console mode, 20s service mode, `CHECK_INTERVAL`), checks processes every 1s; `sync.json` is loaded before anything else so the last policy is enforced offline and after a revocation (fail-secure)
 - Platform-specific process listing/killing: `tasklist`/`taskkill` on Windows, `ps`/`pkill` on Unix
-- Windows service support via `service_windows.go`, `shutdown_windows.go`, `main_windows.go`
-- Non-Windows stubs: `main_stub.go`, `service_stub.go`
-- Special commands: `force_poweroff`, `force_shutdown`
-- **Does not work against the current server.** The multi-tenant Postgres
-  server (see `specs/server.md`) serves `/agent/sync`, not `/client/sync`,
-  and authenticates with a per-machine token minted at `POST /agent/enroll`,
-  not the old shared `TOKEN`. This code still targets the old route and
-  credential, so every poll 404s. The wire format itself
-  (`ClientSyncResponse`/`ClientApplication`/`ClientEntry`) is unchanged on
-  purpose, so rewriting this file for the new server (plan 3) is a URL and
-  credential change, not a protocol change — but until that rewrite lands,
-  no agent build in this repo can talk to the current server.
+- Windows service support via `service_windows.go`, `shutdown_windows.go`, `main_windows.go`; non-Windows stubs `main_stub.go`, `service_stub.go`
+- `.env` keys: `SERVER_ADDRESS`, `BINDING_TOKEN`, `CHECK_INTERVAL` (`TOKEN`/`IDENTITY` are gone). `agentVersion` in `agent.go`, stampable with `-ldflags "-X main.agentVersion=…"`, printed by `-version`
+- Pure Go, cross-compiles from Linux (`GOOS=windows GOARCH=386 go build`); `go test ./...` needs no server
 
 ### Mobile (`mobile/lib/`)
 - 4 screens: `HomeScreen` (blocked apps), `SystemScreen`, `ComputersScreen`, `SettingsScreen`
@@ -89,7 +82,7 @@ cd mobile && flutter pub run flutter_launcher_icons
 
 ### API Endpoints
 - `POST /agent/enroll` — agent enrolls with a binding token, gets its own per-machine agent token (unauthenticated; the token in the body is the gate)
-- `GET /agent/sync` — agent fetches its room's applications, mode, and client entries (agent token auth)
+- `POST /agent/sync` — agent posts `{"runtime": {...}}` telemetry (64 KiB cap) and fetches its room's applications, mode, and client entries (agent token auth)
 - `POST /api/v1/auth/register`, `/login`, `/logout` — cabinet account creation and session auth
 - `GET /api/v1/me` — caller's identity and every account they can act in (session auth)
 - `/api/v1/rooms`, `/api/v1/rooms/{roomID}` — room CRUD (session auth)
@@ -123,7 +116,8 @@ Server installs to `/usr/local/bin/guardian/` as a systemd service running as th
 
 ## Rules
 
-- **Always update specs on code changes:** After any code change, update the corresponding files in `specs/` (`server.md`, `agent.md`, `api.md`) and this `CLAUDE.md` to keep documentation in sync. This includes API changes, schema changes, config changes, file structure changes, and build output paths.
+- **Always update specs on code changes:** After any code change, update the corresponding files in `specs/` (`server.md`, `agent.md`, `api.md`, `whitelist-gui.md`) and this `CLAUDE.md` to keep documentation in sync. This includes API changes, schema changes, config changes, file structure changes, and build output paths.
+- **The agent's `.env` keys are shared with the console:** `agent/agent.go` reads them, `tools/whitelist-gui/envfile.go` (`knownEnvOrder`) writes them, and `dist/agent/agent.env` templates them — change all three together.
 
 ## Notes
 
@@ -132,7 +126,7 @@ Server installs to `/usr/local/bin/guardian/` as a systemd service running as th
 - `server/fakeagent` enrolls and syncs like the Windows agent, for exercising the API without Windows
 - `server/isolation_test.go` is mandatory: every new account-scoped endpoint gets a row in its table
 - CI: `.github/workflows/server.yml` runs gofmt, `go vet`, `sqlc diff` (committed `internal/db/` must match `db/queries/`), the full suite against a Postgres 16 service, and the static release build on every push touching `server/`
-- The agent and mobile app still have no automated tests
+- Agent tests (`agent/agent_test.go`) run against an `httptest` server on any platform; the mobile app still has none
 - `tools/whitelist-gui/builtin.go` mirrors the hardcoded protected-process list in `agent/main.go` and must be kept in sync by hand
 - `tools/mkico` is a separate module (it needs `golang.org/x/image` only to build the console's icon)
 - Server and agent have separate `go.mod` files (modules `server` and `agent`)
