@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
-	"strings"
 	"time"
 
 	"golang.org/x/sys/windows/svc"
@@ -29,8 +27,8 @@ func (m *myservice) Execute(args []string, r <-chan svc.ChangeRequest, changes c
 	changes <- svc.Status{State: svc.StartPending}
 
 	// Start the main agent logic in a goroutine
-	stopCh := make(chan bool)
-	go runAgent(stopCh)
+	stopCh := make(chan struct{})
+	go runAgentService(stopCh)
 
 	changes <- svc.Status{State: svc.Running, Accepts: cmdsAccepted}
 
@@ -90,171 +88,29 @@ func runService(name string, isDebug bool) {
 	elog.Info(1, fmt.Sprintf("%s service stopped", name))
 }
 
-// runAgent runs the main agent logic
-func runAgent(stopCh <-chan bool) {
-	// Change to service directory to find .env file
+// eventLogger routes the shared run loop's output to the Windows event log.
+type eventLogger struct{}
+
+func (eventLogger) Infof(format string, args ...any)  { elog.Info(1, fmt.Sprintf(format, args...)) }
+func (eventLogger) Warnf(format string, args ...any)  { elog.Warning(1, fmt.Sprintf(format, args...)) }
+func (eventLogger) Errorf(format string, args ...any) { elog.Error(1, fmt.Sprintf(format, args...)) }
+
+// runAgentService runs the shared agent loop from the service's own
+// directory, which is where .env, sync.json, whitelist.txt and the
+// credentials file live. Services start with System32 as their working
+// directory, so without the chdir none of those would be found.
+func runAgentService(stopCh <-chan struct{}) {
 	exePath, err := os.Executable()
 	if err != nil {
 		elog.Error(1, fmt.Sprintf("Failed to get executable path: %v", err))
 		return
 	}
-	serviceDir := filepath.Dir(exePath)
-	if err := os.Chdir(serviceDir); err != nil {
+	if err := os.Chdir(filepath.Dir(exePath)); err != nil {
 		elog.Error(1, fmt.Sprintf("Failed to change directory: %v", err))
 		return
 	}
-
-	// Load environment variables from .env file
-	if err := loadEnvFile(); err != nil {
-		elog.Warning(1, fmt.Sprintf("Could not load .env file: %v. Using defaults.", err))
-	}
-
-	// Get server address from environment variable
-	serverAddress := os.Getenv("SERVER_ADDRESS")
-	if serverAddress == "" {
-		serverAddress = "http://localhost:8080" // Default fallback
-	}
-
-	initWhitelist()
-
-	elog.Info(1, fmt.Sprintf("ProcSentinel Agent service started"))
-	elog.Info(1, fmt.Sprintf("Server address: %s", serverAddress))
-
-	// Initialize sync state
-	var state *SyncResponse
-
-	// Start background goroutine to sync
-	go updateSyncService(serverAddress, &state, stopCh)
-
-	// Initial fetch
-	resp, err := fetchSync(serverAddress)
-	if err != nil {
-		elog.Warning(1, fmt.Sprintf("Initial sync failed: %v. Loading from sync.json.", err))
-		if cached, loadErr := loadSyncFromFile(); loadErr == nil {
-			state = cached
-			elog.Info(1, fmt.Sprintf("Loaded %d applications from sync.json", len(cached.Applications)))
-		} else {
-			elog.Warning(1, fmt.Sprintf("Could not load sync.json: %v. Starting with empty state.", loadErr))
-			state = &SyncResponse{}
-		}
-	} else {
-		state = resp
-		if err := saveSyncToFile(resp); err != nil {
-			elog.Warning(1, fmt.Sprintf("Failed to save sync.json: %v", err))
-		}
-		elog.Info(1, fmt.Sprintf("Initial sync: %d applications, mode=%s", len(resp.Applications), resp.Mode))
-	}
-
-	// Main process monitoring loop
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-stopCh:
-			elog.Info(1, "Agent stopping")
-			return
-		case <-ticker.C:
-			if state == nil {
-				continue
-			}
-
-			if len(state.Applications) == 0 && state.Mode != "whitelist" {
-				continue
-			}
-
-			// Check power status from client entries
-			if powerStatus, found := getClientEntry(state, "power"); found && !powerStatus {
-				elog.Info(1, "Shutdown PC triggered: power disabled")
-				if err := shutdownPCService(); err != nil {
-					elog.Error(1, fmt.Sprintf("Failed to shutdown PC: %v", err))
-				}
-				continue
-			}
-
-			// Get list of running processes
-			processes, err := getProcessList()
-			if err != nil {
-				elog.Error(1, fmt.Sprintf("Error getting process list: %v", err))
-				continue
-			}
-
-			processText := strings.ToLower(processes)
-
-			// Copy current state to avoid race
-			localApps := make([]ClientApplication, len(state.Applications))
-			copy(localApps, state.Applications)
-			localMode := state.Mode
-
-			if localMode == "blacklist" {
-				for _, app := range localApps {
-					if app.Name != "" && strings.Contains(processText, strings.ToLower(app.Name)) {
-						if err := killProcess(app.Name); err == nil {
-							elog.Info(1, fmt.Sprintf("Killed process: %s", app.Name))
-						} else {
-							elog.Error(1, fmt.Sprintf("Failed to kill process %s: %v", app.Name, err))
-						}
-					}
-				}
-			} else if localMode == "whitelist" {
-				allowedSet := make(map[string]bool)
-				for _, app := range localApps {
-					allowedSet[strings.ToLower(app.Name)] = true
-				}
-				for _, line := range strings.Split(processes, "\n") {
-					line = strings.TrimSpace(line)
-					if line == "" {
-						continue
-					}
-					procName := extractProcessName(line)
-					if procName == "" {
-						continue
-					}
-					if !allowedSet[strings.ToLower(procName)] && !isSystemProcess(procName) {
-						if err := killProcess(procName); err == nil {
-							elog.Info(1, fmt.Sprintf("Killed non-whitelisted process: %s", procName))
-						}
-					}
-				}
-			}
-		}
-	}
-}
-
-// updateSyncService fetches updated sync state from server for service mode
-func updateSyncService(serverAddress string, state **SyncResponse, stopCh <-chan bool) {
-	sleepSeconds := 20
-	if envSleep := os.Getenv("CHECK_INTERVAL"); envSleep != "" {
-		if val, err := strconv.Atoi(envSleep); err == nil {
-			sleepSeconds = val
-		}
-	}
-	ticker := time.NewTicker(time.Duration(sleepSeconds) * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-stopCh:
-			return
-		case <-ticker.C:
-			resp, err := fetchSync(serverAddress)
-			if err != nil {
-				elog.Warning(1, fmt.Sprintf("Failed to sync: %v. Loading from sync.json.", err))
-				if cached, loadErr := loadSyncFromFile(); loadErr == nil {
-					*state = cached
-					elog.Info(1, fmt.Sprintf("Loaded %d applications from sync.json", len(cached.Applications)))
-				} else {
-					elog.Warning(1, fmt.Sprintf("Could not load sync.json: %v", loadErr))
-				}
-			} else {
-				*state = resp
-				if err := saveSyncToFile(resp); err != nil {
-					elog.Warning(1, fmt.Sprintf("Failed to save sync.json: %v", err))
-				}
-				elog.Info(1, fmt.Sprintf("Synced: %d applications, mode=%s", len(resp.Applications), resp.Mode))
-			}
-		}
-	}
+	elog.Info(1, fmt.Sprintf("ProcSentinel Agent %s service started", agentVersion))
+	runAgent(stopCh, eventLogger{}, runModeService)
 }
 
 // Service management functions
