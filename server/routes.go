@@ -35,15 +35,29 @@ const (
 	// run across a fleet of machines behind one NAT (a school, an office) is
 	// legitimate traffic, not abuse.
 	enrollRateLimit = 20
+
+	// maxAgentSyncBodyBytes caps what an agent posts on every sync. The body
+	// is telemetry that lands in computers.runtime, so this bounds the row as
+	// much as the request: without it one agent token could grow its machine's
+	// row by megabytes every twenty seconds.
+	maxAgentSyncBodyBytes = 64 << 10 // 64 KiB
 )
 
-// maxBody caps the request body for one route. A body over the cap surfaces
-// as a decode error in the handler, which is already reported as 400.
+// limitBody caps the request body for one route. A body over the cap surfaces
+// as a decode error in the handler — a 400 on the routes that decode strictly,
+// an empty telemetry object on the sync route, which never fails on telemetry.
+func limitBody(n int64) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			r.Body = http.MaxBytesReader(w, r.Body, n)
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// maxBody is limitBody at the unauthenticated-route cap.
 func maxBody(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		r.Body = http.MaxBytesReader(w, r.Body, maxUnauthenticatedBodyBytes)
-		next.ServeHTTP(w, r)
-	})
+	return limitBody(maxUnauthenticatedBodyBytes)(next)
 }
 
 // perIP rate-limits a route by the client IP resolved by
@@ -144,7 +158,10 @@ func (s *Server) setupRoutes() *chi.Mux {
 
 	r.Group(func(r chi.Router) {
 		r.Use(s.AgentAuth)
-		r.Get("/agent/sync", s.handleAgentSync)
+		// POST, not GET: the telemetry rides in a JSON body rather than a
+		// query string, so it is not written to every proxy's access log,
+		// not subject to URL length limits, and capped by size here.
+		r.With(limitBody(maxAgentSyncBodyBytes)).Post("/agent/sync", s.handleAgentSync)
 	})
 
 	return r

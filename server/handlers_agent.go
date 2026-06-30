@@ -263,10 +263,25 @@ func (s *Server) handleAgentSync(w http.ResponseWriter, r *http.Request) {
 }
 
 // readRuntime collects the volatile half of the passport the agent reports on
-// every sync. Anything it cannot vouch for becomes an empty object.
+// every sync, posted as {"runtime": {...}}. Anything it cannot vouch for — no
+// body, a body over the route's cap, not JSON, no runtime key — becomes an
+// empty object: telemetry never fails a sync.
 func readRuntime(r *http.Request) []byte {
-	return sanitizeJSONObject([]byte(r.URL.Query().Get("runtime")))
+	var body struct {
+		Runtime json.RawMessage `json:"runtime"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		return []byte(`{}`)
+	}
+	return sanitizeJSONObject(body.Runtime)
 }
+
+// maxTelemetryObjectBytes bounds what one jsonb telemetry column may hold —
+// the hardware inventory at enrollment as much as the runtime object on sync.
+// The enroll route's body cap is a megabyte because that is a generous bound
+// for a request; it is not a sensible bound for a column written on every
+// machine in the fleet.
+const maxTelemetryObjectBytes = 64 << 10
 
 // sanitizeJSONObject decodes raw as a JSON object and re-encodes it, so the
 // bytes handed to a jsonb column are ones Postgres will actually accept.
@@ -286,7 +301,7 @@ func readRuntime(r *http.Request) []byte {
 // explicitly because Go emits it again on the way out.
 func sanitizeJSONObject(raw []byte) []byte {
 	const empty = `{}`
-	if len(raw) == 0 {
+	if len(raw) == 0 || len(raw) > maxTelemetryObjectBytes {
 		return []byte(empty)
 	}
 	var probe map[string]any

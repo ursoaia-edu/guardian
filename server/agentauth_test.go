@@ -4,13 +4,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
+	"strings"
 	"testing"
 )
 
 func agentSync(t *testing.T, s *Server, agentToken string) (int, ClientSyncResponse) {
 	t.Helper()
-	req := httptest.NewRequest("GET", "/agent/sync", nil)
+	req := httptest.NewRequest("POST", "/agent/sync", strings.NewReader(`{"runtime":{"uptime_s":1}}`))
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+agentToken)
 	rr := httptest.NewRecorder()
 	s.setupRoutes().ServeHTTP(rr, req)
@@ -150,8 +151,13 @@ func TestMalformedRuntimeDoesNotBreakSync(t *testing.T) {
 		`{"user":"` + string([]byte{0xff, 0xfe}) + `"}`, // invalid UTF-8 bytes
 		`"not an object"`,
 		`{ broken`,
+		// Over the per-column cap: the body decodes fine, the object is
+		// simply too big to store.
+		`{"blob":"` + strings.Repeat("x", maxTelemetryObjectBytes) + `"}`,
 	} {
-		req := httptest.NewRequest("GET", "/agent/sync?runtime="+url.QueryEscape(runtime), nil)
+		body := `{"runtime":` + runtime + `}`
+		req := httptest.NewRequest("POST", "/agent/sync", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+agentToken)
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
@@ -200,5 +206,49 @@ func TestSyncReturnsTheRoomPolicy(t *testing.T) {
 	}
 	if len(out.Applications) != 1 || out.Applications[0].Name != "steam.exe" {
 		t.Fatalf("applications: %+v", out.Applications)
+	}
+}
+
+// A body over the route's cap is the one telemetry failure that happens
+// before the handler ever sees JSON. It must still be a sync, not a 400 —
+// the cap protects the database, and the machine must still get its policy.
+func TestOversizedSyncBodyStillSyncs(t *testing.T) {
+	s := &Server{pool: testPool(t)}
+	h := s.setupRoutes()
+	c := registerAndLogin(t, s, "parent@example.com")
+	room := createRoom(t, s, c, "Kids room")
+	doJSON(t, h, "PATCH", "/api/v1/rooms/"+room, map[string]any{"protection_enabled": true}, c)
+	doJSON(t, h, "POST", "/api/v1/rooms/"+room+"/applications",
+		map[string]string{"name": "steam.exe", "list": "blacklist"}, c)
+	binding := mintBindingToken(t, s, c)
+	_, agentToken := enroll(t, s, binding, "guid-1", "PC-1")
+	assignToRoom(t, s, c, room)
+
+	body := `{"runtime":{"blob":"` + strings.Repeat("x", maxAgentSyncBodyBytes+1) + `"}}`
+	req := httptest.NewRequest("POST", "/agent/sync", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+agentToken)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("an oversized telemetry body cost the machine its sync: %d %s", rec.Code, rec.Body.String())
+	}
+	var out ClientSyncResponse
+	decodeInto(t, rec, &out)
+	if out.Mode != "blacklist" || len(out.Applications) != 1 {
+		t.Fatalf("policy lost behind the body cap: mode %q, %d applications", out.Mode, len(out.Applications))
+	}
+}
+
+// The route is POST now. A GET must not be silently served by some fallback:
+// an old agent hitting it gets a clean 405 it can log, not a policy.
+func TestSyncIsNotServedOnGET(t *testing.T) {
+	s := &Server{pool: testPool(t)}
+	req := httptest.NewRequest("GET", "/agent/sync", nil)
+	req.Header.Set("Authorization", "Bearer whatever")
+	rr := httptest.NewRecorder()
+	s.setupRoutes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET /agent/sync answered %d, want 405", rr.Code)
 	}
 }

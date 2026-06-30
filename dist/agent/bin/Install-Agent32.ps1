@@ -154,42 +154,39 @@ try {
     Copy-Item -Path $exePath -Destination $InstallPath -Force
     Write-Host "      Copied guardian.exe" -ForegroundColor Gray
 
-    # Request IDENTITY from user
-    $identityInput = Read-Host "Enter IDENTITY (optional, must be integer)"
-    $identityValue = $null
-
-    if ($identityInput -and $identityInput -match "^\d+$") {
-        $identityValue = $identityInput
-    } elseif ($identityInput) {
-        Write-Host "      WARNING: Invalid IDENTITY value. Must be an integer. Skipping IDENTITY." -ForegroundColor Yellow
+    # The binding token comes from the cabinet's installer page. agent.env
+    # shipped with the download already carries it; only ask when it is
+    # missing, and never for a reinstall over an agent that has already
+    # enrolled (it keeps its own credentials).
+    $bindingToken = $null
+    if ($envConfig.ContainsKey("BINDING_TOKEN") -and $envConfig["BINDING_TOKEN"] -and -not $envConfig["BINDING_TOKEN"].StartsWith("your_")) {
+        $bindingToken = $envConfig["BINDING_TOKEN"]
+    }
+    $credentialsPath = Join-Path $InstallPath "agent_credentials.json"
+    if (-not $bindingToken -and -not (Test-Path $credentialsPath)) {
+        $bindingToken = Read-Host "Enter BINDING_TOKEN (from the cabinet's installer page)"
+        if (-not $bindingToken) {
+            throw "A BINDING_TOKEN is required for a first install."
+        }
     }
 
-    # Create .env configuration file with all settings from source
+    # Create .env configuration file. TOKEN and IDENTITY belonged to the old
+    # single-tenant server and are dropped; the agent removes BINDING_TOKEN
+    # itself once it has enrolled.
     $targetEnvPath = Join-Path $InstallPath ".env"
-
-    if ($envConfig.Count -gt 0) {
-        # Use existing .env configuration
-        $envContent = ""
-        foreach ($key in $envConfig.Keys) {
-            $envContent += "$key=$($envConfig[$key])`r`n"
-        }
-        if ($identityValue) {
-            $envContent += "IDENTITY=$identityValue`r`n"
-        }
-        Set-Content -Path $targetEnvPath -Value $envContent.TrimEnd() -Encoding Ascii
-        Write-Host "      Copied .env configuration from source" -ForegroundColor Gray
-    } else {
-        # Create default .env
-        $envContent = @"
-SERVER_ADDRESS=$serverAddress
-WEB_DIR=web
-"@
-        if ($identityValue) {
-            $envContent += "`r`nIDENTITY=$identityValue"
-        }
-        Set-Content -Path $targetEnvPath -Value $envContent -Encoding Ascii
-        Write-Host "      Created default .env configuration" -ForegroundColor Gray
+    $envContent = ""
+    foreach ($key in $envConfig.Keys) {
+        if ($key -eq "BINDING_TOKEN" -or $key -eq "TOKEN" -or $key -eq "IDENTITY") { continue }
+        $envContent += "$key=$($envConfig[$key])`r`n"
     }
+    if (-not $envConfig.ContainsKey("SERVER_ADDRESS")) {
+        $envContent += "SERVER_ADDRESS=$serverAddress`r`n"
+    }
+    if ($bindingToken) {
+        $envContent += "BINDING_TOKEN=$bindingToken`r`n"
+    }
+    Set-Content -Path $targetEnvPath -Value $envContent.TrimEnd() -Encoding Ascii
+    Write-Host "      Wrote .env configuration" -ForegroundColor Gray
 
     # Step 6: Install as Windows service
     Write-Host ""

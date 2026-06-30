@@ -9,8 +9,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -89,8 +89,9 @@ func enroll(server, binding, guid, hostname string) (string, error) {
 }
 
 func sync(server, token string) (string, error) {
-	runtime := url.QueryEscape(`{"uptime_s":1234,"user":"fake"}`)
-	req, _ := http.NewRequest("GET", server+"/agent/sync?runtime="+runtime, nil)
+	body := strings.NewReader(`{"runtime":{"uptime_s":1234,"user":"fake"}}`)
+	req, _ := http.NewRequest("POST", server+"/agent/sync", body)
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := client.Do(req)
 	if err != nil {
