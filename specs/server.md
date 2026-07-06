@@ -336,7 +336,8 @@ same room independently, exactly as the single-tenant server allowed per
 ### `computers`
 `id`, `account_id`, `room_id` (nullable — unassigned means "enforce
 nothing"), `display_name`, `machine_guid`, `hostname`, `os_name`, `os_build`,
-`arch`, `agent_version`, `hardware`/`runtime` (`jsonb`), `token_hash`
+`arch`, `agent_version`, `hardware`/`runtime` (`jsonb`, each capped at 64 KiB
+— see **Rate Limiting and Body Size**), `token_hash`
 (the agent's credential digest — tagged `json:"-"` in the generated struct so
 it can never leak through a handler that returns a `Computer` verbatim),
 `blocked`, `enrolled_at`, `last_seen_at`. `UNIQUE (account_id, machine_guid)`
@@ -528,7 +529,7 @@ as wired in `routes.go`:
 | `PATCH /api/v1/computers/{computerID}`           | session        |
 | `POST, DELETE /api/v1/binding-tokens`            | session        |
 | `GET /api/v1/events`                             | session        |
-| `GET /agent/sync`                                | agent token    |
+| `POST /agent/sync`                               | agent token    |
 
 ## CORS
 
@@ -564,6 +565,13 @@ reaches with no session and no agent token:
   `enrollRateLimit` (20/minute) is higher on purpose: an installer run across
   a fleet of machines behind one NAT — a school, an office — is legitimate
   traffic, not abuse.
+
+`POST /agent/sync` carries its own, much smaller cap (`maxAgentSyncBodyBytes`,
+64 KiB): its body is telemetry that lands in `computers.runtime`, so the cap
+bounds the row as much as the request. Both telemetry columns (`hardware` at
+enrollment, `runtime` on sync) additionally refuse any object over
+`maxTelemetryObjectBytes` (64 KiB) inside `sanitizeJSONObject`, storing `{}`
+instead — a failure of telemetry is never a failure of the sync.
 
 The client IP the limiter keys on is whatever the client-IP middleware
 selected by `TRUSTED_PROXIES` resolved — see **Client IP resolution** under

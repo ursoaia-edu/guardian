@@ -9,7 +9,15 @@ import (
 // knownEnvOrder is the order the installer writes keys in. Unknown keys found
 // in an existing file are appended after these, so a hand-added setting is
 // never silently dropped.
-var knownEnvOrder = []string{"SERVER_ADDRESS", "TOKEN", "CHECK_INTERVAL", "IDENTITY"}
+//
+// BINDING_TOKEN is the installer's enrollment token from the cabinet. The
+// agent deletes it from .env the moment it has enrolled and lives on its own
+// per-machine token in agent_credentials.json from then on, so a healthy,
+// enrolled installation has no token in .env at all. TOKEN and IDENTITY, the
+// single-tenant server's shared secret and self-declared identity, no longer
+// exist; if an old .env still carries them they are preserved as unknown keys
+// and ignored by the agent.
+var knownEnvOrder = []string{"SERVER_ADDRESS", "BINDING_TOKEN", "CHECK_INTERVAL"}
 
 // envConfig holds the agent's .env contents. The agent parses it with a plain
 // SplitN on "=", so anything more elaborate than KEY=VALUE would not be

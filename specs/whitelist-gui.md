@@ -100,9 +100,11 @@ There is deliberately **no second, native artifact**. One shipped binary means o
 | Service state | `Service.Query()` | Installed but not enforcing |
 | Start type | `Service.Config().StartType` | Will not come back after reboot |
 | Executable present | `Stat(ImagePath)` | Broken install: service points at a missing file |
-| `.env` present, `SERVER_ADDRESS` and `TOKEN` set | parse | Agent falls back to `http://localhost:8080` and never syncs |
+| `.env` present, `SERVER_ADDRESS` set | parse | Agent has no server to talk to |
+| `agent_credentials.json` present | `Stat` | Not enrolled: the agent has never traded its binding token for its own |
+| `BINDING_TOKEN` in `.env` | parse | Only matters while not enrolled; its presence *after* enrollment means the agent failed to wipe it |
 | `sync.json` present | `Stat` | No successful sync has ever happened |
-| `sync.json` fresh | mtime vs `3 × CHECK_INTERVAL` | Server unreachable, wrong token, or wrong identity |
+| `sync.json` fresh | mtime vs `3 × CHECK_INTERVAL` | Server unreachable, or this machine's token revoked |
 | `whitelist.txt` present | `Stat` | Agent has not completed a first run |
 
 `sync.json` mtime is the load-bearing liveness signal. The agent rewrites the file on every successful poll, so a stale file proves the service is running but not reaching the server — a distinction "service is Running" cannot make on its own.
@@ -117,7 +119,7 @@ There is deliberately **no second, native artifact**. One shipped binary means o
 | `Running, no contact with the server` | Running, but `sync.json` missing or stale |
 | `Running` | Running with a fresh `sync.json` |
 
-Configuration warnings (missing `.env`, missing `TOKEN`, missing `whitelist.txt`, non-automatic start type) are reported alongside the state rather than folded into it, since any of them can accompany any state.
+Configuration warnings (missing `.env`, not enrolled with no `BINDING_TOKEN` to enroll with, a `BINDING_TOKEN` lingering after enrollment, missing `whitelist.txt`, non-automatic start type) are reported alongside the state rather than folded into it, since any of them can accompany any state.
 
 ## Agent Lifecycle Operations
 
@@ -142,8 +144,8 @@ Architecture is chosen from the OS, not from the GUI's own build: `PROCESSOR_ARC
 
 1. Verify elevation. If the service already exists, confirm a reinstall.
 2. Locate the source executable as above.
-3. Collect configuration in a dialog: `SERVER_ADDRESS`, `TOKEN`, `CHECK_INTERVAL`, `IDENTITY`. Prefilled from `agent.env` next to the GUI, then overridden by the existing installation's `.env` when reinstalling.
-4. Validate: `SERVER_ADDRESS` non-empty and parseable as a URL; `IDENTITY` empty or an integer; `CHECK_INTERVAL` empty or a positive integer.
+3. Collect configuration in a dialog: `SERVER_ADDRESS`, `BINDING_TOKEN`, `CHECK_INTERVAL`. Prefilled from `agent.env` next to the GUI, then overridden by the existing installation's `.env` when reinstalling.
+4. Validate: `SERVER_ADDRESS` non-empty and parseable as a URL; `BINDING_TOKEN` non-empty unless the target folder already holds `agent_credentials.json` (a reinstall over an enrolled agent needs no new token); `CHECK_INTERVAL` empty or a positive integer.
 5. Create the installation directory.
 6. Stop and deregister any existing service (`-remove`).
 7. Copy the executable.
@@ -271,7 +273,7 @@ Second tab:
 │ ┌─ Diagnostics ────────────────────────────────────────────────┐ │
 │ │ Service:            <state>, <start type>                    │ │
 │ │ Executable:         <path> / not found                       │ │
-│ │ Configuration:      SERVER_ADDRESS <set>, TOKEN <set>        │ │
+│ │ Configuration:      SERVER_ADDRESS <set>, enrolled <set>     │ │
 │ │ Last sync:          <n>s ago / never                         │ │
 │ │ Mode (from server): <mode>, <n> applications                 │ │
 │ │ whitelist.txt:      <n> entries / missing                    │ │
@@ -419,8 +421,8 @@ Hence two manifests: `test.ps1` embeds the `asInvoker` variant for the duration 
 | Elevation probe | `isElevated()` infers elevation from SCM access rather than inspecting the process token. |
 | GUI test needs a desktop | `TestBuildWindow` cannot run on a headless CI agent, and needs `test.ps1` rather than a bare `go test` to get its manifest. |
 | Install logic duplicated | The Go install flow and `Install-Agent{32,64}.ps1` implement the same procedure separately and will drift. Accepted deliberately — see Decisions. |
-| Token shown in clear text | The install dialog displays `TOKEN` unmasked. Acceptable for an elevated admin tool, but worth revisiting. |
-| Liveness heuristic | A stale `sync.json` is treated as "no server connection", but the same symptom is produced by a wrong token or a wrong `IDENTITY`. The tool cannot tell them apart without talking to the server, which is out of scope. |
+| Token shown in clear text | The install dialog displays `BINDING_TOKEN` unmasked. Acceptable for an elevated admin tool, but worth revisiting. |
+| Liveness heuristic | A stale `sync.json` is treated as "no server connection", but the same symptom is produced by a revoked agent token. The tool cannot tell them apart without talking to the server, which is out of scope. |
 | No agent version | The agent has no `-version` flag, so update comparison relies on SHA-256 rather than a version string. |
 | Generic name is a bypass | Protecting `guardian.exe` by name lets any executable renamed to `guardian.exe` survive whitelist mode. See *Cost of a Generic Name*. |
 | Sysnative image path unverified in the field | `normalizeServiceImagePath()` repairs a registration recorded through the WOW64 alias, but whether Windows actually produces such a registration was not reproduced -- the repair is defensive. It is a no-op when the path is already correct. |

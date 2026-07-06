@@ -317,13 +317,14 @@ No header credential; the binding token in the body is this route's gate.
   "os_name": "Windows 11",
   "os_build": "22631",
   "arch": "amd64",
-  "agent_version": "1.4.0",
-  "hardware": {"cpu": "…", "ram_gb": 16}
+  "agent_version": "3.0.0",
+  "hardware": {"cpu_count": 8, "go_os": "windows"}
 }
 ```
 Re-enrolling the same `machine_guid` on the same account updates that
 machine's row (and mints it a new agent token) rather than creating a second
-one, and does not count against the account's computer limit.
+one, and does not count against the account's computer limit. `hardware`
+over 64 KiB is stored as `{}`.
 
 **Response** `201`
 ```json
@@ -333,17 +334,22 @@ one, and does not count against the account's computer limit.
 **Response** `402` — account is at its `computer_limit` and this is a new
 machine.
 
-### `GET /agent/sync`
+### `POST /agent/sync`
 
-Agent-token auth. Returns the wire format existing agents already parse —
-**unchanged on purpose**, so agents already in the field keep working.
+Agent-token auth. Returns the wire format the single-tenant server spoke —
+**unchanged on purpose**, so moving the agent over was a URL and credential
+change, not a protocol change.
 
-**Query params:**
-- `runtime` (optional) — URL-encoded JSON object of live telemetry (e.g.
-  `{"uptime_s":1234,"user":"fake"}`). Recorded against the computer's
-  `runtime` column regardless of the policy computed below; invalid JSON, a
-  non-object, or anything containing a NUL is silently replaced with `{}`
-  rather than rejecting the sync.
+**Request** (body capped at 64 KiB)
+```json
+{"runtime": {"uptime_s": 1234, "mode": "service", "agent_version": "3.0.0"}}
+```
+`runtime` is live telemetry, recorded against the computer's `runtime`
+column regardless of the policy computed below. It travels in a body rather
+than a query string so it is not written to proxy access logs and not
+subject to URL length limits. Telemetry never fails a sync: no body, a body
+over the cap, invalid JSON, a non-object, an object over 64 KiB, or anything
+containing a NUL is silently replaced with `{}`. `GET` on this path is `405`.
 
 **Response** `200`
 ```json

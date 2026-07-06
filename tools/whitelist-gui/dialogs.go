@@ -93,7 +93,7 @@ func (a *app) installDialog() (installOptions, bool) {
 
 	var dlg *walk.Dialog
 	var okBtn, cancelBtn *walk.PushButton
-	var srcEdit, dirEdit, serverEdit, tokenEdit, intervalEdit, identityEdit *walk.LineEdit
+	var srcEdit, dirEdit, serverEdit, tokenEdit, intervalEdit *walk.LineEdit
 
 	var result installOptions
 
@@ -136,16 +136,12 @@ func (a *app) installDialog() (installOptions, bool) {
 					LineEdit{AssignTo: &serverEdit, Text: env.Get("SERVER_ADDRESS"), CueBanner: "http://192.168.1.10:8080"},
 					Label{Text: ""},
 
-					Label{Text: "TOKEN:"},
-					LineEdit{AssignTo: &tokenEdit, Text: env.Get("TOKEN")},
+					Label{Text: "BINDING_TOKEN:"},
+					LineEdit{AssignTo: &tokenEdit, Text: env.Get("BINDING_TOKEN"), CueBanner: "from the cabinet; not needed to reinstall an enrolled agent"},
 					Label{Text: ""},
 
 					Label{Text: "CHECK_INTERVAL, s:"},
 					LineEdit{AssignTo: &intervalEdit, Text: env.Get("CHECK_INTERVAL"), CueBanner: "20"},
-					Label{Text: ""},
-
-					Label{Text: "IDENTITY:"},
-					LineEdit{AssignTo: &identityEdit, Text: env.Get("IDENTITY"), CueBanner: "optional, integer"},
 					Label{Text: ""},
 				},
 			},
@@ -157,9 +153,8 @@ func (a *app) installDialog() (installOptions, bool) {
 					PushButton{AssignTo: &okBtn, Text: "Install", OnClicked: func() {
 						cfg := newEnvConfig()
 						cfg.Set("SERVER_ADDRESS", strings.TrimSpace(serverEdit.Text()))
-						cfg.Set("TOKEN", strings.TrimSpace(tokenEdit.Text()))
+						cfg.Set("BINDING_TOKEN", strings.TrimSpace(tokenEdit.Text()))
 						cfg.Set("CHECK_INTERVAL", strings.TrimSpace(intervalEdit.Text()))
-						cfg.Set("IDENTITY", strings.TrimSpace(identityEdit.Text()))
 
 						candidate := installOptions{
 							SourceExe: strings.TrimSpace(srcEdit.Text()),

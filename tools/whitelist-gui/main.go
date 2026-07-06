@@ -416,8 +416,8 @@ func (a *app) updateDiagnostics() {
 	case !h.EnvExists:
 		a.confLabel.SetText(".env is missing")
 	default:
-		a.confLabel.SetText(fmt.Sprintf("SERVER_ADDRESS %s, TOKEN %s, interval %ds",
-			okMark(h.HasServerAddr), okMark(h.HasToken), h.CheckInterval))
+		a.confLabel.SetText(fmt.Sprintf("SERVER_ADDRESS %s, enrolled %s, interval %ds",
+			okMark(h.HasServerAddr), okMark(h.Enrolled), h.CheckInterval))
 	}
 
 	a.syncLabel.SetText(h.SyncSummary())

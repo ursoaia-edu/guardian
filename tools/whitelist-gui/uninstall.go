@@ -8,8 +8,10 @@ import (
 )
 
 // preservedFiles are the files worth keeping when the agent is removed: a
-// hand-curated whitelist is real work, and the .env carries the server address
-// and token.
+// hand-curated whitelist is real work, and the .env carries the server
+// address. agent_credentials.json is deliberately NOT preserved: uninstalling
+// is the moment a per-machine credential should stop existing on this disk,
+// and a later reinstall enrolls afresh with a binding token from the cabinet.
 var preservedFiles = []string{whitelistFileName, envFileName}
 
 // validateDeletionTarget guards the recursive delete. The directory comes from

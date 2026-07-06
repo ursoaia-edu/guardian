@@ -15,6 +15,9 @@ const (
 	whitelistFileName = "whitelist.txt"
 	syncFileName      = "sync.json"
 	envFileName       = ".env"
+	// credentialsFileName is written by the agent itself once it has enrolled;
+	// its presence is what "enrolled" means to the console.
+	credentialsFileName = "agent_credentials.json"
 )
 
 // installDir resolves the agent installation directory. It prefers the

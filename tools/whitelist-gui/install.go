@@ -79,6 +79,13 @@ func templateEnvPath() string {
 	return filepath.Join(guiDir(), "agent.env")
 }
 
+// isEnrolled reports whether an agent in dir has already exchanged its
+// binding token for credentials of its own.
+func isEnrolled(dir string) bool {
+	info, err := os.Stat(ioPath(filepath.Join(dir, credentialsFileName)))
+	return err == nil && !info.IsDir()
+}
+
 type installOptions struct {
 	SourceExe string
 	TargetDir string
@@ -108,10 +115,12 @@ func validateInstallOptions(opts installOptions) error {
 		return fmt.Errorf("SERVER_ADDRESS must start with http:// or https://")
 	}
 
-	if id := opts.Env.Get("IDENTITY"); id != "" {
-		if _, err := strconv.Atoi(id); err != nil {
-			return fmt.Errorf("IDENTITY must be an integer")
-		}
+	// A first install needs the cabinet's binding token to enroll. A reinstall
+	// over an enrolled agent does not: the machine keeps its own credentials,
+	// and demanding a fresh installer download for every update would be
+	// exactly the friction the credential file exists to remove.
+	if opts.Env.Get("BINDING_TOKEN") == "" && !isEnrolled(opts.TargetDir) {
+		return fmt.Errorf("BINDING_TOKEN is required for a first install (copy it from the cabinet's installer page)")
 	}
 	if ci := opts.Env.Get("CHECK_INTERVAL"); ci != "" {
 		v, err := strconv.Atoi(ci)

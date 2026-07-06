@@ -51,10 +51,14 @@ type health struct {
 	ExePath   string
 	ExeExists bool
 
-	EnvExists     bool
-	HasServerAddr bool
-	HasToken      bool
-	CheckInterval int
+	EnvExists       bool
+	HasServerAddr   bool
+	HasBindingToken bool
+	CheckInterval   int
+
+	// Enrolled means agent_credentials.json exists: the agent has traded the
+	// installer's binding token for a token of its own.
+	Enrolled bool
 
 	SyncExists bool
 	SyncAge    time.Duration
@@ -77,6 +81,7 @@ func probeHealth(dir string) health {
 	h.readService()
 	h.readExecutable(dir)
 	h.readEnv(dir)
+	h.Enrolled = isEnrolled(dir)
 	h.readSync(dir)
 	h.readWhitelist(dir)
 	h.classify()
@@ -141,7 +146,7 @@ func (h *health) readEnv(dir string) {
 	}
 	h.EnvExists = true
 	h.HasServerAddr = cfg.Get("SERVER_ADDRESS") != ""
-	h.HasToken = cfg.Get("TOKEN") != ""
+	h.HasBindingToken = cfg.Get("BINDING_TOKEN") != ""
 	h.CheckInterval = cfg.CheckInterval()
 }
 
@@ -202,8 +207,15 @@ func (h *health) collectWarnings() {
 		if !h.HasServerAddr {
 			h.Warnings = append(h.Warnings, "SERVER_ADDRESS is not set in .env")
 		}
-		if !h.HasToken {
-			h.Warnings = append(h.Warnings, "TOKEN is not set in .env")
+		if !h.Enrolled && !h.HasBindingToken {
+			h.Warnings = append(h.Warnings,
+				"not enrolled and no BINDING_TOKEN in .env - the agent cannot join the fleet; reinstall from the cabinet's installer")
+		}
+		if h.Enrolled && h.HasBindingToken {
+			// The agent removes the binding token itself after enrolling, so
+			// its presence alongside credentials means that removal failed —
+			// a reusable, account-wide secret is still on this disk.
+			h.Warnings = append(h.Warnings, "BINDING_TOKEN is still in .env although the agent is enrolled")
 		}
 	}
 	if !h.StartAuto {

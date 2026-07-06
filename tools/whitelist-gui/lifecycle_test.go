@@ -79,7 +79,7 @@ func TestPathDepthAndDriveRoot(t *testing.T) {
 
 func TestEnvConfigRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), ".env")
-	content := "SERVER_ADDRESS=http://host:8080\r\n# comment\n\nTOKEN=abc\nCUSTOM=keep\n"
+	content := "SERVER_ADDRESS=http://host:8080\r\n# comment\n\nBINDING_TOKEN=abc\nCUSTOM=keep\n"
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -91,8 +91,8 @@ func TestEnvConfigRoundTrip(t *testing.T) {
 	if cfg.Get("SERVER_ADDRESS") != "http://host:8080" {
 		t.Errorf("SERVER_ADDRESS = %q", cfg.Get("SERVER_ADDRESS"))
 	}
-	if cfg.Get("TOKEN") != "abc" {
-		t.Errorf("TOKEN = %q", cfg.Get("TOKEN"))
+	if cfg.Get("BINDING_TOKEN") != "abc" {
+		t.Errorf("BINDING_TOKEN = %q", cfg.Get("BINDING_TOKEN"))
 	}
 
 	// An unrecognised key must survive a rewrite rather than being dropped.
@@ -136,7 +136,7 @@ func TestValidateInstallOptions(t *testing.T) {
 	good := func() installOptions {
 		cfg := newEnvConfig()
 		cfg.Set("SERVER_ADDRESS", "http://host:8080")
-		cfg.Set("TOKEN", "t")
+		cfg.Set("BINDING_TOKEN", "t")
 		return installOptions{SourceExe: exe, TargetDir: dir, Env: cfg}
 	}
 
@@ -150,11 +150,21 @@ func TestValidateInstallOptions(t *testing.T) {
 		t.Error("SERVER_ADDRESS without a scheme was accepted")
 	}
 
+	// A first install with no binding token has nothing to enroll with.
 	bad = good()
-	bad.Env.Set("IDENTITY", "abc")
+	bad.Env.Set("BINDING_TOKEN", "")
 	if err := validateInstallOptions(bad); err == nil {
-		t.Error("non-integer IDENTITY was accepted")
+		t.Error("a first install without BINDING_TOKEN was accepted")
 	}
+
+	// ...but a reinstall over an enrolled agent needs none.
+	if err := os.WriteFile(filepath.Join(dir, credentialsFileName), []byte(`{"agent_token":"x"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateInstallOptions(bad); err != nil {
+		t.Errorf("reinstall over an enrolled agent was rejected: %v", err)
+	}
+	os.Remove(filepath.Join(dir, credentialsFileName))
 
 	bad = good()
 	bad.Env.Set("CHECK_INTERVAL", "0")
