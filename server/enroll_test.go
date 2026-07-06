@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
@@ -228,5 +230,74 @@ func TestEnrollRejectsOverPlanLimit(t *testing.T) {
 	}
 	if code, _ := enroll(t, s, binding, "g4", "PC4"); code != 402 {
 		t.Fatalf("fourth machine got %d, want 402", code)
+	}
+}
+
+// The plan limit has to hold when a fleet is installed at once, which is the
+// realistic case: an admin runs the installer across a lab in one sitting and
+// every machine enrolls within the same second.
+//
+// Counting the seats and taking one are two statements. Without a lock held
+// across them, concurrent enrollments all read the same count, all decide
+// there is room, and all insert — the account ends up over its plan with no
+// error anywhere. The lock in LockAccountComputerLimit is what makes the pair
+// atomic, and this test is what says so: the default limit is 3, twice as many
+// machines arrive together, and exactly 3 may get in.
+func TestConcurrentEnrollmentsCannotExceedThePlanLimit(t *testing.T) {
+	s := &Server{pool: testPool(t)}
+	h := s.setupRoutes()
+	c := registerAndLogin(t, s, "parent@example.com")
+	binding := mintBindingToken(t, s, c)
+
+	const limit = 3 // accounts.computer_limit default
+	const attempts = 6
+
+	var wg sync.WaitGroup
+	codes := make([]int, attempts)
+	start := make(chan struct{})
+	for i := 0; i < attempts; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			body, _ := json.Marshal(map[string]any{
+				"binding_token": binding,
+				"machine_guid":  fmt.Sprintf("guid-%d", i),
+				"hostname":      fmt.Sprintf("PC-%d", i),
+			})
+			req := httptest.NewRequest("POST", "/agent/enroll", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			rr := httptest.NewRecorder()
+			<-start // release them together, so they contend for real
+			h.ServeHTTP(rr, req)
+			codes[i] = rr.Code
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	var enrolled, refused int
+	for i, code := range codes {
+		switch code {
+		case http.StatusCreated:
+			enrolled++
+		case http.StatusPaymentRequired:
+			refused++
+		default:
+			t.Fatalf("enrollment %d answered %d, want 201 or 402", i, code)
+		}
+	}
+	if enrolled != limit || refused != attempts-limit {
+		t.Fatalf("%d enrolled and %d refused; the plan allows %d", enrolled, refused, limit)
+	}
+
+	// And the database agrees: the seats are what was actually taken, not
+	// merely what the responses claimed.
+	var count int
+	if err := observe(t).QueryRow(context.Background(),
+		`SELECT count(*) FROM computers`).Scan(&count); err != nil {
+		t.Fatalf("count computers: %v", err)
+	}
+	if count != limit {
+		t.Fatalf("the account holds %d computers on a plan of %d", count, limit)
 	}
 }

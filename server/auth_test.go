@@ -95,7 +95,7 @@ func TestRegisterCreatesAccountAndOwner(t *testing.T) {
 	}
 
 	var role string
-	err := s.pool.QueryRow(context.Background(), `
+	err := observe(t).QueryRow(context.Background(), `
 		SELECT m.role FROM account_members m
 		JOIN users u ON u.id = m.user_id
 		WHERE u.email = $1`, "parent@example.com").Scan(&role)

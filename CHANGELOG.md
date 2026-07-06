@@ -17,6 +17,10 @@ All notable changes to this project will be documented in this file.
 - `GET /health` pings Postgres and answers `503` during a database outage instead of `200`
 - `guardian-server migrate` reads `.env` from its working directory like the service does
 - `/agent/sync` is now `POST` with telemetry in a JSON body (64 KiB cap) instead of a `runtime` query parameter, so telemetry is not written to proxy access logs and cannot grow a computer's row without bound; `hardware` at enrollment is capped the same way
+- Close the composed pre-scope exposure with a second GUC, `app.user_id` (migration `00014`): the policies on `accounts`, `account_members` and `room_members` that had to run before an account scope exists now key on the calling user, so a query that scopes itself to neither reads nothing instead of reading every customer's account name, membership and room-sharing graph. Creating an account also now requires the owning user's scope
+- Take the plan's seat limit under a row lock at enrollment: concurrent installs across a lab could each read the same seat count and all enroll, putting an account over its plan with no error anywhere
+- Login returns the session token in the response body only for `"client": "mobile"`; a browser gets the `HttpOnly` cookie alone, which returning the token unconditionally had cancelled
+- Cap every request body at 1 MiB, not just the three unauthenticated routes, and allow `X-Guardian-Account` in CORS preflight (without it the guest flow fails in the browser only)
 
 ### Deployment
 - `dist/server/docker-compose.yml` adds Caddy (automatic TLS for `GUARDIAN_DOMAIN`, the one trusted proxy hop) and stops publishing the server's port directly; the server has a compose healthcheck

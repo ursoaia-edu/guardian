@@ -48,7 +48,7 @@ cd mobile && flutter pub run flutter_launcher_icons
 - `main.go` — `Server` struct (a pgx pool), startup, `migrate` subcommand, graceful shutdown
 - `routes.go` — chi router setup, CORS restricted to `CABINET_ORIGIN`, route groups (unauthenticated, cabinet session auth, agent auth)
 - `middleware.go` — `SessionAuth` (cabinet: cookie or Bearer session token) and `AgentAuth` (per-agent Bearer token)
-- `tenant.go` — `Tenant`/context plumbing and `inAccount`, which scopes every query inside a transaction via the `app.account_id` Postgres GUC
+- `tenant.go` — `Tenant`/context plumbing, `inAccount` (scopes a transaction via the `app.account_id` GUC) and `inUser` (`app.user_id`, for the reads that must happen before an account is known)
 - `auth.go` — argon2id password hashing, session/agent/binding token minting (SHA-256 digests)
 - `handlers_auth.go`, `handlers_rooms.go`, `handlers_members.go`, `handlers_computers.go`, `handlers_agent.go`, `events.go` — HTTP handlers grouped by resource; `handlers.go` keeps only `/health` (which pings Postgres)
 - `logging.go` — `clientIP` (proxy-aware, the only way an IP is read), slog request logger, panic recoverer
@@ -56,6 +56,7 @@ cd mobile && flutter pub run flutter_launcher_icons
 - `db/migrations/` (goose SQL, schema owned by `guardian_owner`), `db/queries/` (sqlc sources), `internal/db/` (generated sqlc code, see `sqlc.yaml`)
 - `models.go` — only the agent's wire format (`ClientApplication`, `ClientEntry`, `ClientSyncResponse`, unchanged on purpose) plus `ErrorResponse`
 - PostgreSQL row-level security (RLS) is the tenancy boundary, not handler code: `guardian_app`, the role the service connects as, owns no table and has no `BYPASSRLS`
+- Two scoping GUCs, both set only in `tenant.go`: a query that sets neither reads nothing, on every table. `app.user_id` (migration `00014`) narrows the pre-account policies on `accounts`/`account_members`/`room_members` to the calling user — `users` and the binding-token lookup remain deliberately un-narrowed, see `specs/server.md`
 - Two auth paths, no shared secret token anywhere: a session (cookie or Bearer) for the cabinet, a per-agent Bearer token (minted at `/agent/enroll`) for agents; both resolve to a `Tenant{AccountID, ...}` server-side
 - Postgres tables: `users`, `accounts`, `account_members`, `sessions`, `rooms`, `room_members`, `applications`, `computers`, `binding_tokens`, `events`
 - See `specs/server.md` for the full architecture (RLS policies, roles, the `account_for_agent_token` function, migrations)
@@ -83,7 +84,7 @@ cd mobile && flutter pub run flutter_launcher_icons
 ### API Endpoints
 - `POST /agent/enroll` — agent enrolls with a binding token, gets its own per-machine agent token (unauthenticated; the token in the body is the gate)
 - `POST /agent/sync` — agent posts `{"runtime": {...}}` telemetry (64 KiB cap) and fetches its room's applications, mode, and client entries (agent token auth)
-- `POST /api/v1/auth/register`, `/login`, `/logout` — cabinet account creation and session auth
+- `POST /api/v1/auth/register`, `/login`, `/logout` — cabinet account creation and session auth. Login always sets the `HttpOnly` cookie and returns the token in the body only for `"client": "mobile"`
 - `GET /api/v1/me` — caller's identity and every account they can act in (session auth)
 - `/api/v1/rooms`, `/api/v1/rooms/{roomID}` — room CRUD (session auth)
 - `/api/v1/rooms/{roomID}/applications` — per-room blacklist/whitelist entries (session auth)
@@ -125,6 +126,7 @@ Server installs to `/usr/local/bin/guardian/` as a systemd service running as th
   then `TEST_DATABASE_URL` and `TEST_APP_DATABASE_URL` as in `specs/plans/2026-09-05-saas-multitenant-core.md`
 - `server/fakeagent` enrolls and syncs like the Windows agent, for exercising the API without Windows
 - `server/isolation_test.go` is mandatory: every new account-scoped endpoint gets a row in its table
+- Tests that read an account-scoped table back must scope the read, or use `observe(t)` (a pool on the owner role, not subject to RLS) when the point is to observe the database independently of the app's scoping — this now includes `accounts` and `account_members`
 - CI: `.github/workflows/server.yml` runs gofmt, `go vet`, `sqlc diff` (committed `internal/db/` must match `db/queries/`), the full suite against a Postgres 16 service, and the static release build on every push touching `server/`
 - Agent tests (`agent/agent_test.go`) run against an `httptest` server on any platform; the mobile app still has none
 - `tools/whitelist-gui/builtin.go` mirrors the hardcoded protected-process list in `agent/main.go` and must be kept in sync by hand

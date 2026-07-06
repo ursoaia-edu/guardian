@@ -39,7 +39,7 @@ func insertComputer(t *testing.T, s *Server, accountID uuid.UUID, guid, hostname
 func accountIDOf(t *testing.T, s *Server, email string) uuid.UUID {
 	t.Helper()
 	var id uuid.UUID
-	err := s.pool.QueryRow(context.Background(), `
+	err := observe(t).QueryRow(context.Background(), `
 		SELECT m.account_id FROM account_members m
 		JOIN users u ON u.id = m.user_id WHERE u.email = $1`, email).Scan(&id)
 	if err != nil {

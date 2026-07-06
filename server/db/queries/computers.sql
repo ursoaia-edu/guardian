@@ -16,8 +16,14 @@ RETURNING *;
 -- name: GetComputerByGUID :one
 SELECT * FROM computers WHERE account_id = $1 AND machine_guid = $2;
 
--- name: GetAccountComputerLimit :one
-SELECT computer_limit FROM accounts WHERE id = $1;
+-- name: LockAccountComputerLimit :one
+-- FOR UPDATE, and read before the seats are counted: without the lock, two
+-- installers enrolling at the same moment both read count = limit - 1, both
+-- decide there is room, and the account ends up over its plan. The lock is
+-- taken on the account row rather than the computers table because that is
+-- the thing being rationed, and it serialises only enrollments of the same
+-- account.
+SELECT computer_limit FROM accounts WHERE id = $1 FOR UPDATE;
 
 -- name: UpsertComputerByGUID :one
 -- Reinstalling an agent on a known machine updates the row and rotates its

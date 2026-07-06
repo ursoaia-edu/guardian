@@ -128,11 +128,14 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 		case err == nil:
 			// existing machine, no limit check
 		case errors.Is(err, pgx.ErrNoRows):
-			count, err := q.CountComputers(ctx)
+			// The lock comes first, before the count: it is what makes
+			// "count the seats, then take one" atomic against another
+			// installer doing the same thing a millisecond later.
+			limit, err := q.LockAccountComputerLimit(ctx, binding.AccountID)
 			if err != nil {
 				return err
 			}
-			limit, err := q.GetAccountComputerLimit(ctx, binding.AccountID)
+			count, err := q.CountComputers(ctx)
 			if err != nil {
 				return err
 			}

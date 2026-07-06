@@ -73,6 +73,15 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	if accountName == "" {
 		accountName = req.Email
 	}
+	// The user now exists, so scope the transaction to them: the pre-scope
+	// INSERT policy on accounts requires owner_user_id = current_user_id(),
+	// and the pre-scope SELECT policy the RETURNING clause needs requires the
+	// same. Nothing here can create an account owned by anyone else.
+	if err := scopeTx(ctx, tx, "app.user_id", user.ID); err != nil {
+		slog.Error("scope registration transaction to the user", "error", err)
+		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "Could not create the account"})
+		return
+	}
 	account, err := q.CreateAccount(ctx, db.CreateAccountParams{Name: accountName, OwnerUserID: user.ID})
 	if err != nil {
 		slog.Error("create account", "error", err)
@@ -83,8 +92,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	// is no unscoped INSERT policy on account_members precisely so that no code
 	// path can make an arbitrary user the owner of an arbitrary account; this
 	// insert has to earn its scope like every other write.
-	if _, err := tx.Exec(ctx,
-		`SELECT set_config('app.account_id', $1, true)`, account.ID.String()); err != nil {
+	if err := scopeTx(ctx, tx, "app.account_id", account.ID); err != nil {
 		slog.Error("scope registration transaction", "error", err)
 		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "Could not create the account"})
 		return
@@ -127,8 +135,24 @@ var dummyPasswordHash = func() string {
 	return h
 }()
 
+// loginRequest is deliberately not registerRequest: login takes a client
+// kind, and reusing the registration struct is how a field added to one ends
+// up silently accepted by the other.
+type loginRequest struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+	// Client opts into a token in the response body. Empty (the browser
+	// cabinet) gets the HttpOnly cookie and nothing else.
+	Client string `json:"client"`
+}
+
+// clientMobile is the only caller that may receive the session token in the
+// response body: a Flutter app cannot use a cookie jar comfortably and stores
+// the token in the Keychain/Keystore instead.
+const clientMobile = "mobile"
+
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
-	var req registerRequest
+	var req loginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "Invalid JSON"})
 		return
@@ -178,9 +202,16 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Expires: expires, HttpOnly: true, Secure: true,
 		SameSite: http.SameSiteLaxMode,
 	})
-	// The mobile client cannot use a cookie jar comfortably, so the same token
-	// is also returned in the body for Bearer use.
-	writeJSON(w, http.StatusOK, map[string]string{"token": plain})
+	// Returning the token in the body unconditionally cancels the HttpOnly
+	// flag that was just set: script on the cabinet's origin could read it
+	// out of the login response and keep it somewhere XSS can reach. So the
+	// body token is opt-in, and only the client that genuinely cannot use a
+	// cookie asks for it.
+	if req.Client == clientMobile {
+		writeJSON(w, http.StatusOK, map[string]string{"token": plain})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
@@ -201,7 +232,12 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	accounts, err := db.New(s.pool).ListAccessibleAccounts(r.Context(), t.UserID)
+	var accounts []db.ListAccessibleAccountsRow
+	err := s.inUser(r.Context(), t.UserID, func(tx pgx.Tx) error {
+		var err error
+		accounts, err = db.New(tx).ListAccessibleAccounts(r.Context(), t.UserID)
+		return err
+	})
 	if err != nil {
 		slog.Error("list accessible accounts", "error", err)
 		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "Internal error"})
