@@ -13,12 +13,14 @@ import (
 )
 
 const (
-	// maxUnauthenticatedBodyBytes caps the request body accepted by the three
-	// routes below that run with no session and no agent token: register,
-	// login, and enroll. A megabyte is generous for any of their payloads.
-	// Anything over the cap is rejected as a 400 before it reaches a JSON
-	// decoder or argon2id, not spent as memory.
-	maxUnauthenticatedBodyBytes = 1 << 20 // 1 MiB
+	// maxRequestBodyBytes caps the request body of EVERY route. A megabyte is
+	// generous for any payload the API accepts, and anything over it is
+	// rejected before it reaches a JSON decoder or argon2id rather than spent
+	// as memory. Applying it globally rather than only to the unauthenticated
+	// routes is deliberate: holding a session is not a licence to post a
+	// gigabyte, and a cap that has to be remembered per route is a cap that
+	// will be forgotten on the next one.
+	maxRequestBodyBytes = 1 << 20 // 1 MiB
 
 	// rateLimitWindow is the window every per-IP limit below shares.
 	rateLimitWindow = time.Minute
@@ -55,16 +57,11 @@ func limitBody(n int64) func(http.Handler) http.Handler {
 	}
 }
 
-// maxBody is limitBody at the unauthenticated-route cap.
-func maxBody(next http.Handler) http.Handler {
-	return limitBody(maxUnauthenticatedBodyBytes)(next)
-}
-
-// perIP rate-limits a route by the client IP resolved by
-// middleware.ClientIPFromXFFTrustedProxies, installed once below. The design
-// spec calls for per-email keying on login too; reading the body to key on it
-// would conflict with maxBody's MaxBytesReader ordering, so only per-IP is
-// implemented for this plan (see specs/server.md).
+// perIP rate-limits a route by the client IP resolved by the client-IP
+// middleware installed below. The design spec calls for per-email keying on
+// login too; reading the body to key on it would conflict with the body
+// cap's MaxBytesReader ordering, so only per-IP is implemented for this plan
+// (see specs/server.md).
 func perIP(limit int) func(http.Handler) http.Handler {
 	return httprate.LimitBy(limit, rateLimitWindow, func(r *http.Request) (string, error) {
 		return httprate.CanonicalizeIP(middleware.GetClientIP(r.Context())), nil
@@ -105,6 +102,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 	r.Use(requestLogger)
 	r.Use(recoverer)
 	r.Use(middleware.Timeout(requestTimeout))
+	r.Use(limitBody(maxRequestBodyBytes))
 
 	origins := []string{"http://localhost:5173"}
 	if o := os.Getenv("CABINET_ORIGIN"); o != "" {
@@ -113,7 +111,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   origins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", accountHeader},
 		AllowCredentials: true,
 		MaxAge:           300,
 	}))
@@ -122,11 +120,11 @@ func (s *Server) setupRoutes() *chi.Mux {
 	r.Get("/health", s.handleHealth)
 
 	// The binding token in the body is this route's gate; see handlers_agent.go.
-	r.With(maxBody, perIP(enrollRateLimit)).Post("/agent/enroll", s.handleEnroll)
+	r.With(perIP(enrollRateLimit)).Post("/agent/enroll", s.handleEnroll)
 
 	r.Route("/api/v1/auth", func(r chi.Router) {
-		r.With(maxBody, perIP(registerRateLimit)).Post("/register", s.handleRegister)
-		r.With(maxBody, perIP(loginRateLimit)).Post("/login", s.handleLogin)
+		r.With(perIP(registerRateLimit)).Post("/register", s.handleRegister)
+		r.With(perIP(loginRateLimit)).Post("/login", s.handleLogin)
 		r.Post("/logout", s.handleLogout)
 	})
 

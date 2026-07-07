@@ -118,7 +118,9 @@ func TestBearerTokenAuthenticates(t *testing.T) {
 	if rr := doJSON(t, h, "POST", "/api/v1/auth/register", body, nil); rr.Code != 201 {
 		t.Fatalf("register: %d %s", rr.Code, rr.Body.String())
 	}
-	rr := doJSON(t, h, "POST", "/api/v1/auth/login", body, nil)
+	// The token in the body is what the mobile client asks for by name.
+	mobile := map[string]string{"email": "parent@example.com", "password": "a-long-enough-password", "client": clientMobile}
+	rr := doJSON(t, h, "POST", "/api/v1/auth/login", mobile, nil)
 	var out struct {
 		Token string `json:"token"`
 	}
@@ -185,5 +187,80 @@ func TestSessionAuthReportsOutageAsAnOutage(t *testing.T) {
 	if rr.Code != http.StatusInternalServerError {
 		t.Fatalf("a database outage during session lookup got %d %q, want 500",
 			rr.Code, rr.Body.String())
+	}
+}
+
+// A browser login must not be able to read its own session token out of the
+// response: returning it there hands script on the cabinet's origin the exact
+// credential the HttpOnly cookie exists to keep away from it.
+func TestBrowserLoginDoesNotReturnTheTokenInTheBody(t *testing.T) {
+	s := &Server{pool: testPool(t)}
+	h := s.setupRoutes()
+	body := map[string]string{"email": "parent@example.com", "password": "a-long-enough-password"}
+	if rr := doJSON(t, h, "POST", "/api/v1/auth/register", body, nil); rr.Code != 201 {
+		t.Fatalf("register: %d %s", rr.Code, rr.Body.String())
+	}
+
+	rr := doJSON(t, h, "POST", "/api/v1/auth/login", body, nil)
+	if rr.Code != 200 {
+		t.Fatalf("login: %d %s", rr.Code, rr.Body.String())
+	}
+	var out map[string]string
+	decodeInto(t, rr, &out)
+	if out["token"] != "" {
+		t.Fatal("a login with no client kind returned the session token in the body")
+	}
+
+	// ...and the cookie it did set still works, so nothing was traded away.
+	var cookie *http.Cookie
+	for _, c := range rr.Result().Cookies() {
+		if c.Name == sessionCookieName {
+			cookie = c
+		}
+	}
+	if cookie == nil {
+		t.Fatal("login set no session cookie")
+	}
+	if me := doJSON(t, h, "GET", "/api/v1/me", nil, cookie); me.Code != 200 {
+		t.Fatalf("the cookie from a browser login was rejected: %d %s", me.Code, me.Body.String())
+	}
+}
+
+// The cap applies to authenticated routes too, not just the three
+// unauthenticated ones it was originally written for.
+func TestOversizedBodyIsRejectedOnAnAuthenticatedRoute(t *testing.T) {
+	s := &Server{pool: testPool(t)}
+	h := s.setupRoutes()
+	c := registerAndLogin(t, s, "parent@example.com")
+
+	huge := strings.Repeat("a", maxRequestBodyBytes+1)
+	rr := doJSON(t, h, "POST", "/api/v1/rooms", map[string]string{"name": huge}, c)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("an oversized authenticated body got %d, want 400: %s", rr.Code, rr.Body.String())
+	}
+}
+
+// The cabinet names which of the caller's proven memberships a request acts in
+// with X-Guardian-Account. A browser will not send a header the preflight did
+// not allow, so leaving it out of AllowedHeaders breaks the guest flow
+// entirely — and does it silently, in the browser, where no server test would
+// notice.
+func TestPreflightAllowsTheAccountHeader(t *testing.T) {
+	t.Setenv("CABINET_ORIGIN", "https://cabinet.example.com")
+	s := &Server{pool: testPool(t)}
+
+	req := httptest.NewRequest("OPTIONS", "/api/v1/rooms", nil)
+	req.Header.Set("Origin", "https://cabinet.example.com")
+	req.Header.Set("Access-Control-Request-Method", "GET")
+	req.Header.Set("Access-Control-Request-Headers", accountHeader)
+	rr := httptest.NewRecorder()
+	s.setupRoutes().ServeHTTP(rr, req)
+
+	allowed := rr.Header().Get("Access-Control-Allow-Headers")
+	if !strings.Contains(strings.ToLower(allowed), strings.ToLower(accountHeader)) {
+		t.Fatalf("preflight did not allow %s; Access-Control-Allow-Headers = %q", accountHeader, allowed)
+	}
+	if rr.Header().Get("Access-Control-Allow-Origin") != "https://cabinet.example.com" {
+		t.Fatalf("preflight did not allow the cabinet origin: %q", rr.Header().Get("Access-Control-Allow-Origin"))
 	}
 }

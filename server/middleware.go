@@ -54,7 +54,16 @@ func (s *Server) SessionAuth(next http.Handler) http.Handler {
 			writeJSON(w, http.StatusUnauthorized, ErrorResponse{Error: "Not signed in"})
 			return
 		}
-		accounts, err := q.ListAccessibleAccounts(ctx, session.UserID)
+		// Scoped to the user the session just proved: the membership tables
+		// are readable before an account scope exists, but only for that user
+		// (migration 00014). Running this on the bare pool would now read
+		// nothing at all, which is the point.
+		var accounts []db.ListAccessibleAccountsRow
+		err = s.inUser(ctx, session.UserID, func(tx pgx.Tx) error {
+			var err error
+			accounts, err = db.New(tx).ListAccessibleAccounts(ctx, session.UserID)
+			return err
+		})
 		if err != nil {
 			if !errors.Is(err, pgx.ErrNoRows) {
 				slog.Error("list accessible accounts", "user_id", session.UserID, "error", err)

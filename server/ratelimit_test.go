@@ -16,7 +16,7 @@ func TestOversizedLoginBodyIsRejected(t *testing.T) {
 	s := &Server{pool: testPool(t)}
 	h := s.setupRoutes()
 
-	huge := strings.Repeat("a", maxUnauthenticatedBodyBytes+1)
+	huge := strings.Repeat("a", maxRequestBodyBytes+1)
 	body := `{"email":"a@example.com","password":"` + huge + `"}`
 
 	req := httptest.NewRequest("POST", "/api/v1/auth/login", strings.NewReader(body))
@@ -33,7 +33,7 @@ func TestOversizedEnrollBodyIsRejected(t *testing.T) {
 	s := &Server{pool: testPool(t)}
 	h := s.setupRoutes()
 
-	huge := strings.Repeat("a", maxUnauthenticatedBodyBytes+1)
+	huge := strings.Repeat("a", maxRequestBodyBytes+1)
 	body := `{"machine_guid":"x","hardware":{"note":"` + huge + `"}}`
 
 	req := httptest.NewRequest("POST", "/agent/enroll", strings.NewReader(body))

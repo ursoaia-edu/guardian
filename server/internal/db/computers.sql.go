@@ -23,17 +23,6 @@ func (q *Queries) CountComputers(ctx context.Context) (int64, error) {
 	return count, err
 }
 
-const getAccountComputerLimit = `-- name: GetAccountComputerLimit :one
-SELECT computer_limit FROM accounts WHERE id = $1
-`
-
-func (q *Queries) GetAccountComputerLimit(ctx context.Context, id uuid.UUID) (int32, error) {
-	row := q.db.QueryRow(ctx, getAccountComputerLimit, id)
-	var computer_limit int32
-	err := row.Scan(&computer_limit)
-	return computer_limit, err
-}
-
 const getComputerByGUID = `-- name: GetComputerByGUID :one
 SELECT id, account_id, room_id, display_name, machine_guid, hostname, os_name, os_build, arch, agent_version, hardware, runtime, token_hash, blocked, enrolled_at, last_seen_at FROM computers WHERE account_id = $1 AND machine_guid = $2
 `
@@ -134,6 +123,23 @@ func (q *Queries) ListComputers(ctx context.Context) ([]Computer, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockAccountComputerLimit = `-- name: LockAccountComputerLimit :one
+SELECT computer_limit FROM accounts WHERE id = $1 FOR UPDATE
+`
+
+// FOR UPDATE, and read before the seats are counted: without the lock, two
+// installers enrolling at the same moment both read count = limit - 1, both
+// decide there is room, and the account ends up over its plan. The lock is
+// taken on the account row rather than the computers table because that is
+// the thing being rationed, and it serialises only enrollments of the same
+// account.
+func (q *Queries) LockAccountComputerLimit(ctx context.Context, id uuid.UUID) (int32, error) {
+	row := q.db.QueryRow(ctx, lockAccountComputerLimit, id)
+	var computer_limit int32
+	err := row.Scan(&computer_limit)
+	return computer_limit, err
 }
 
 const touchComputer = `-- name: TouchComputer :exec

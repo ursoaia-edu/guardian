@@ -1,9 +1,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"testing"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // Every account-scoped endpoint, exercised by account B against account A's
@@ -292,5 +295,68 @@ func TestDeletingARoomUnassignsItsComputers(t *testing.T) {
 	}
 	if after.Computers[0].RoomID != nil {
 		t.Fatalf("the computer still points at a deleted room: %s", *after.Computers[0].RoomID)
+	}
+}
+
+// The composed pre-scope exposure, closed by migration 00014.
+//
+// Every other table in this schema fails closed when a handler forgets to
+// scope itself: no scope, no rows. Four tables could not, because a scope
+// legitimately does not exist yet when registration creates the first account
+// and when a session asks which accounts it may enter — and until 00014 those
+// policies keyed on nothing at all, so an unscoped connection could read every
+// customer's account name, membership and room-sharing graph in one join.
+//
+// This is the direct test of that: real rows exist, belonging to three
+// different users, and a connection that never scoped itself sees none of them.
+func TestUnscopedConnectionCannotReadTheFleet(t *testing.T) {
+	s := &Server{pool: testPool(t)}
+	h := s.setupRoutes()
+	ctx := context.Background()
+
+	ca := registerAndLogin(t, s, "a@example.com")
+	roomA := createRoom(t, s, ca, "A's room")
+	cg := registerAndLogin(t, s, "guest@example.com")
+	if rr := doJSON(t, h, "POST", "/api/v1/rooms/"+roomA+"/members",
+		map[string]string{"email": "guest@example.com"}, ca); rr.Code != http.StatusCreated {
+		t.Fatalf("setup: share the room: %d %s", rr.Code, rr.Body.String())
+	}
+	registerAndLogin(t, s, "b@example.com")
+
+	for _, table := range []string{"accounts", "account_members", "room_members"} {
+		var n int
+		if err := s.pool.QueryRow(ctx, "SELECT count(*) FROM "+table).Scan(&n); err != nil {
+			t.Fatalf("count %s: %v", table, err)
+		}
+		if n != 0 {
+			t.Fatalf("a connection that never scoped itself read %d rows from %s", n, table)
+		}
+	}
+
+	// Not vacuous: scoped to one user, the same tables return that user's own
+	// rows and nobody else's. Three accounts and one room grant exist above.
+	var me struct {
+		UserID string `json:"user_id"`
+	}
+	decodeInto(t, doJSON(t, h, "GET", "/api/v1/me", nil, cg), &me)
+	guestID, err := uuidFromString(me.UserID)
+	if err != nil {
+		t.Fatalf("parse the guest's user id: %v", err)
+	}
+
+	var members, grants int
+	if err := s.inUser(ctx, guestID, func(tx pgx.Tx) error {
+		if err := tx.QueryRow(ctx, "SELECT count(*) FROM account_members").Scan(&members); err != nil {
+			return err
+		}
+		return tx.QueryRow(ctx, "SELECT count(*) FROM room_members").Scan(&grants)
+	}); err != nil {
+		t.Fatalf("scoped read: %v", err)
+	}
+	if members != 1 {
+		t.Fatalf("the guest sees %d account_members rows, want only their own 1", members)
+	}
+	if grants != 1 {
+		t.Fatalf("the guest sees %d room_members rows, want only their own 1", grants)
 	}
 }

@@ -25,11 +25,18 @@ func TestCreateAccountWithOwner(t *testing.T) {
 		t.Fatalf("CreateUser: %v", err)
 	}
 
-	account, err := q.CreateAccount(ctx, db.CreateAccountParams{
-		Name:        "Acme",
-		OwnerUserID: user.ID,
-	})
-	if err != nil {
+	// Scoped to the user, as handleRegister does: since migration 00014 the
+	// pre-scope INSERT policy on accounts requires owner_user_id =
+	// current_user_id(), so an unscoped CreateAccount is refused outright.
+	var account db.Account
+	if err := s.inUser(ctx, user.ID, func(tx pgx.Tx) error {
+		var err error
+		account, err = db.New(tx).CreateAccount(ctx, db.CreateAccountParams{
+			Name:        "Acme",
+			OwnerUserID: user.ID,
+		})
+		return err
+	}); err != nil {
 		t.Fatalf("CreateAccount: %v", err)
 	}
 
@@ -48,8 +55,12 @@ func TestCreateAccountWithOwner(t *testing.T) {
 	// (SessionAuth, handleMe) actually calls, and it is the union that also
 	// covers room-guest access — ListAccountsForUser only ever saw
 	// account_members and had no production caller.
-	accounts, err := q.ListAccessibleAccounts(ctx, user.ID)
-	if err != nil {
+	var accounts []db.ListAccessibleAccountsRow
+	if err := s.inUser(ctx, user.ID, func(tx pgx.Tx) error {
+		var err error
+		accounts, err = db.New(tx).ListAccessibleAccounts(ctx, user.ID)
+		return err
+	}); err != nil {
 		t.Fatalf("ListAccessibleAccounts: %v", err)
 	}
 	if len(accounts) != 1 || accounts[0].AccountID != account.ID || accounts[0].Role != "owner" {
