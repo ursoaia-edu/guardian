@@ -16,7 +16,7 @@ every account authenticates its own users (via a session) and its own agents
 | `main.go`                | `Server` struct (a pgx pool), startup, `migrate` subcommand, graceful shutdown |
 | `routes.go`              | chi router setup: CORS restricted to `CABINET_ORIGIN`, route groups |
 | `middleware.go`          | `SessionAuth` (cabinet) and `AgentAuth` (agents)                |
-| `tenant.go`              | `Tenant`, request-context plumbing, `inAccount` (RLS scoping)   |
+| `tenant.go`              | `Tenant`, request-context plumbing, `inAccount`/`inUser` (RLS scoping) |
 | `auth.go`                | argon2id password hashing, session/agent/binding token minting |
 | `handlers_auth.go`       | register, login, logout, `/api/v1/me`                          |
 | `handlers_rooms.go`      | room CRUD, per-room application lists                          |
@@ -56,8 +56,13 @@ There are exactly two ways in, and no shared secret anywhere:
 
 - The caller presents a session token either as the `guardian_session` cookie
   (browser) or as `Authorization: Bearer <token>` (mobile, which cannot use a
-  cookie jar comfortably). `POST /api/v1/auth/login` hands out the same
-  plaintext token both ways: as the cookie and in the response body.
+  cookie jar comfortably). `POST /api/v1/auth/login` always sets the cookie,
+  and returns the same plaintext token in the response body **only** when the
+  request asks for it with `"client": "mobile"`. Returning it
+  unconditionally would cancel the `HttpOnly` flag it had just set: script on
+  the cabinet's origin could read the token straight out of the login
+  response and put it somewhere XSS can reach.
+  `TestBrowserLoginDoesNotReturnTheTokenInTheBody` is the guard.
 - The plaintext is never stored — only its SHA-256 digest, in `sessions`.
   Sessions use a sliding 30-day TTL: any authenticated request touches
   `last_used_at`/`expires_at` forward, so an account in active use is never
@@ -126,10 +131,12 @@ $$;
 ```
 
 `s.inAccount(ctx, accountID, fn)` (`tenant.go`) is the only place that GUC is
-ever set, and it sets it with `set_config('app.account_id', id, true)` — the
-third argument makes the setting local to the transaction, so a connection
-handed back to a pgx pool can never leak one request's scope into the next
-request that happens to reuse it. A connection that never calls `inAccount`
+ever set, and it sets it through `scopeTx`, which uses
+`set_config('app.account_id', id, true)` — the third argument makes the
+setting local to the transaction, so a connection handed back to a pgx pool
+can never leak one request's scope into the next request that happens to
+reuse it. `s.inUser` is its counterpart for the second GUC (**The second
+GUC** below); both are thin wrappers over `s.inTx`. A connection that never calls `inAccount`
 sees nothing at all in any scoped table: `current_setting(..., true)` returns
 NULL when unset, and `NULL = anything` is never true in SQL.
 
@@ -148,23 +155,28 @@ scheme depends on the connection the server holds not being one.
 ### The deliberate pre-scope exceptions
 
 Two situations legitimately have no account scope yet, because the scope
-itself hasn't been determined:
+itself hasn't been determined: registration creating the very first account,
+and a session discovering which accounts it may enter. The policies covering
+them are **pre-account, not unscoped** — since `00014_user_scope.sql` each one
+also tests `app.user_id` (see **The second GUC** below), so it exposes the
+calling user's own rows and nothing else:
 
-- **`accounts`** — `accounts_prescope` (unscoped `SELECT`) and
-  `accounts_insert` (unscoped `INSERT`). Registration has to create the very
-  first row for a brand-new account before any scope can be set on it, and a
-  session has to be able to discover which accounts it may enter.
-- **`account_members`** — `account_members_prescope` (unscoped `SELECT`
-  only). There is **no** unscoped `INSERT` policy: an unscoped insert into
-  `account_members` would let any code path make an arbitrary user the owner
+- **`accounts`** — `accounts_prescope` (`SELECT` where
+  `owner_user_id = current_user_id()`) and `accounts_insert` (`INSERT` with
+  the same check). The `SELECT` is what registration's `INSERT ... RETURNING`
+  needs; the matching `WITH CHECK` means no code path can create an account
+  owned by somebody else, even by accident.
+- **`account_members`** — `account_members_prescope` (`SELECT` where
+  `user_id = current_user_id()`). There is **no** pre-scope `INSERT` policy:
+  such an insert would let any code path make an arbitrary user the owner
   of an arbitrary account, i.e. privilege escalation written into the schema.
   Registration sets the account scope the instant it has the new account's
   id, and only then inserts the owner membership row — that insert has to
   earn its scope like every other write.
 - **`room_members`** (added in `00013_room_member_lookup.sql`) —
-  `room_members_prescope` (unscoped `SELECT` only), for the same reason as
-  `accounts`: a guest's account is discovered from their room grants before
-  any scope exists.
+  `room_members_prescope` (`SELECT` where `user_id = current_user_id()`), for
+  the same reason as `account_members`: a guest's account is discovered from
+  their room grants before any account scope exists.
 - **`binding_tokens`** — `binding_tokens_lookup` (unscoped `SELECT` only).
   Enrollment names the account by the plaintext binding token in the request
   body, not by anything the caller could assert directly, so the lookup by
@@ -180,38 +192,51 @@ Every one of these is a deliberate, narrow, and reasoned-about hole — not an
 oversight. Adding a table to this list is a decision that needs the same
 justification as the four above, not a default.
 
-### The composed pre-scope exposure (accepted for plan 1, closes in plan 2)
+### The second GUC: `app.user_id`
 
-Each pre-scope hole above is individually justified against the table it
-sits on. What the individual justifications do not cover is what an
-unscoped connection can see by combining them: `accounts`, `account_members`
-and `room_members` are each readable with no account scope, and `users` has
-no RLS at all (it isn't a multi-tenant table — see **Database Schema**
-below). Joined together in one query, an unscoped connection can read every
-customer's email, account name, role and room-sharing graph across the
-entire fleet in a single statement — not one account's worth, all of them.
-This was demonstrated live against this database during the final review.
+Each pre-scope policy was individually justified against the table it sits
+on. What those justifications did not cover was what the holes added up to:
+`accounts`, `account_members` and `room_members` were each readable with *no*
+predicate at all, and `users` has no RLS (it isn't a multi-tenant table — see
+**Database Schema** below). Joined in one statement, a connection that had not
+scoped itself could read every customer's email, account name, role and
+room-sharing graph across the entire fleet — not one account's worth, all of
+them. That was demonstrated live against this database, and
+`00014_user_scope.sql` closes it.
 
-Nothing today grants an attacker an unscoped connection — `guardian_app`
-itself sits behind RLS on every table that has it, and the four pre-scope
-holes exist because a handler legitimately runs before a scope can be set,
-not because any handler hands out an unscoped connection to a caller. The
-risk is compositional and forward-looking: each hole is correct in
-isolation, but a future handler that runs a query against one of these four
-tables and simply forgets to call `s.inAccount` — the one mistake this
-whole architecture is otherwise built to make impossible — would not fail
-closed the way it would on every other table. It would succeed, and return
-every customer's data in the four tables above.
+The mechanism mirrors `app.account_id` exactly:
 
-The fix is an `app.user_id` GUC that narrows all four policies to the
-calling user's own row and their own account memberships, mirroring
-`app.account_id` and `current_account_id()`. It is not implemented in this
-plan: plan 1 has no code path that reads any of these four tables without
-already going through `inAccount` or one of the two intentionally-unscoped
-lookups (`GetActiveBindingToken`, `account_for_agent_token`), so there is
-no live exposure today — only a narrower margin for the next handler
-written against these tables than exists everywhere else in the schema.
-Plan 2 closes it.
+```sql
+CREATE FUNCTION current_user_id() RETURNS UUID
+LANGUAGE sql STABLE SET search_path = pg_catalog AS $$
+    SELECT NULLIF(current_setting('app.user_id', true), '')::uuid
+$$;
+```
+
+`s.inUser(ctx, userID, fn)` (`tenant.go`) is the only place that GUC is set,
+and it sets it transaction-locally through the same `scopeTx` helper
+`inAccount` uses. Two handlers run inside it — `SessionAuth`'s
+`ListAccessibleAccounts` and `handleMe` — and registration sets `app.user_id`
+directly on its own transaction the moment the user row exists, before it
+creates the account. Anything else that reads these three tables without a
+scope now reads **nothing**, which is how every other table in the schema
+already behaved. `TestUnscopedConnectionCannotReadTheFleet` and
+`TestAccountInsertRequiresTheOwningUsersScope` are the guards.
+
+Two documented exposures deliberately remain, both narrower than what was
+closed:
+
+- **`binding_tokens_lookup`** cannot be narrowed by user, because enrollment
+  is keyed by a token digest and has no user at all. It exposes token *rows*
+  fleet-wide — ids, account ids, lifetimes, digests — but not the ability to
+  use one: the digests are SHA-256 of 32 random bytes and enrollment needs
+  the plaintext.
+- **`users`** has no RLS, because three legitimate paths read a row that is
+  not the caller's own: login (before any user id is known), inviting
+  somebody to a room by email, and listing a room's members. Narrowing it
+  requires `SECURITY DEFINER` lookups for those three — a separate change,
+  and a smaller prize than the join that motivated this one, since a `users`
+  row on its own carries no account, role or sharing information.
 
 ### `account_for_agent_token`: why a function instead of a policy
 
@@ -349,6 +374,22 @@ belonging to a different account — RLS alone cannot express this, because a
 policy on `computers` only ever tests that row's own `account_id`, never the
 `account_id` of the room it references.
 
+### The seat limit is taken under a lock
+
+`handleEnroll` counts the account's computers and then inserts one. Those are
+two statements, and a fleet is installed all at once — an admin runs the
+installer across a lab in one sitting — so without a lock held across them
+every concurrent enrollment reads the same count, every one decides there is
+room, and the account silently ends up over its plan.
+`LockAccountComputerLimit` therefore reads `accounts.computer_limit`
+`FOR UPDATE` **before** the count, inside the same transaction. The lock is
+taken on the account row because that is the thing being rationed, and it
+serialises only enrollments of the same account.
+`TestConcurrentEnrollmentsCannotExceedThePlanLimit` fires twice as many
+simultaneous enrollments as the plan allows and holds the result to exactly
+the limit; with the `FOR UPDATE` removed it admits four machines onto a
+three-seat plan.
+
 ### `binding_tokens`
 The token an installer carries, shared by every machine downloaded from one
 account's cabinet. `id`, `account_id`, `token_hash` (unique), `expires_at`
@@ -372,7 +413,7 @@ is permanently skipped rather than reused — goose orders by number, so
 renumbering a later migration down to fill the gap would silently reorder
 history on any database that had already applied the migrations under their
 original numbers. Do not create a new `00004_*.sql`; the next migration after
-`00013` is `00014`.
+`00014` is `00015`.
 
 ## Migrations
 
@@ -545,17 +586,27 @@ wildcard origin cannot legally coexist with credentialed (cookie) requests;
 browsers refuse the combination, and allowing it would have meant any site
 could act as the signed-in cabinet user.
 
+`AllowedHeaders` includes `X-Guardian-Account`. A browser will not send a
+header its preflight did not allow, so omitting it breaks the guest flow
+entirely — and does it in the browser, where no server-side test would see
+it. `TestPreflightAllowsTheAccountHeader` covers exactly that.
+
 ## Rate Limiting and Body Size
 
-The three unauthenticated routes — `POST /api/v1/auth/register`,
-`POST /api/v1/auth/login`, and `POST /agent/enroll` — carry two protections
-nothing else in `routes.go` needs, because they are the only routes a caller
-reaches with no session and no agent token:
+Every route carries a body cap. The three unauthenticated routes —
+`POST /api/v1/auth/register`, `POST /api/v1/auth/login`, and
+`POST /agent/enroll` — additionally carry a per-IP rate limit that nothing
+else in `routes.go` needs, because they are the only routes a caller reaches
+with no session and no agent token:
 
-- **`http.MaxBytesReader`** (`maxBody` in `routes.go`), capping the request
-  body at `maxUnauthenticatedBodyBytes` (1 MiB). A body over the cap fails in
-  the handler's existing JSON decode and is reported as a 400, not spent as
-  memory or turned into a 500.
+- **`http.MaxBytesReader`** (`limitBody` in `routes.go`), capping the request
+  body at `maxRequestBodyBytes` (1 MiB). It is installed once, in the global
+  middleware stack, so it covers **every** route rather than the three
+  unauthenticated ones it was originally written for: holding a session is not
+  a licence to post a gigabyte, and a cap applied per route is a cap that gets
+  forgotten on the next one. A body over it fails in the handler's existing
+  JSON decode and is reported as a 400, not spent as memory or turned into a
+  500.
 - **A per-IP rate limit** (`perIP` in `routes.go`, built on
   `github.com/go-chi/httprate`): `loginRateLimit` and `registerRateLimit`
   (10/minute) protect the argon2id work `handleLogin` deliberately spends on
@@ -669,6 +720,13 @@ request path) must both be exported or the suite skips silently. See
 a row asserting that a second account's connection cannot read or write it.
 A new table without a corresponding row there is an unreviewed tenancy claim.
 
+**A test that reads an account-scoped table back must scope the read**, or
+use `observe(t)` — a pool on the owner role, which owns the tables and is not
+subject to RLS — when the point is to observe what is actually in the
+database independently of the application's scoping. Since `00014` this is
+true of `accounts` and `account_members` too; they were the last two tables
+where an unscoped read-back in a test happened to work.
+
 `.github/workflows/server.yml` runs on every push and pull request touching
 `server/`: gofmt, `go vet`, `sqlc diff` (the committed `internal/db/` must
 match `db/queries/` — a query edited without regenerating fails the build),
@@ -702,10 +760,14 @@ way `docker-compose.dev.yml` does, and the same static release build
    `free` — "blocked" and "no policy at all" must never be the same wire
    response.
 8. **CORS is an explicit allow-list with credentials, never a wildcard.**
-9. **`X-Forwarded-For` is believed only when configuration says a proxy
+9. **The two GUCs are the only way to see anything.** `app.account_id` scopes
+   every multi-tenant table; `app.user_id` narrows the handful of policies
+   that must run before an account is known. A query that sets neither reads
+   nothing, on every table, without exception.
+10. **`X-Forwarded-For` is believed only when configuration says a proxy
    wrote it.** `TRUSTED_PROXIES` defaults to `0`; the compose deploy sets
    `1` for its own Caddy. Trusting a forwarded hop that nothing vouches for
    turns every per-IP limit into a suggestion.
-10. **The process runs unprivileged and writes nothing.** Non-root in the
+11. **The process runs unprivileged and writes nothing.** Non-root in the
     container, a sandboxed system user under systemd; the only writable
     thing it needs is a Postgres connection.

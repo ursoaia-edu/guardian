@@ -11,7 +11,11 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// seedAccount inserts a user and an account, returning the account id.
+// seedAccount inserts a user and an account, returning the account id. The
+// account insert runs inside inUser because that is the only way it is allowed
+// to happen since migration 00014: the pre-scope INSERT policy on accounts
+// requires owner_user_id = current_user_id(), so this mirrors what
+// handleRegister does rather than working around it.
 func seedAccount(t *testing.T, s *Server, email, name string) uuid.UUID {
 	t.Helper()
 	ctx := context.Background()
@@ -22,10 +26,11 @@ func seedAccount(t *testing.T, s *Server, email, name string) uuid.UUID {
 	if err != nil {
 		t.Fatalf("seed user: %v", err)
 	}
-	err = s.pool.QueryRow(ctx,
-		`INSERT INTO accounts (name, owner_user_id) VALUES ($1, $2) RETURNING id`,
-		name, userID).Scan(&accountID)
-	if err != nil {
+	if err := s.inUser(ctx, userID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx,
+			`INSERT INTO accounts (name, owner_user_id) VALUES ($1, $2) RETURNING id`,
+			name, userID).Scan(&accountID)
+	}); err != nil {
 		t.Fatalf("seed account: %v", err)
 	}
 	return accountID
@@ -109,5 +114,56 @@ func TestRLSRejectsCrossAccountInsert(t *testing.T) {
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) || pgErr.Code != "42501" {
 		t.Fatalf("expected a row-level-security violation (SQLSTATE 42501), got: %v", err)
+	}
+}
+
+// The write half of migration 00014. An account may only be created by the
+// user who will own it: an unscoped connection cannot create one at all, and a
+// connection scoped to one user cannot create an account owned by another.
+// Without this, any code path that reached the pre-scope insert policy could
+// mint an account belonging to somebody else.
+func TestAccountInsertRequiresTheOwningUsersScope(t *testing.T) {
+	s := &Server{pool: testPool(t)}
+	ctx := context.Background()
+
+	var owner, other uuid.UUID
+	for _, seed := range []struct {
+		email string
+		into  *uuid.UUID
+	}{{"owner@example.com", &owner}, {"other@example.com", &other}} {
+		if err := s.pool.QueryRow(ctx,
+			`INSERT INTO users (email, password_hash) VALUES ($1, 'x') RETURNING id`,
+			seed.email).Scan(seed.into); err != nil {
+			t.Fatalf("seed user %s: %v", seed.email, err)
+		}
+	}
+
+	insert := func(scope *uuid.UUID, ownerID uuid.UUID) error {
+		stmt := `INSERT INTO accounts (name, owner_user_id) VALUES ('Acme', $1)`
+		if scope == nil {
+			_, err := s.pool.Exec(ctx, stmt, ownerID)
+			return err
+		}
+		return s.inUser(ctx, *scope, func(tx pgx.Tx) error {
+			_, err := tx.Exec(ctx, stmt, ownerID)
+			return err
+		})
+	}
+
+	isRLSViolation := func(err error) bool {
+		var pgErr *pgconn.PgError
+		return errors.As(err, &pgErr) && pgErr.Code == "42501"
+	}
+
+	if err := insert(nil, owner); !isRLSViolation(err) {
+		t.Fatalf("an unscoped connection created an account: %v", err)
+	}
+	if err := insert(&other, owner); !isRLSViolation(err) {
+		t.Fatalf("a connection scoped to one user created an account owned by another: %v", err)
+	}
+	// The positive control: the owner's own scope works, so the two rejections
+	// above are the policy at work and not a broken statement.
+	if err := insert(&owner, owner); err != nil {
+		t.Fatalf("the owning user could not create their own account: %v", err)
 	}
 }

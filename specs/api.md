@@ -84,10 +84,17 @@ omitted.
 ```json
 {"email": "parent@example.com", "password": "at-least-8-chars"}
 ```
+`"client": "mobile"` may be added to ask for the session token in the response
+body — for a client that cannot use a cookie jar and stores the token in the
+Keychain/Keystore instead.
 
-**Response** `200` — sets the `guardian_session` cookie (`HttpOnly`, `Secure`,
-`SameSite=Lax`, 30-day expiry) and returns the same plaintext token in the
-body for clients that can't use a cookie jar:
+**Response** `200` — always sets the `guardian_session` cookie (`HttpOnly`,
+`Secure`, `SameSite=Lax`, 30-day expiry). The body carries the token **only**
+for `"client": "mobile"`; returning it to a browser would hand script on the
+cabinet's origin the very credential `HttpOnly` exists to keep from it.
+```json
+{"status": "ok"}
+```
 ```json
 {"token": "…"}
 ```

@@ -74,20 +74,52 @@ func writeLookupError(w http.ResponseWriter, r *http.Request, err error, what st
 	writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "Internal error"})
 }
 
-// inAccount runs fn inside a transaction scoped to one account. The GUC is set
-// with set_config(..., true), which makes it local to this transaction, so a
-// pooled connection cannot leak the scope into the next request.
+// scopeTx sets one of the two scoping GUCs for the rest of this transaction.
+// The third argument to set_config is what makes it transaction-local, and it
+// is the whole reason a pooled connection cannot leak one request's scope into
+// the next request that happens to reuse it. Nothing outside this file may set
+// either GUC.
+func scopeTx(ctx context.Context, tx pgx.Tx, setting string, value uuid.UUID) error {
+	if _, err := tx.Exec(ctx, `SELECT set_config($1, $2, true)`, setting, value.String()); err != nil {
+		return fmt.Errorf("scope transaction (%s): %w", setting, err)
+	}
+	return nil
+}
+
+// inAccount runs fn inside a transaction scoped to one account, which is what
+// every account-scoped RLS policy tests. A connection that never calls this
+// sees nothing at all in any scoped table.
 func (s *Server) inAccount(ctx context.Context, accountID uuid.UUID, fn func(pgx.Tx) error) error {
+	return s.inTx(ctx, func(tx pgx.Tx) error {
+		if err := scopeTx(ctx, tx, "app.account_id", accountID); err != nil {
+			return err
+		}
+		return fn(tx)
+	})
+}
+
+// inUser runs fn inside a transaction scoped to one user, for the handful of
+// reads that legitimately happen before any account scope can exist: which
+// accounts may this user enter, and registration creating the very first one.
+// Those tables' pre-scope policies (migration 00014) test app.user_id, so a
+// query run outside this wrapper reads nothing rather than reading the whole
+// fleet.
+func (s *Server) inUser(ctx context.Context, userID uuid.UUID, fn func(pgx.Tx) error) error {
+	return s.inTx(ctx, func(tx pgx.Tx) error {
+		if err := scopeTx(ctx, tx, "app.user_id", userID); err != nil {
+			return err
+		}
+		return fn(tx)
+	})
+}
+
+func (s *Server) inTx(ctx context.Context, fn func(pgx.Tx) error) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin: %w", err)
 	}
 	defer tx.Rollback(ctx)
 
-	if _, err := tx.Exec(ctx,
-		`SELECT set_config('app.account_id', $1, true)`, accountID.String()); err != nil {
-		return fmt.Errorf("scope transaction: %w", err)
-	}
 	if err := fn(tx); err != nil {
 		return err
 	}

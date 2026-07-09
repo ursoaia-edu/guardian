@@ -11,6 +11,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -123,26 +125,53 @@ func TestMigrationsCreateUsersTable(t *testing.T) {
 	}
 }
 
+// The application role holds DML on the schema and nothing more, so the plain
+// path a new account takes has to work end to end: insert the user, then the
+// account they own, scoped to that user the way handleRegister does.
 func TestAppRoleCanInsertAccount(t *testing.T) {
-	pool := testPool(t)
+	s := &Server{pool: testPool(t)}
 	ctx := context.Background()
 
-	var userID string
-	err := pool.QueryRow(ctx,
+	var userID uuid.UUID
+	err := s.pool.QueryRow(ctx,
 		`INSERT INTO users (email, password_hash) VALUES ($1, $2) RETURNING id`,
 		"owner@example.com", "x").Scan(&userID)
 	if err != nil {
 		t.Fatalf("insert user: %v", err)
 	}
 
-	var accountID string
-	err = pool.QueryRow(ctx,
-		`INSERT INTO accounts (name, owner_user_id) VALUES ($1, $2) RETURNING id`,
-		"Acme", userID).Scan(&accountID)
-	if err != nil {
+	var accountID uuid.UUID
+	if err := s.inUser(ctx, userID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx,
+			`INSERT INTO accounts (name, owner_user_id) VALUES ($1, $2) RETURNING id`,
+			"Acme", userID).Scan(&accountID)
+	}); err != nil {
 		t.Fatalf("insert account: %v", err)
 	}
-	if accountID == "" {
+	if accountID == uuid.Nil {
 		t.Fatal("expected an account id")
 	}
+}
+
+// uuidFromString keeps the uuid dependency out of the isolation suite's own
+// imports, where it would be the only use.
+func uuidFromString(s string) (uuid.UUID, error) { return uuid.Parse(s) }
+
+// observe returns a pool connected as the OWNER role, which owns the tables
+// and is therefore not subject to RLS. Tests use it to check what is actually
+// in the database, independently of the scoping the application applies.
+//
+// Reading account-scoped tables back on the application pool is not an
+// alternative: outside a scope it returns nothing, by design — since migration
+// 00014 that is true of accounts and account_members too, which used to be
+// readable unscoped and were the last two tables where a test could get away
+// with it.
+func observe(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+	pool, err := pgxpool.New(context.Background(), ownerDSN(t))
+	if err != nil {
+		t.Fatalf("connect as owner: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	return pool
 }
