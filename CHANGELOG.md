@@ -21,6 +21,8 @@ All notable changes to this project will be documented in this file.
 - Take the plan's seat limit under a row lock at enrollment: concurrent installs across a lab could each read the same seat count and all enroll, putting an account over its plan with no error anywhere
 - Login returns the session token in the response body only for `"client": "mobile"`; a browser gets the `HttpOnly` cookie alone, which returning the token unconditionally had cancelled
 - Cap every request body at 1 MiB, not just the three unauthenticated routes, and allow `X-Guardian-Account` in CORS preflight (without it the guest flow fails in the browser only)
+- Guard the account-wide API with a `ManagerOnly` route-group middleware instead of a `requireManager` line each handler had to remember — the omission that two rulings had already fixed twice. A test walks the router and fails on any route nobody has classified as guest-reachable or manager-only
+- Build responses from types in `server/responses.go` rather than returning database rows: the schema is no longer the wire contract, and `account_id` is gone from every response body (it was never accepted in a request either)
 
 ### Deployment
 - `dist/server/docker-compose.yml` adds Caddy (automatic TLS for `GUARDIAN_DOMAIN`, the one trusted proxy hop) and stops publishing the server's port directly; the server has a compose healthcheck

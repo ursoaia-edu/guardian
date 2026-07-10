@@ -22,9 +22,6 @@ func (s *Server) handleCreateBindingToken(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	if !requireManager(w, t) {
-		return
-	}
 	plain, hash := newToken()
 	err := s.inAccount(r.Context(), t.AccountID, func(tx pgx.Tx) error {
 		_, err := db.New(tx).CreateBindingToken(r.Context(), db.CreateBindingTokenParams{
@@ -51,9 +48,6 @@ func (s *Server) handleCreateBindingToken(w http.ResponseWriter, r *http.Request
 func (s *Server) handleRevokeBindingTokens(w http.ResponseWriter, r *http.Request) {
 	t, ok := mustTenant(w, r)
 	if !ok {
-		return
-	}
-	if !requireManager(w, t) {
 		return
 	}
 	var revoked int64

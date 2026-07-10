@@ -44,9 +44,6 @@ func (s *Server) handleListEvents(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !requireManager(w, t) {
-		return
-	}
 	var events []db.Event
 	err := s.inAccount(r.Context(), t.AccountID, func(tx pgx.Tx) error {
 		var err error
@@ -58,5 +55,5 @@ func (s *Server) handleListEvents(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "Could not list events"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"events": orEmpty(events)})
+	writeJSON(w, http.StatusOK, map[string]any{"events": eventResponses(events)})
 }

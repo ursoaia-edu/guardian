@@ -21,7 +21,7 @@ func (s *Server) handleListComputers(w http.ResponseWriter, r *http.Request) {
 	err := s.inAccount(r.Context(), t.AccountID, func(tx pgx.Tx) error {
 		q := db.New(tx)
 		var err error
-		if t.Role == "member" {
+		if t.Role == roleMember {
 			computers, err = q.ListComputersForMember(r.Context(), t.UserID)
 		} else {
 			computers, err = q.ListComputers(r.Context())
@@ -33,7 +33,7 @@ func (s *Server) handleListComputers(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "Could not list computers"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"computers": orEmpty(computers)})
+	writeJSON(w, http.StatusOK, map[string]any{"computers": computerResponses(computers)})
 }
 
 func (s *Server) handlePatchComputer(w http.ResponseWriter, r *http.Request) {
@@ -97,7 +97,7 @@ func (s *Server) handlePatchComputer(w http.ResponseWriter, r *http.Request) {
 	var computer db.Computer
 	err = s.inAccount(r.Context(), t.AccountID, func(tx pgx.Tx) error {
 		q := db.New(tx)
-		if t.Role == "member" {
+		if t.Role == roleMember {
 			if _, err := q.GetComputerForMember(r.Context(), db.GetComputerForMemberParams{
 				ID: id, UserID: t.UserID,
 			}); err != nil {
@@ -132,5 +132,5 @@ func (s *Server) handlePatchComputer(w http.ResponseWriter, r *http.Request) {
 		writeLookupError(w, r, err, "Computer")
 		return
 	}
-	writeJSON(w, http.StatusOK, computer)
+	writeJSON(w, http.StatusOK, newComputerResponse(computer))
 }

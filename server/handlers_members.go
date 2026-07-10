@@ -14,26 +14,9 @@ import (
 	"server/internal/db"
 )
 
-// requireManager rejects room guests from account-wide operations. It writes
-// the response itself and reports whether the caller may continue.
-//
-// An allow-list, not a deny-list on "member": a fourth role added later would
-// silently inherit account-wide powers under `role != "member"`, whereas this
-// form fails closed and forces whoever adds it to say so here.
-func requireManager(w http.ResponseWriter, t Tenant) bool {
-	if t.Role != "owner" && t.Role != "admin" {
-		writeJSON(w, http.StatusForbidden, ErrorResponse{Error: "Only account admins can do that"})
-		return false
-	}
-	return true
-}
-
 func (s *Server) handleAddRoomMember(w http.ResponseWriter, r *http.Request) {
 	t, ok := mustTenant(w, r)
 	if !ok {
-		return
-	}
-	if !requireManager(w, t) {
 		return
 	}
 	roomID, ok := roomIDParam(r)
@@ -84,9 +67,6 @@ func (s *Server) handleAddRoomMember(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDeleteRoomMember(w http.ResponseWriter, r *http.Request) {
 	t, ok := mustTenant(w, r)
 	if !ok {
-		return
-	}
-	if !requireManager(w, t) {
 		return
 	}
 	roomID, ok := roomIDParam(r)
@@ -150,7 +130,7 @@ func (s *Server) handleListRoomMembers(w http.ResponseWriter, r *http.Request) {
 		writeLookupError(w, r, err, "Room")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"members": orEmpty(members)})
+	writeJSON(w, http.StatusOK, map[string]any{"members": memberResponses(members)})
 }
 
 // assertRoomVisible is the single place that answers "may this caller touch
@@ -160,7 +140,7 @@ func (s *Server) assertRoomVisible(ctx context.Context, q *db.Queries, t Tenant,
 	if _, err := q.GetRoom(ctx, roomID); err != nil {
 		return err
 	}
-	if t.Role != "member" {
+	if t.Role != roleMember {
 		return nil
 	}
 	ok, err := q.IsRoomMember(ctx, db.IsRoomMemberParams{RoomID: roomID, UserID: t.UserID})

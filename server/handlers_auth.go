@@ -247,6 +247,6 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		"user_id":    t.UserID.String(),
 		"account_id": t.AccountID.String(),
 		"role":       t.Role,
-		"accounts":   orEmpty(accounts),
+		"accounts":   accountResponses(accounts),
 	})
 }
