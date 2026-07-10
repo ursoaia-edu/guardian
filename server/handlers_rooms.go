@@ -22,7 +22,7 @@ func (s *Server) handleListRooms(w http.ResponseWriter, r *http.Request) {
 	err := s.inAccount(r.Context(), t.AccountID, func(tx pgx.Tx) error {
 		q := db.New(tx)
 		var err error
-		if t.Role == "member" {
+		if t.Role == roleMember {
 			rooms, err = q.ListRoomsForMember(r.Context(), t.UserID)
 		} else {
 			rooms, err = q.ListRooms(r.Context())
@@ -34,7 +34,7 @@ func (s *Server) handleListRooms(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "Could not list rooms"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"rooms": orEmpty(rooms)})
+	writeJSON(w, http.StatusOK, map[string]any{"rooms": roomResponses(rooms)})
 }
 
 func (s *Server) handleCreateRoom(w http.ResponseWriter, r *http.Request) {
@@ -54,9 +54,6 @@ func (s *Server) handleCreateRoom(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !requireManager(w, t) {
-		return
-	}
 	var room db.Room
 	err := s.inAccount(r.Context(), t.AccountID, func(tx pgx.Tx) error {
 		var err error
@@ -70,7 +67,7 @@ func (s *Server) handleCreateRoom(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "Could not create the room"})
 		return
 	}
-	writeJSON(w, http.StatusCreated, room)
+	writeJSON(w, http.StatusCreated, newRoomResponse(room))
 }
 
 // roomIDParam parses the URL parameter. A malformed id is reported as 404, not
@@ -107,7 +104,7 @@ func (s *Server) handleGetRoom(w http.ResponseWriter, r *http.Request) {
 		writeLookupError(w, r, err, "Room")
 		return
 	}
-	writeJSON(w, http.StatusOK, room)
+	writeJSON(w, http.StatusOK, newRoomResponse(room))
 }
 
 func (s *Server) handlePatchRoom(w http.ResponseWriter, r *http.Request) {
@@ -162,7 +159,7 @@ func (s *Server) handlePatchRoom(w http.ResponseWriter, r *http.Request) {
 		writeLookupError(w, r, err, "Room")
 		return
 	}
-	writeJSON(w, http.StatusOK, room)
+	writeJSON(w, http.StatusOK, newRoomResponse(room))
 }
 
 func (s *Server) handleDeleteRoom(w http.ResponseWriter, r *http.Request) {
@@ -173,9 +170,6 @@ func (s *Server) handleDeleteRoom(w http.ResponseWriter, r *http.Request) {
 	}
 	t, ok := mustTenant(w, r)
 	if !ok {
-		return
-	}
-	if !requireManager(w, t) {
 		return
 	}
 	var affected int64
@@ -220,7 +214,7 @@ func (s *Server) handleListRoomApplications(w http.ResponseWriter, r *http.Reque
 		writeLookupError(w, r, err, "Room")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"applications": orEmpty(apps)})
+	writeJSON(w, http.StatusOK, map[string]any{"applications": applicationResponses(apps)})
 }
 
 func (s *Server) handleAddRoomApplication(w http.ResponseWriter, r *http.Request) {
@@ -272,7 +266,7 @@ func (s *Server) handleAddRoomApplication(w http.ResponseWriter, r *http.Request
 		writeLookupError(w, r, err, "Room")
 		return
 	}
-	writeJSON(w, http.StatusCreated, app)
+	writeJSON(w, http.StatusCreated, newApplicationResponse(app))
 }
 
 func (s *Server) handleDeleteRoomApplication(w http.ResponseWriter, r *http.Request) {

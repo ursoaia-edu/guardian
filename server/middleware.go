@@ -131,6 +131,37 @@ func (s *Server) SessionAuth(next http.Handler) http.Handler {
 	})
 }
 
+// ManagerOnly rejects room guests from the account-wide half of the API.
+//
+// It is a middleware over a route group rather than a line inside each
+// handler, and that is the whole point: as a per-handler call it was
+// forgotten twice (rulings R21 and R22), both times on a handler written
+// after the guest role already existed. Here a route is guarded by being in
+// the group, so the failure mode inverts — a new account-wide route is
+// covered by construction, and exposing one to guests is a visible decision
+// in routes.go rather than an omission nobody can see.
+//
+// The check is an allow-list, not "not a member": a fourth role added later
+// inherits nothing until someone says so here.
+func (s *Server) ManagerOnly(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t, ok := tenantFrom(r.Context())
+		if !ok {
+			// SessionAuth runs before this and always sets a tenant, so
+			// reaching here is a routing mistake. Failing closed and loudly
+			// beats serving an account-wide route with no role at all.
+			slog.Error("ManagerOnly reached without a tenant in context", "path", r.URL.Path)
+			writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "Internal error"})
+			return
+		}
+		if t.Role != roleOwner && t.Role != roleAdmin {
+			writeJSON(w, http.StatusForbidden, ErrorResponse{Error: "Only account admins can do that"})
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // AgentAuth resolves the agent's own token to a computer, and from it the
 // account. The agent never names its account or its identity.
 func (s *Server) AgentAuth(next http.Handler) http.Handler {
