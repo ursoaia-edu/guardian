@@ -89,11 +89,12 @@ cd mobile && flutter pub run flutter_launcher_icons
 - `POST /api/v1/auth/register`, `/login`, `/logout` — cabinet account creation and session auth. Login always sets the `HttpOnly` cookie and returns the token in the body only for `"client": "mobile"`
 - `GET /api/v1/me` — caller's identity and every account they can act in (session auth)
 - `/api/v1/rooms`, `/api/v1/rooms/{roomID}` — room CRUD (session auth)
-- `/api/v1/rooms/{roomID}/applications` — per-room blacklist/whitelist entries (session auth)
+- `/api/v1/rooms/{roomID}/applications`, `/api/v1/rooms/{roomID}/applications/{appID}` — per-room blacklist/whitelist entries; PATCH toggles `enabled` (session auth)
 - `/api/v1/rooms/{roomID}/members` — room guest grants (session auth)
-- `/api/v1/computers`, `/api/v1/computers/{computerID}` — computer listing and reassignment/blocking (session auth)
+- `/api/v1/computers`, `/api/v1/computers/{computerID}` — computer listing, reading, reassignment/blocking, and DELETE to unenrol (revokes that machine's agent token) (session auth)
+- `/api/v1/account/members`, `/api/v1/account/members/{userID}` — the account's own owner/admins (session auth, manager only)
 - `/api/v1/binding-tokens` — mint/revoke the installer's enrollment token (session auth)
-- `GET /api/v1/events` — recent account activity (session auth)
+- `GET /api/v1/events` — account activity, paged by an opaque `cursor` (session auth, manager only)
 - `GET /health` — health check (unauthenticated; `503` when Postgres is unreachable)
 - Session requests may set `X-Guardian-Account: <account-id>` to act as a different one of the caller's own proven memberships (e.g. a guest room grant) — see `specs/api.md`
 - Full request/response reference: `specs/api.md`

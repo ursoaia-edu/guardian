@@ -23,6 +23,10 @@ All notable changes to this project will be documented in this file.
 - Cap every request body at 1 MiB, not just the three unauthenticated routes, and allow `X-Guardian-Account` in CORS preflight (without it the guest flow fails in the browser only)
 - Guard the account-wide API with a `ManagerOnly` route-group middleware instead of a `requireManager` line each handler had to remember — the omission that two rulings had already fixed twice. A test walks the router and fails on any route nobody has classified as guest-reachable or manager-only
 - Build responses from types in `server/responses.go` rather than returning database rows: the schema is no longer the wire contract, and `account_id` is gone from every response body (it was never accepted in a request either)
+- Add the endpoints the model already implied but nothing exposed: `PATCH` an application to switch a rule off without deleting it (the `enabled` column could never be cleared), `GET` and `DELETE` a computer (unenrolling revokes that one machine's agent token — the per-machine counterpart to the account-wide token kill switch), and `/api/v1/account/members` to grant and revoke the `admin` role, which had existed in the schema with no way to give it to anybody
+- Record an event for every account-changing operation rather than enrollment alone, each in the same transaction as the change it describes; computer events compare the row before and after, so a PATCH that changes nothing records nothing
+- Page `/api/v1/events` by `(created_at, id)` with an opaque cursor instead of returning a fixed 200 rows
+- `/api/v1/me` lists each account once, with its name: the union behind it returned one row per path, so an admin who was also a guest of one of that account's rooms saw it twice and no switcher could label either
 
 ### Deployment
 - `dist/server/docker-compose.yml` adds Caddy (automatic TLS for `GUARDIAN_DOMAIN`, the one trusted proxy hop) and stops publishing the server's port directly; the server has a compose healthcheck
