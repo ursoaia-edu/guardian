@@ -23,16 +23,18 @@ var guestReachableRoutes = map[string]bool{
 	"PATCH /api/v1/rooms/{roomID}":                       true,
 	"GET /api/v1/rooms/{roomID}/applications":            true,
 	"POST /api/v1/rooms/{roomID}/applications":           true,
+	"PATCH /api/v1/rooms/{roomID}/applications/{appID}":  true,
 	"DELETE /api/v1/rooms/{roomID}/applications/{appID}": true,
 	"GET /api/v1/rooms/{roomID}/members":                 true,
 	"GET /api/v1/computers":                              true,
+	"GET /api/v1/computers/{computerID}":                 true,
 	"PATCH /api/v1/computers/{computerID}":               true,
 }
 
 // managerOnlyRoutes is the account-wide surface. It is a list of concrete
 // requests rather than patterns because TestGuestIsRefusedEveryManagerRoute
 // actually issues them.
-func managerOnlyRoutes(roomID, userID string) []struct {
+func managerOnlyRoutes(roomID, userID, computerID string) []struct {
 	pattern string
 	method  string
 	path    string
@@ -53,6 +55,12 @@ func managerOnlyRoutes(roomID, userID string) []struct {
 		{"POST /api/v1/binding-tokens", "POST", "/api/v1/binding-tokens", nil},
 		{"DELETE /api/v1/binding-tokens", "DELETE", "/api/v1/binding-tokens", nil},
 		{"GET /api/v1/events", "GET", "/api/v1/events", nil},
+		{"DELETE /api/v1/computers/{computerID}", "DELETE", "/api/v1/computers/" + computerID, nil},
+		{"GET /api/v1/account/members", "GET", "/api/v1/account/members", nil},
+		{"POST /api/v1/account/members", "POST", "/api/v1/account/members",
+			map[string]string{"email": "someone@example.com"}},
+		{"DELETE /api/v1/account/members/{userID}", "DELETE",
+			"/api/v1/account/members/" + userID, nil},
 	}
 }
 
@@ -72,7 +80,18 @@ func TestGuestIsRefusedEveryManagerRoute(t *testing.T) {
 	}
 	decodeInto(t, doJSON(t, h, "GET", "/api/v1/me", nil, guest), &me)
 
-	for _, tc := range managerOnlyRoutes(shared, me.UserID) {
+	enroll(t, s, mintBindingToken(t, s, owner), "guid-authz", "PC-AUTHZ")
+	var list struct {
+		Computers []struct {
+			ID string `json:"id"`
+		} `json:"computers"`
+	}
+	decodeInto(t, doJSON(t, h, "GET", "/api/v1/computers", nil, owner), &list)
+	if len(list.Computers) != 1 {
+		t.Fatalf("setup: expected one computer, got %d", len(list.Computers))
+	}
+
+	for _, tc := range managerOnlyRoutes(shared, me.UserID, list.Computers[0].ID) {
 		t.Run(tc.pattern, func(t *testing.T) {
 			rr := asAccount(t, h, tc.method, tc.path, tc.body, guest, ownerAccount)
 			if rr.Code != http.StatusForbidden {
@@ -98,7 +117,7 @@ func TestEveryAPIRouteIsClassified(t *testing.T) {
 	s := &Server{}
 
 	managed := map[string]bool{}
-	for _, tc := range managerOnlyRoutes("r", "u") {
+	for _, tc := range managerOnlyRoutes("r", "u", "c") {
 		managed[tc.pattern] = true
 	}
 

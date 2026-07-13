@@ -229,3 +229,52 @@ func TestPatchComputerWithMalformedIDIsNotFound(t *testing.T) {
 		t.Fatalf("malformed computer id got %d, want 404: %s", rr.Code, rr.Body.String())
 	}
 }
+
+// Unenrolling is the per-machine revocation the account-wide binding-token
+// kill switch could not give. The row is the credential, so deleting it must
+// actually stop that agent — and only that one.
+func TestUnenrollingRevokesOnlyThatMachine(t *testing.T) {
+	s := &Server{pool: testPool(t)}
+	h := s.setupRoutes()
+	c := registerAndLogin(t, s, "parent@example.com")
+	binding := mintBindingToken(t, s, c)
+	_, tokenA := enroll(t, s, binding, "guid-a", "PC-A")
+	_, tokenB := enroll(t, s, binding, "guid-b", "PC-B")
+
+	var list struct {
+		Computers []struct {
+			ID       string `json:"id"`
+			Hostname string `json:"hostname"`
+		} `json:"computers"`
+	}
+	decodeInto(t, doJSON(t, h, "GET", "/api/v1/computers", nil, c), &list)
+	if len(list.Computers) != 2 {
+		t.Fatalf("expected two computers, got %d", len(list.Computers))
+	}
+	var idA string
+	for _, m := range list.Computers {
+		if m.Hostname == "PC-A" {
+			idA = m.ID
+		}
+	}
+
+	// It can be read individually first — the other half of this endpoint pair.
+	if rr := doJSON(t, h, "GET", "/api/v1/computers/"+idA, nil, c); rr.Code != 200 {
+		t.Fatalf("get computer: %d %s", rr.Code, rr.Body.String())
+	}
+
+	if rr := doJSON(t, h, "DELETE", "/api/v1/computers/"+idA, nil, c); rr.Code != http.StatusNoContent {
+		t.Fatalf("unenroll: %d %s", rr.Code, rr.Body.String())
+	}
+	if rr := doJSON(t, h, "GET", "/api/v1/computers/"+idA, nil, c); rr.Code != http.StatusNotFound {
+		t.Fatalf("the machine is still readable after unenrolling: %d", rr.Code)
+	}
+	if code, _ := agentSync(t, s, tokenA); code != http.StatusUnauthorized {
+		t.Fatalf("the unenrolled agent still syncs: %d", code)
+	}
+	// The other machine is untouched: revocation is per machine, which is the
+	// entire reason this endpoint exists.
+	if code, _ := agentSync(t, s, tokenB); code != 200 {
+		t.Fatalf("unenrolling one machine broke another: %d", code)
+	}
+}

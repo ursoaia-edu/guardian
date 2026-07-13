@@ -13,6 +13,16 @@ UPDATE computers SET
 WHERE id = sqlc.arg(id)
 RETURNING *;
 
+-- name: GetComputer :one
+SELECT * FROM computers WHERE id = $1;
+
+-- name: DeleteComputer :execrows
+-- Unenrolling a machine. The row IS the credential: deleting it makes the
+-- agent's token resolve to nothing, so its next sync is a 401 — which the
+-- agent treats as "keep enforcing the last policy" (fail secure), not as
+-- permission to stop.
+DELETE FROM computers WHERE id = $1;
+
 -- name: GetComputerByGUID :one
 SELECT * FROM computers WHERE account_id = $1 AND machine_guid = $2;
 
