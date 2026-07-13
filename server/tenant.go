@@ -13,6 +13,15 @@ import (
 	"server/internal/db"
 )
 
+// The three roles a Tenant can carry. They are compared in enough places —
+// the ManagerOnly middleware, every guest-narrowed query, assertRoomVisible —
+// that a typo in a string literal would be a silent authorisation bug.
+const (
+	roleOwner  = "owner"
+	roleAdmin  = "admin"
+	roleMember = "member" // a room guest; never an account_members row
+)
+
 type ctxKey int
 
 const (

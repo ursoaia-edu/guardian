@@ -130,28 +130,44 @@ func (s *Server) setupRoutes() *chi.Mux {
 
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Use(s.SessionAuth)
-		r.Get("/me", s.handleMe)
 
-		r.Get("/rooms", s.handleListRooms)
-		r.Post("/rooms", s.handleCreateRoom)
-		r.Get("/rooms/{roomID}", s.handleGetRoom)
-		r.Patch("/rooms/{roomID}", s.handlePatchRoom)
-		r.Delete("/rooms/{roomID}", s.handleDeleteRoom)
-		r.Get("/rooms/{roomID}/applications", s.handleListRoomApplications)
-		r.Post("/rooms/{roomID}/applications", s.handleAddRoomApplication)
-		r.Delete("/rooms/{roomID}/applications/{appID}", s.handleDeleteRoomApplication)
+		// Reachable by a room guest. Every route here is either narrowed to
+		// the caller's own grants by its query (ListRoomsForMember,
+		// ListComputersForMember) or gated on assertRoomVisible, and
+		// handlePatchComputer additionally refuses a guest the one move that
+		// is account-wide in effect. Adding a route to this group is a
+		// decision to let somebody else's guest reach it.
+		r.Group(func(r chi.Router) {
+			r.Get("/me", s.handleMe)
 
-		r.Get("/rooms/{roomID}/members", s.handleListRoomMembers)
-		r.Post("/rooms/{roomID}/members", s.handleAddRoomMember)
-		r.Delete("/rooms/{roomID}/members/{userID}", s.handleDeleteRoomMember)
+			r.Get("/rooms", s.handleListRooms)
+			r.Get("/rooms/{roomID}", s.handleGetRoom)
+			r.Patch("/rooms/{roomID}", s.handlePatchRoom)
+			r.Get("/rooms/{roomID}/applications", s.handleListRoomApplications)
+			r.Post("/rooms/{roomID}/applications", s.handleAddRoomApplication)
+			r.Delete("/rooms/{roomID}/applications/{appID}", s.handleDeleteRoomApplication)
+			r.Get("/rooms/{roomID}/members", s.handleListRoomMembers)
 
-		r.Get("/computers", s.handleListComputers)
-		r.Patch("/computers/{computerID}", s.handlePatchComputer)
+			r.Get("/computers", s.handleListComputers)
+			r.Patch("/computers/{computerID}", s.handlePatchComputer)
+		})
 
-		r.Post("/binding-tokens", s.handleCreateBindingToken)
-		r.Delete("/binding-tokens", s.handleRevokeBindingTokens)
+		// Account-wide. The guard is the middleware, not a line each handler
+		// has to remember to write — see ManagerOnly in middleware.go.
+		r.Group(func(r chi.Router) {
+			r.Use(s.ManagerOnly)
 
-		r.Get("/events", s.handleListEvents)
+			r.Post("/rooms", s.handleCreateRoom)
+			r.Delete("/rooms/{roomID}", s.handleDeleteRoom)
+
+			r.Post("/rooms/{roomID}/members", s.handleAddRoomMember)
+			r.Delete("/rooms/{roomID}/members/{userID}", s.handleDeleteRoomMember)
+
+			r.Post("/binding-tokens", s.handleCreateBindingToken)
+			r.Delete("/binding-tokens", s.handleRevokeBindingTokens)
+
+			r.Get("/events", s.handleListEvents)
+		})
 	})
 
 	r.Group(func(r chi.Router) {

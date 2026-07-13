@@ -25,6 +25,7 @@ every account authenticates its own users (via a session) and its own agents
 | `handlers_agent.go`      | binding tokens, agent enrollment, agent sync                   |
 | `events.go`              | account activity feed                                          |
 | `handlers.go`            | `/health` only (pings Postgres, see **Health**)                |
+| `responses.go`           | the API's own response types — the wire format, kept separate from the schema |
 | `logging.go`             | `clientIP` (proxy-aware address resolution), slog request logger, panic recoverer |
 | `migrate.go`             | embeds and runs `db/migrations/*.sql` via goose                |
 | `models.go`              | the agent's wire format (`ClientApplication`, `ClientEntry`, `ClientSyncResponse`) plus `ErrorResponse` |
@@ -281,9 +282,23 @@ There are two roles at the account level and one at the room level:
 
 ### What a guest can reach
 
-`requireManager` (`handlers_members.go`) rejects `member` from every
-account-wide write: creating or deleting rooms, adding or removing room
-members, minting or revoking binding tokens, and listing the events feed.
+The API is split into two route groups in `routes.go`, and the split — not a
+line inside each handler — is the guard. The account-wide group carries the
+`ManagerOnly` middleware (`middleware.go`), so `member` is rejected from
+creating or deleting rooms, adding or removing room members, minting or
+revoking binding tokens, and listing the events feed.
+
+This was a per-handler `requireManager` call, and it was forgotten twice
+(rulings R21 and R22) — both times on a handler written after the guest role
+already existed, which is exactly the mistake a per-handler guard invites. As
+a group middleware the failure mode inverts: an account-wide route is guarded
+by being in the group, and exposing a route to guests is a visible decision.
+`TestEveryAPIRouteIsClassified` walks the router and fails on any `/api/v1`
+route that appears in neither list, so a new route cannot be added without
+someone saying which side it is on; `TestGuestIsRefusedEveryManagerRoute`
+drives every account-wide route with a real guest of that account and demands
+403.
+
 Within the rooms they *have* been granted, a guest can:
 
 - see only those rooms (`ListRoomsForMember`) and only those rooms'
@@ -760,14 +775,20 @@ way `docker-compose.dev.yml` does, and the same static release build
    `free` — "blocked" and "no policy at all" must never be the same wire
    response.
 8. **CORS is an explicit allow-list with credentials, never a wildcard.**
-9. **The two GUCs are the only way to see anything.** `app.account_id` scopes
+9. **Responses are written, not derived.** Handlers return the types in
+   `responses.go`, never a sqlc row. A column added to a table does not
+   appear in the API by itself, and keeping one out is not a `json:"-"` tag
+   on generated code — the two tags that exist, `computers.token_hash` and
+   `users.password_hash`, were both added after a review caught the leak.
+   `account_id` appears on no response at all.
+10. **The two GUCs are the only way to see anything.** `app.account_id` scopes
    every multi-tenant table; `app.user_id` narrows the handful of policies
    that must run before an account is known. A query that sets neither reads
    nothing, on every table, without exception.
-10. **`X-Forwarded-For` is believed only when configuration says a proxy
+11. **`X-Forwarded-For` is believed only when configuration says a proxy
    wrote it.** `TRUSTED_PROXIES` defaults to `0`; the compose deploy sets
    `1` for its own Caddy. Trusting a forwarded hop that nothing vouches for
    turns every per-IP limit into a suggestion.
-11. **The process runs unprivileged and writes nothing.** Non-root in the
+12. **The process runs unprivileged and writes nothing.** Non-root in the
     container, a sandboxed system user under systemd; the only writable
     thing it needs is a Postgres connection.

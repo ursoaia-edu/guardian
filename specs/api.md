@@ -16,6 +16,11 @@ one they require — see `specs/server.md` for the full reasoning behind each.
   not a header. It is a per-account, long-lived token embedded in the
   installer, and it is what names the account a new machine enrolls into.
 
+Responses are built from the types in `server/responses.go`, not from database
+rows, so a column added to a table does not appear in the API by itself.
+`account_id` is on no response body at all: a client never names an account, in
+either direction.
+
 `account_id` is never accepted as a URL, query, or body parameter anywhere in
 this API. It is always resolved server-side from the session or the agent
 token.
@@ -143,7 +148,7 @@ Lists rooms in the active account. An `owner`/`admin` sees every room; a
 
 **Response** `200`
 ```json
-{"rooms": [{"id": "…", "account_id": "…", "name": "Kids room", "mode": "blacklist", "protection_enabled": false, "power_allowed": true, "created_at": "…"}]}
+{"rooms": [{"id": "…", "name": "Kids room", "mode": "blacklist", "protection_enabled": false, "power_allowed": true, "created_at": "…"}]}
 ```
 
 ### `POST /api/v1/rooms`
@@ -190,7 +195,7 @@ Lists that room's blacklist/whitelist entries.
 
 **Response** `200`
 ```json
-{"applications": [{"id": "…", "account_id": "…", "room_id": "…", "name": "steam.exe", "list": "blacklist", "enabled": true, "created_at": "…"}]}
+{"applications": [{"id": "…", "room_id": "…", "name": "steam.exe", "list": "blacklist", "enabled": true, "created_at": "…"}]}
 ```
 
 ### `POST /api/v1/rooms/{roomID}/applications`
@@ -249,7 +254,7 @@ computers currently in a room they were granted.
 ```json
 {
   "computers": [{
-    "id": "…", "account_id": "…", "room_id": "…",
+    "id": "…", "room_id": "…",
     "display_name": "", "machine_guid": "…", "hostname": "FAKE-PC",
     "os_name": "Windows 11", "os_build": "22631", "arch": "amd64",
     "agent_version": "1.4.0", "hardware": {"cpu": "…"}, "runtime": {"uptime_s": 1234},
@@ -304,7 +309,7 @@ recent first.
 
 **Response** `200`
 ```json
-{"events": [{"id": "…", "account_id": "…", "room_id": null, "computer_id": "…", "type": "computer.enrolled", "payload": {"hostname": "FAKE-PC", "agent_version": "1.4.0"}, "created_at": "…"}]}
+{"events": [{"id": "…", "room_id": null, "computer_id": "…", "type": "computer.enrolled", "payload": {"hostname": "FAKE-PC", "agent_version": "3.0.0"}, "created_at": "…"}]}
 ```
 
 ---
