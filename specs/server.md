@@ -162,11 +162,14 @@ them are **pre-account, not unscoped** — since `00014_user_scope.sql` each one
 also tests `app.user_id` (see **The second GUC** below), so it exposes the
 calling user's own rows and nothing else:
 
-- **`accounts`** — `accounts_prescope` (`SELECT` where
-  `owner_user_id = current_user_id()`) and `accounts_insert` (`INSERT` with
-  the same check). The `SELECT` is what registration's `INSERT ... RETURNING`
-  needs; the matching `WITH CHECK` means no code path can create an account
-  owned by somebody else, even by accident.
+- **`accounts`** — `accounts_prescope` (`SELECT` where the row is an account
+  the calling user can act in: owned by them, or one they hold an
+  `account_members` or `room_members` row for) and `accounts_insert`
+  (`INSERT` where `owner_user_id = current_user_id()`). The `SELECT` covers
+  registration's `INSERT ... RETURNING` and, since `00015`, the account
+  *names* `/api/v1/me` needs for an account switcher — those are read before
+  any account scope exists. The `WITH CHECK` means no code path can create an
+  account owned by somebody else, even by accident.
 - **`account_members`** — `account_members_prescope` (`SELECT` where
   `user_id = current_user_id()`). There is **no** pre-scope `INSERT` policy:
   such an insert would let any code path make an arbitrary user the owner
@@ -262,11 +265,14 @@ There are two roles at the account level and one at the room level:
 
 - **`owner`** — the user who registered the account. Set once, at
   registration, and stored in `account_members`.
-- **`admin`** — added by an owner or another admin. Functionally identical to
-  `owner` everywhere in the codebase today (`requireManager` allow-lists both
-  under a single "may manage this account" check); the distinction exists in
-  the schema for future use (billing, account deletion) even though no
-  handler currently treats them differently.
+- **`admin`** — granted through `POST /api/v1/account/members` by an owner or
+  another admin. Functionally identical to `owner` everywhere in the codebase
+  today (`ManagerOnly` allow-lists both under a single "may manage this
+  account" check); the distinction exists in the schema for future use
+  (billing, account deletion) and in one place already: the owner's
+  membership row cannot be deleted, so an account always has somebody who can
+  be billed. Ownership is not transferable in v1, so there is no way to mint
+  a second owner.
 - **`member`** (room guest) — not a row in `account_members` at all. A user
   becomes a guest of an account by being granted access to one specific room
   (`room_members`, whose own `role` column is `CHECK (role IN ('member'))` —
@@ -417,9 +423,19 @@ unenrolling a machine arrives with the cabinet.
 An append-only activity feed. `id`, `account_id`, `room_id`/`computer_id`
 (both nullable, `ON DELETE SET NULL`), `type`, `payload jsonb`, `created_at`.
 Indexed `(account_id, created_at DESC)` for the recent-first listing.
-Currently only `computer.enrolled` is recorded (`handleEnroll`); more event
-types are expected to be added the same way, inside the same transaction as
-the change they describe (`recordEvent` takes the caller's `pgx.Tx`).
+Every account-changing handler records one, inside the same transaction as
+the change it describes (`recordEvent` takes the caller's `pgx.Tx`), so the
+feed cannot disagree with the data it describes — the full list of types is
+in `specs/api.md`. Computer events compare the row before and after rather
+than trusting the request body: a PATCH that sets `blocked` to the value it
+already had is not a blocking, and a feed that says otherwise teaches people
+to ignore it.
+
+The feed is paged by `(created_at, id)` — see `ListEventsBefore`. An OFFSET
+would repeat or skip rows as events arrive underneath a reader, which for an
+activity feed is the normal case rather than the edge one.
+
+There is no retention policy yet: the table grows without bound.
 
 ### Migration 00004
 
@@ -428,7 +444,7 @@ is permanently skipped rather than reused — goose orders by number, so
 renumbering a later migration down to fill the gap would silently reorder
 history on any database that had already applied the migrations under their
 original numbers. Do not create a new `00004_*.sql`; the next migration after
-`00014` is `00015`.
+`00015` is `00016`.
 
 ## Migrations
 
