@@ -130,14 +130,17 @@ Revokes the current session (if any) and clears the cookie.
   "account_id": "…",
   "role": "owner",
   "accounts": [
-    {"account_id": "…", "role": "owner"},
-    {"account_id": "…", "role": "member"}
+    {"account_id": "…", "name": "Parent", "role": "owner"},
+    {"account_id": "…", "name": "The Smiths", "role": "member"}
   ]
 }
 ```
 `role` here is `"owner"`, `"admin"`, or `"member"` (a room guest — see
 **Roles** in `specs/server.md`). `accounts` lists every account this session
-may act in, ordered owner/admin first.
+may act in, ordered owner/admin first, each exactly once and carrying the
+name an account switcher needs. A user reachable through two paths — an
+admin who is also a guest of one of that account's rooms — is listed once
+under the stronger role.
 
 **Response** `401` — not signed in.
 
@@ -209,6 +212,20 @@ same name may exist in both lists of the same room independently.
 
 **Response** `201` — the created entry. **Response** `400` / `404` as above.
 
+### `PATCH /api/v1/rooms/{roomID}/applications/{appID}`
+
+Switches a rule off without deleting it; `/agent/sync` stops sending a
+disabled entry, and switching it back on restores it unchanged.
+
+**Request**
+```json
+{"enabled": false}
+```
+
+**Response** `200` — the updated application. **Response** `400` — no
+`enabled` in the body. **Response** `404` — room not visible, or no such
+application in that room.
+
 ### `DELETE /api/v1/rooms/{roomID}/applications/{appID}`
 
 **Response** `204`. **Response** `404` — room not visible, or no such
@@ -265,6 +282,14 @@ computers currently in a room they were granted.
 `token_hash` (the agent's credential digest) is never present in the
 response — it is stripped at the struct level, not filtered per-handler.
 
+### `GET /api/v1/computers/{computerID}`
+
+One machine. A `member` (guest) may read only machines currently sitting in a
+room they were granted.
+
+**Response** `200` — the computer, in the shape above. **Response** `404` —
+not in this account, or not visible to this guest.
+
 ### `PATCH /api/v1/computers/{computerID}`
 
 **Request** (all fields optional; only present keys are applied)
@@ -279,6 +304,52 @@ depending on which guard trips.
 
 **Response** `200` — the updated computer. **Response** `404` — not in this
 account, or (for a guest) not currently visible to them.
+
+### `DELETE /api/v1/computers/{computerID}`
+
+`owner`/`admin` only. Unenrols the machine. The row *is* the credential, so
+this revokes that one machine's agent token and nothing else — the
+per-machine counterpart to the account-wide binding-token kill switch.
+
+The machine does not thereby go free: its next sync is a `401`, and the agent
+treats a `401` as "keep enforcing the last known policy" (see
+`specs/agent.md`). Bringing it back means running the installer again.
+
+**Response** `204`. **Response** `404` — not in this account.
+
+### `GET /api/v1/account/members`
+
+`owner`/`admin` only. The account's own members — the owner and any admins.
+Distinct from `/rooms/{roomID}/members`, which grants one room to a guest.
+
+**Response** `200`
+```json
+{"members": [{"id": "…", "email": "parent@example.com", "name": "Parent", "role": "owner", "added_at": "…"}]}
+```
+Owner first, then admins by email.
+
+### `POST /api/v1/account/members`
+
+`owner`/`admin` only. Grants an existing Guardian user the `admin` role on
+this account: every room, the whole computer pool, invitations — everything
+except that ownership itself is not transferable in v1, so there is no role
+parameter and no way to mint a second owner.
+
+**Request**
+```json
+{"email": "partner@example.com"}
+```
+
+**Response** `201`. **Response** `404` — no Guardian user with that email
+yet. **Response** `409` — already a member of this account.
+
+### `DELETE /api/v1/account/members/{userID}`
+
+`owner`/`admin` only. Revokes an admin. The owner row cannot be removed —
+an account with no owner has nobody who can be billed or delete it — and the
+attempt is a `404` like any other member that is not there.
+
+**Response** `204`. **Response** `404` — not an admin of this account.
 
 ### `POST /api/v1/binding-tokens`
 
@@ -296,21 +367,39 @@ digest is stored.
 
 `owner`/`admin` only. Revokes **every** binding token this account has ever
 minted (all rows marked `revoked_at`). Machines already enrolled are
-unaffected — they carry their own per-machine token by then. There is no
-delete-computer endpoint yet to revoke one of those individually —
-unenrolling a machine arrives with the cabinet.
+unaffected — they carry their own per-machine token by then; revoking one of
+those individually is `DELETE /api/v1/computers/{computerID}`.
 
 **Response** `204`.
 
 ### `GET /api/v1/events`
 
-`owner`/`admin` only. The 200 most recent account activity events, most
-recent first.
+`owner`/`admin` only. Account activity, most recent first.
+
+**Query params:**
+- `limit` — page size, default 50, capped at 200.
+- `cursor` — from a previous response's `next_cursor`. Opaque: it names a
+  position by `(created_at, id)`, not an offset, so rows arriving while
+  somebody pages through the feed cannot make it repeat or skip.
 
 **Response** `200`
 ```json
-{"events": [{"id": "…", "room_id": null, "computer_id": "…", "type": "computer.enrolled", "payload": {"hostname": "FAKE-PC", "agent_version": "3.0.0"}, "created_at": "…"}]}
+{
+  "events": [{"id": "…", "room_id": null, "computer_id": "…", "type": "computer.enrolled", "payload": {"hostname": "FAKE-PC", "agent_version": "3.0.0"}, "created_at": "…"}],
+  "next_cursor": "1757366400000000000_0d9a…"
+}
 ```
+`next_cursor` is present only when the page was full; its absence means the
+end of the feed.
+
+Recorded types: `room.created`, `room.updated`, `room.deleted`,
+`application.added`, `application.updated`, `application.removed`,
+`computer.enrolled`, `computer.blocked`, `computer.unblocked`,
+`computer.assigned`, `computer.renamed`, `computer.removed`,
+`room_member.granted`, `room_member.revoked`, `account_member.added`,
+`account_member.removed`, `binding_token.created`, `binding_token.revoked`.
+Every one is written in the same transaction as the change it describes, so
+the feed cannot disagree with the data.
 
 ---
 

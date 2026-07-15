@@ -97,23 +97,43 @@ func (q *Queries) IsRoomMember(ctx context.Context, arg IsRoomMemberParams) (boo
 }
 
 const listAccessibleAccounts = `-- name: ListAccessibleAccounts :many
-SELECT account_id, role FROM (
-    SELECT m.account_id AS account_id, m.role AS role
-    FROM account_members m WHERE m.user_id = $1
-    UNION
-    SELECT rm.account_id AS account_id, 'member'::text AS role
-    FROM room_members rm WHERE rm.user_id = $1
-) accessible
-ORDER BY CASE role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END
+SELECT ranked.account_id, ranked.role, ranked.account_name FROM (
+    SELECT DISTINCT ON (accessible.account_id)
+           accessible.account_id AS account_id,
+           accessible.role       AS role,
+           a.name                AS account_name
+    FROM (
+        SELECT m.account_id AS account_id, m.role AS role
+        FROM account_members m WHERE m.user_id = $1
+        UNION
+        SELECT rm.account_id AS account_id, 'member'::text AS role
+        FROM room_members rm WHERE rm.user_id = $1
+    ) accessible
+    JOIN accounts a ON a.id = accessible.account_id
+    ORDER BY accessible.account_id,
+             CASE accessible.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END
+) ranked
+ORDER BY CASE ranked.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END,
+         ranked.account_name
 `
 
 type ListAccessibleAccountsRow struct {
-	AccountID uuid.UUID `json:"account_id"`
-	Role      string    `json:"role"`
+	AccountID   uuid.UUID `json:"account_id"`
+	Role        string    `json:"role"`
+	AccountName string    `json:"account_name"`
 }
 
 // Account membership and room grants both lead to an account. The strongest
-// role wins, so a user who is an admin and also a room member is an admin.
+// role wins, so a user who is an admin and also a room member is an admin —
+// and DISTINCT ON is what makes that true in the result as well as in
+// intention: the UNION yields one row per PATH, so without it such a user saw
+// the same account listed twice, once per role, and an account switcher would
+// draw it twice.
+//
+// The name comes from accounts, readable here without an account scope by the
+// pre-scope policy migration 00015 widened for exactly this query. The outer
+// ORDER BY keeps owner first, which is the default SessionAuth picks when the
+// caller names no account.
 func (q *Queries) ListAccessibleAccounts(ctx context.Context, userID uuid.UUID) ([]ListAccessibleAccountsRow, error) {
 	rows, err := q.db.Query(ctx, listAccessibleAccounts, userID)
 	if err != nil {
@@ -123,7 +143,7 @@ func (q *Queries) ListAccessibleAccounts(ctx context.Context, userID uuid.UUID) 
 	var items []ListAccessibleAccountsRow
 	for rows.Next() {
 		var i ListAccessibleAccountsRow
-		if err := rows.Scan(&i.AccountID, &i.Role); err != nil {
+		if err := rows.Scan(&i.AccountID, &i.Role, &i.AccountName); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

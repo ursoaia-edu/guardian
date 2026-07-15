@@ -93,3 +93,33 @@ func (q *Queries) ListRoomApplications(ctx context.Context, roomID uuid.UUID) ([
 	}
 	return items, nil
 }
+
+const updateRoomApplication = `-- name: UpdateRoomApplication :one
+UPDATE applications SET enabled = COALESCE($1, enabled)
+WHERE id = $2 AND room_id = $3
+RETURNING id, account_id, room_id, name, list, enabled, created_at
+`
+
+type UpdateRoomApplicationParams struct {
+	Enabled *bool     `json:"enabled"`
+	ID      uuid.UUID `json:"id"`
+	RoomID  uuid.UUID `json:"room_id"`
+}
+
+// The `enabled` column existed from the first migration and nothing could ever
+// clear it: an entry could be added and deleted, never switched off. Turning a
+// rule off for an afternoon without losing it is the ordinary case.
+func (q *Queries) UpdateRoomApplication(ctx context.Context, arg UpdateRoomApplicationParams) (Application, error) {
+	row := q.db.QueryRow(ctx, updateRoomApplication, arg.Enabled, arg.ID, arg.RoomID)
+	var i Application
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.RoomID,
+		&i.Name,
+		&i.List,
+		&i.Enabled,
+		&i.CreatedAt,
+	)
+	return i, err
+}

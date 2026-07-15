@@ -10,10 +10,56 @@ import (
 	"encoding/json"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const listEventsBefore = `-- name: ListEventsBefore :many
+SELECT id, account_id, room_id, computer_id, type, payload, created_at FROM events
+WHERE (created_at, id) < ($1::timestamptz, $2::uuid)
+ORDER BY created_at DESC, id DESC
+LIMIT $3
+`
+
+type ListEventsBeforeParams struct {
+	BeforeTime pgtype.Timestamptz `json:"before_time"`
+	BeforeID   uuid.UUID          `json:"before_id"`
+	RowLimit   int32              `json:"row_limit"`
+}
+
+// The next page. Keyed on (created_at, id) rather than an offset: events are
+// inserted while somebody is paging through them, and OFFSET would silently
+// repeat or skip rows as the feed grows underneath the reader. The row
+// comparison matches the index on (account_id, created_at DESC).
+func (q *Queries) ListEventsBefore(ctx context.Context, arg ListEventsBeforeParams) ([]Event, error) {
+	rows, err := q.db.Query(ctx, listEventsBefore, arg.BeforeTime, arg.BeforeID, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Event
+	for rows.Next() {
+		var i Event
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.RoomID,
+			&i.ComputerID,
+			&i.Type,
+			&i.Payload,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRecentEvents = `-- name: ListRecentEvents :many
-SELECT id, account_id, room_id, computer_id, type, payload, created_at FROM events ORDER BY created_at DESC LIMIT $1
+SELECT id, account_id, room_id, computer_id, type, payload, created_at FROM events ORDER BY created_at DESC, id DESC LIMIT $1
 `
 
 func (q *Queries) ListRecentEvents(ctx context.Context, limit int32) ([]Event, error) {

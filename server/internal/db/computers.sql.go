@@ -23,6 +23,50 @@ func (q *Queries) CountComputers(ctx context.Context) (int64, error) {
 	return count, err
 }
 
+const deleteComputer = `-- name: DeleteComputer :execrows
+DELETE FROM computers WHERE id = $1
+`
+
+// Unenrolling a machine. The row IS the credential: deleting it makes the
+// agent's token resolve to nothing, so its next sync is a 401 — which the
+// agent treats as "keep enforcing the last policy" (fail secure), not as
+// permission to stop.
+func (q *Queries) DeleteComputer(ctx context.Context, id uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteComputer, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const getComputer = `-- name: GetComputer :one
+SELECT id, account_id, room_id, display_name, machine_guid, hostname, os_name, os_build, arch, agent_version, hardware, runtime, token_hash, blocked, enrolled_at, last_seen_at FROM computers WHERE id = $1
+`
+
+func (q *Queries) GetComputer(ctx context.Context, id uuid.UUID) (Computer, error) {
+	row := q.db.QueryRow(ctx, getComputer, id)
+	var i Computer
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.RoomID,
+		&i.DisplayName,
+		&i.MachineGuid,
+		&i.Hostname,
+		&i.OsName,
+		&i.OsBuild,
+		&i.Arch,
+		&i.AgentVersion,
+		&i.Hardware,
+		&i.Runtime,
+		&i.TokenHash,
+		&i.Blocked,
+		&i.EnrolledAt,
+		&i.LastSeenAt,
+	)
+	return i, err
+}
+
 const getComputerByGUID = `-- name: GetComputerByGUID :one
 SELECT id, account_id, room_id, display_name, machine_guid, hostname, os_name, os_build, arch, agent_version, hardware, runtime, token_hash, blocked, enrolled_at, last_seen_at FROM computers WHERE account_id = $1 AND machine_guid = $2
 `

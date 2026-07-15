@@ -163,13 +163,34 @@ func eventResponses(rows []db.Event) []EventResponse {
 
 type AccountResponse struct {
 	AccountID uuid.UUID `json:"account_id"`
+	Name      string    `json:"name"`
 	Role      string    `json:"role"`
 }
 
 func accountResponses(rows []db.ListAccessibleAccountsRow) []AccountResponse {
 	out := make([]AccountResponse, 0, len(rows))
 	for _, a := range rows {
-		out = append(out, AccountResponse{AccountID: a.AccountID, Role: a.Role})
+		out = append(out, AccountResponse{AccountID: a.AccountID, Name: a.AccountName, Role: a.Role})
+	}
+	return out
+}
+
+// AccountMemberResponse is the owner or an admin of the account itself, not a
+// room guest — MemberResponse is that one.
+type AccountMemberResponse struct {
+	ID      uuid.UUID `json:"id"`
+	Email   string    `json:"email"`
+	Name    string    `json:"name"`
+	Role    string    `json:"role"`
+	AddedAt time.Time `json:"added_at"`
+}
+
+func accountMemberResponses(rows []db.ListAccountMembersRow) []AccountMemberResponse {
+	out := make([]AccountMemberResponse, 0, len(rows))
+	for _, m := range rows {
+		out = append(out, AccountMemberResponse{
+			ID: m.ID, Email: m.Email, Name: m.Name, Role: m.Role, AddedAt: ts(m.CreatedAt),
+		})
 	}
 	return out
 }

@@ -145,10 +145,12 @@ func (s *Server) setupRoutes() *chi.Mux {
 			r.Patch("/rooms/{roomID}", s.handlePatchRoom)
 			r.Get("/rooms/{roomID}/applications", s.handleListRoomApplications)
 			r.Post("/rooms/{roomID}/applications", s.handleAddRoomApplication)
+			r.Patch("/rooms/{roomID}/applications/{appID}", s.handlePatchRoomApplication)
 			r.Delete("/rooms/{roomID}/applications/{appID}", s.handleDeleteRoomApplication)
 			r.Get("/rooms/{roomID}/members", s.handleListRoomMembers)
 
 			r.Get("/computers", s.handleListComputers)
+			r.Get("/computers/{computerID}", s.handleGetComputer)
 			r.Patch("/computers/{computerID}", s.handlePatchComputer)
 		})
 
@@ -162,6 +164,14 @@ func (s *Server) setupRoutes() *chi.Mux {
 
 			r.Post("/rooms/{roomID}/members", s.handleAddRoomMember)
 			r.Delete("/rooms/{roomID}/members/{userID}", s.handleDeleteRoomMember)
+
+			// Unenrolling is account-wide even when the machine sits in a
+			// guest's room: it revokes that machine's credential.
+			r.Delete("/computers/{computerID}", s.handleDeleteComputer)
+
+			r.Get("/account/members", s.handleListAccountMembers)
+			r.Post("/account/members", s.handleAddAccountMember)
+			r.Delete("/account/members/{userID}", s.handleDeleteAccountMember)
 
 			r.Post("/binding-tokens", s.handleCreateBindingToken)
 			r.Delete("/binding-tokens", s.handleRevokeBindingTokens)
