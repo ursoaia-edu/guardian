@@ -48,8 +48,14 @@ func (s *Server) handleAddRoomMember(w http.ResponseWriter, r *http.Request) {
 		if _, err := q.GetRoom(ctx, roomID); err != nil {
 			return err
 		}
-		return q.AddRoomMember(ctx, db.AddRoomMemberParams{
+		if err := q.AddRoomMember(ctx, db.AddRoomMemberParams{
 			RoomID: roomID, AccountID: t.AccountID, UserID: user.ID,
+		}); err != nil {
+			return err
+		}
+		return s.recordEvent(ctx, tx, eventInput{
+			AccountID: t.AccountID, RoomID: &roomID, Type: "room_member.granted",
+			Payload: map[string]any{"email": user.Email},
 		})
 	})
 	if err != nil {
@@ -92,7 +98,13 @@ func (s *Server) handleDeleteRoomMember(w http.ResponseWriter, r *http.Request) 
 		affected, err = q.DeleteRoomMember(r.Context(), db.DeleteRoomMemberParams{
 			RoomID: roomID, UserID: userID,
 		})
-		return err
+		if err != nil || affected == 0 {
+			return err
+		}
+		return s.recordEvent(r.Context(), tx, eventInput{
+			AccountID: t.AccountID, RoomID: &roomID, Type: "room_member.revoked",
+			Payload: map[string]any{"user_id": userID},
+		})
 	})
 	if err != nil {
 		writeLookupError(w, r, err, "Room")

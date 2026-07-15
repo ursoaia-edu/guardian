@@ -24,11 +24,15 @@ func (s *Server) handleCreateBindingToken(w http.ResponseWriter, r *http.Request
 	}
 	plain, hash := newToken()
 	err := s.inAccount(r.Context(), t.AccountID, func(tx pgx.Tx) error {
-		_, err := db.New(tx).CreateBindingToken(r.Context(), db.CreateBindingTokenParams{
+		if _, err := db.New(tx).CreateBindingToken(r.Context(), db.CreateBindingTokenParams{
 			AccountID: t.AccountID, TokenHash: hash,
 			ExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(bindingTokenTTL), Valid: true},
+		}); err != nil {
+			return err
+		}
+		return s.recordEvent(r.Context(), tx, eventInput{
+			AccountID: t.AccountID, Type: "binding_token.created",
 		})
-		return err
 	})
 	if err != nil {
 		slog.Error("create binding token", "error", err)
@@ -54,7 +58,13 @@ func (s *Server) handleRevokeBindingTokens(w http.ResponseWriter, r *http.Reques
 	err := s.inAccount(r.Context(), t.AccountID, func(tx pgx.Tx) error {
 		var err error
 		revoked, err = db.New(tx).RevokeAllBindingTokens(r.Context())
-		return err
+		if err != nil {
+			return err
+		}
+		return s.recordEvent(r.Context(), tx, eventInput{
+			AccountID: t.AccountID, Type: "binding_token.revoked",
+			Payload: map[string]any{"count": revoked},
+		})
 	})
 	if err != nil {
 		slog.Error("revoke binding tokens", "error", err)
