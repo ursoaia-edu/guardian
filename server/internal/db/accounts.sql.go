@@ -9,6 +9,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const addAccountMember = `-- name: AddAccountMember :exec
@@ -81,6 +82,21 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 	return i, err
 }
 
+const deleteAccountMember = `-- name: DeleteAccountMember :execrows
+DELETE FROM account_members WHERE user_id = $1 AND role <> 'owner'
+`
+
+// The owner row is deliberately unreachable here: an account with no owner has
+// nobody who can be billed or delete it, and ownership is not transferable in
+// v1 (see specs/2026-09-05-saas-design.md).
+func (q *Queries) DeleteAccountMember(ctx context.Context, userID uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteAccountMember, userID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getUserByEmail = `-- name: GetUserByEmail :one
 SELECT id, email, password_hash, name, email_verified_at, created_at FROM users WHERE email = $1
 `
@@ -97,4 +113,45 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const listAccountMembers = `-- name: ListAccountMembers :many
+SELECT u.id, u.email, u.name, m.role, m.created_at
+FROM account_members m
+JOIN users u ON u.id = m.user_id
+ORDER BY CASE m.role WHEN 'owner' THEN 0 ELSE 1 END, u.email
+`
+
+type ListAccountMembersRow struct {
+	ID        uuid.UUID          `json:"id"`
+	Email     string             `json:"email"`
+	Name      string             `json:"name"`
+	Role      string             `json:"role"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) ListAccountMembers(ctx context.Context) ([]ListAccountMembersRow, error) {
+	rows, err := q.db.Query(ctx, listAccountMembers)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListAccountMembersRow
+	for rows.Next() {
+		var i ListAccountMembersRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Email,
+			&i.Name,
+			&i.Role,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
