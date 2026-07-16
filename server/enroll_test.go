@@ -301,3 +301,41 @@ func TestConcurrentEnrollmentsCannotExceedThePlanLimit(t *testing.T) {
 		t.Fatalf("the account holds %d computers on a plan of %d", count, limit)
 	}
 }
+
+// A re-enrollment mints a new token for a machine that already had one, which
+// stops whatever agent was holding the old one. That is the normal shape of a
+// reinstall — and also what an account-wide binding token in the wrong hands
+// can do to a machine that is running perfectly well. It is recorded as its
+// own kind of event so the owner can see it happen.
+func TestReenrollmentIsRecordedAsATokenRotation(t *testing.T) {
+	s := &Server{pool: testPool(t)}
+	h := s.setupRoutes()
+	c := registerAndLogin(t, s, "parent@example.com")
+	binding := mintBindingToken(t, s, c)
+
+	enroll(t, s, binding, "guid-1", "PC-1")
+	_, second := enroll(t, s, binding, "guid-1", "PC-1")
+	if second == "" {
+		t.Fatal("re-enrollment returned no token")
+	}
+
+	var out struct {
+		Events []struct {
+			Type string `json:"type"`
+		} `json:"events"`
+	}
+	decodeInto(t, doJSON(t, h, "GET", "/api/v1/events", nil, c), &out)
+
+	var enrolled, rotated int
+	for _, e := range out.Events {
+		switch e.Type {
+		case "computer.enrolled":
+			enrolled++
+		case "computer.token_rotated":
+			rotated++
+		}
+	}
+	if enrolled != 1 || rotated != 1 {
+		t.Fatalf("feed has %d enrollments and %d rotations, want one of each: %+v", enrolled, rotated, out.Events)
+	}
+}

@@ -57,4 +57,11 @@ RETURNING *;
 SELECT * FROM computers WHERE token_hash = $1;
 
 -- name: TouchComputer :exec
-UPDATE computers SET last_seen_at = now(), runtime = $2 WHERE id = $1;
+-- Throttled for the same reason TouchSession is, and it matters more here:
+-- every agent in the fleet syncs on a timer whether anything changed or not,
+-- and this writes a jsonb column each time. At a 20-second poll that is three
+-- row versions per machine per minute, all of it WAL and vacuum work, to
+-- record a timestamp nobody reads at that resolution. Half a minute of
+-- granularity is finer than any "is it online?" question asked of it.
+UPDATE computers SET last_seen_at = now(), runtime = $2
+WHERE id = $1 AND (last_seen_at IS NULL OR last_seen_at < now() - interval '30 seconds');

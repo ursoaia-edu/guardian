@@ -125,9 +125,10 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 		// A known machine is being reinstalled: it occupies a seat already, so
 		// the limit does not apply to it. pgx.ErrNoRows is the only error that
 		// means "new machine"; anything else is a real failure.
-		_, err := q.GetComputerByGUID(ctx, db.GetComputerByGUIDParams{
+		prior, err := q.GetComputerByGUID(ctx, db.GetComputerByGUIDParams{
 			AccountID: binding.AccountID, MachineGuid: req.MachineGUID,
 		})
+		existing := func() (db.Computer, bool) { return prior, err == nil }
 		switch {
 		case err == nil:
 			// existing machine, no limit check
@@ -151,6 +152,10 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 
+		// Whether this machine was already in the pool decides what the event
+		// below says, so it is read before the upsert overwrites the answer.
+		_, known := existing()
+
 		computer, err := q.UpsertComputerByGUID(ctx, db.UpsertComputerByGUIDParams{
 			AccountID: binding.AccountID, MachineGuid: req.MachineGUID,
 			Hostname: sanitizeText(req.Hostname), OsName: sanitizeText(req.OSName),
@@ -161,10 +166,20 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
+		// A re-enrollment mints a new token for a machine that already had
+		// one, which silently stops whatever agent was holding the old one.
+		// That is the normal shape of a reinstall, and it is also what an
+		// account-wide binding token in the wrong hands can do to a machine
+		// that is running fine — so it is recorded as its own kind of event
+		// rather than folded into "enrolled". See specs/server.md.
+		kind := "computer.enrolled"
+		if known {
+			kind = "computer.token_rotated"
+		}
 		return s.recordEvent(ctx, tx, eventInput{
 			AccountID:  binding.AccountID,
 			ComputerID: &computer.ID,
-			Type:       "computer.enrolled",
+			Type:       kind,
 			Payload: map[string]any{
 				"hostname":      sanitizeText(req.Hostname),
 				"agent_version": sanitizeText(req.AgentVersion),

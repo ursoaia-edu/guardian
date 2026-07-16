@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"golang.org/x/crypto/argon2"
+	"net/http"
+	"strings"
 )
 
 func TestPasswordRoundTrip(t *testing.T) {
@@ -124,5 +126,61 @@ func TestRegisterRejectsShortPassword(t *testing.T) {
 	}, nil)
 	if rr.Code != 400 {
 		t.Fatalf("status %d, want 400", rr.Code)
+	}
+}
+
+// The email is what a verification mail and a password reset go to, so "it
+// contains an @" is not a check. Both of these pass that test and neither can
+// receive anything.
+func TestRegisterRejectsAnUnusableEmail(t *testing.T) {
+	s := &Server{pool: testPool(t)}
+	h := s.setupRoutes()
+	for _, email := range []string{"parent@", "@example.com", "a b@example.com", "Parent <p@example.com>"} {
+		rr := doJSON(t, h, "POST", "/api/v1/auth/register",
+			map[string]string{"email": email, "password": "a-long-enough-password"}, nil)
+		if rr.Code != http.StatusBadRequest {
+			t.Fatalf("registered %q: %d %s", email, rr.Code, rr.Body.String())
+		}
+	}
+	// The control: an ordinary address still registers.
+	if rr := doJSON(t, h, "POST", "/api/v1/auth/register",
+		map[string]string{"email": "parent@example.com", "password": "a-long-enough-password"}, nil); rr.Code != 201 {
+		t.Fatalf("a valid email was rejected: %d %s", rr.Code, rr.Body.String())
+	}
+}
+
+// A password is bounded before it reaches argon2id. The body cap is a
+// megabyte, and copying that on every login attempt is work an unauthenticated
+// caller should not be able to ask for.
+func TestOverlongPasswordsAreRefusedBeforeHashing(t *testing.T) {
+	s := &Server{pool: testPool(t)}
+	h := s.setupRoutes()
+	huge := strings.Repeat("x", maxPasswordLen+1)
+
+	if rr := doJSON(t, h, "POST", "/api/v1/auth/register",
+		map[string]string{"email": "parent@example.com", "password": huge}, nil); rr.Code != http.StatusBadRequest {
+		t.Fatalf("register with an overlong password: %d %s", rr.Code, rr.Body.String())
+	}
+	if rr := doJSON(t, h, "POST", "/api/v1/auth/login",
+		map[string]string{"email": "parent@example.com", "password": huge}, nil); rr.Code != http.StatusUnauthorized {
+		t.Fatalf("login with an overlong password: %d %s", rr.Code, rr.Body.String())
+	}
+}
+
+// CABINET_ORIGIN has no default. The one it used to have, http://localhost:5173,
+// is right for a developer and, unset in production, means a page on somebody
+// else's machine may act as a signed-in user.
+func TestCabinetOriginMustBeConfigured(t *testing.T) {
+	t.Setenv("CABINET_ORIGIN", "")
+	if _, err := cabinetOriginsFromEnv(); err == nil {
+		t.Fatal("an unset CABINET_ORIGIN was accepted")
+	}
+	t.Setenv("CABINET_ORIGIN", " https://app.example.com , https://admin.example.com ")
+	origins, err := cabinetOriginsFromEnv()
+	if err != nil {
+		t.Fatalf("valid origins rejected: %v", err)
+	}
+	if len(origins) != 2 || origins[0] != "https://app.example.com" || origins[1] != "https://admin.example.com" {
+		t.Fatalf("origins parsed as %q", origins)
 	}
 }

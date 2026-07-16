@@ -26,6 +26,11 @@ All notable changes to this project will be documented in this file.
 - Add the endpoints the model already implied but nothing exposed: `PATCH` an application to switch a rule off without deleting it (the `enabled` column could never be cleared), `GET` and `DELETE` a computer (unenrolling revokes that one machine's agent token — the per-machine counterpart to the account-wide token kill switch), and `/api/v1/account/members` to grant and revoke the `admin` role, which had existed in the schema with no way to give it to anybody
 - Record an event for every account-changing operation rather than enrollment alone, each in the same transaction as the change it describes; computer events compare the row before and after, so a PATCH that changes nothing records nothing
 - Page `/api/v1/events` by `(created_at, id)` with an opaque cursor instead of returning a fixed 200 rows
+- Require `CABINET_ORIGIN` instead of defaulting to `http://localhost:5173`: unset in production, that default let a page on a developer's machine act as any signed-in user
+- Cap session renewal at a year from creation (a sliding TTL alone never expires) and purge expired sessions and events older than 180 days hourly; event retention runs through a `SECURITY DEFINER` function because RLS blocks an unscoped delete
+- Throttle the telemetry write on `/agent/sync` to once per 30 seconds per machine — it was rewriting a jsonb column on every poll of every agent
+- Validate the email as an address rather than looking for an `@`, and bound the password before it reaches argon2id
+- Record a re-enrollment as `computer.token_rotated` rather than `computer.enrolled`: it takes a live machine's credential, which is a reinstall when you meant it and a leaked binding token when you did not
 - `/api/v1/me` lists each account once, with its name: the union behind it returned one row per path, so an admin who was also a guest of one of that account's rooms saw it twice and no switcher could label either
 
 ### Deployment

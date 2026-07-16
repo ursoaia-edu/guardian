@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/mail"
 	"strings"
 	"time"
 
@@ -15,7 +16,25 @@ import (
 	"server/internal/db"
 )
 
-const minPasswordLen = 8
+const (
+	minPasswordLen = 8
+
+	// maxPasswordLen bounds what reaches argon2id. The cost of a hash does not
+	// depend on the length of the password, but reading and copying a
+	// megabyte-long one on every attempt does, and the request cap is a
+	// megabyte. Far above any real passphrase.
+	maxPasswordLen = 1024
+)
+
+// validEmail is a real parse rather than a search for "@". "parent@" and
+// "a b@c" both contain one and neither can receive the verification mail this
+// address exists to receive.
+func validEmail(addr string) bool {
+	parsed, err := mail.ParseAddress(addr)
+	// ParseAddress accepts a display name ("Parent <a@b.com>"); the address
+	// stored must be the address itself and nothing else.
+	return err == nil && parsed.Address == addr
+}
 
 type registerRequest struct {
 	Email    string `json:"email"`
@@ -30,12 +49,16 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
-	if req.Email == "" || !strings.Contains(req.Email, "@") {
+	if !validEmail(req.Email) {
 		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "A valid email is required"})
 		return
 	}
 	if len(req.Password) < minPasswordLen {
 		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "Password must be at least 8 characters"})
+		return
+	}
+	if len(req.Password) > maxPasswordLen {
+		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "Password is too long"})
 		return
 	}
 
@@ -157,6 +180,14 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "Invalid JSON"})
 		return
 	}
+	// Rejected before the argon2 work, and before the dummy-hash comparison
+	// that deliberately spends it: a password nobody could have registered is
+	// not worth a hash.
+	if len(req.Password) > maxPasswordLen {
+		writeJSON(w, http.StatusUnauthorized, ErrorResponse{Error: "Invalid email or password"})
+		return
+	}
+
 	ctx := r.Context()
 	q := db.New(s.pool)
 
