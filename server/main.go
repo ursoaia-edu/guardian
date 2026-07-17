@@ -37,6 +37,9 @@ func NewServer(ctx context.Context) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	if _, err := cabinetOriginsFromEnv(); err != nil {
+		return nil, err
+	}
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("connect: %w", err)
@@ -48,6 +51,27 @@ func NewServer(ctx context.Context) (*Server, error) {
 		return nil, fmt.Errorf("ping: %w", err)
 	}
 	return &Server{pool: pool, trustedProxies: proxies}, nil
+}
+
+// cabinetOriginsFromEnv reads CABINET_ORIGIN, the list of origins allowed to
+// send credentialed requests. There is deliberately no default: the previous
+// one was http://localhost:5173, which is correct for a developer and, in
+// production with CABINET_ORIGIN unset, silently means "a page served from
+// the developer's own machine may act as any signed-in user of this server".
+// A missing value is a startup error, where it is impossible to miss.
+func cabinetOriginsFromEnv() ([]string, error) {
+	raw := os.Getenv("CABINET_ORIGIN")
+	var origins []string
+	for _, o := range strings.Split(raw, ",") {
+		if o = strings.TrimSpace(o); o != "" {
+			origins = append(origins, o)
+		}
+	}
+	if len(origins) == 0 {
+		return nil, fmt.Errorf("CABINET_ORIGIN is required: the comma-separated origins allowed to " +
+			"send credentialed requests (for local development, http://localhost:5173)")
+	}
+	return origins, nil
 }
 
 // trustedProxiesFromEnv reads TRUSTED_PROXIES. Unset is zero; anything that
@@ -120,6 +144,11 @@ func main() {
 		WriteTimeout: 15 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
+
+	// Housekeeping runs alongside the server and stops with it.
+	maintenanceCtx, stopMaintenance := context.WithCancel(context.Background())
+	defer stopMaintenance()
+	go server.runMaintenance(maintenanceCtx)
 
 	// Graceful shutdown
 	done := make(chan os.Signal, 1)

@@ -36,6 +36,22 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) er
 	return err
 }
 
+const deleteExpiredSessions = `-- name: DeleteExpiredSessions :execrows
+DELETE FROM sessions WHERE expires_at < now() - interval '1 day'
+`
+
+// Expired rows are already unusable (GetSession filters on expires_at), so
+// this is housekeeping, not security: without it the table only grows. The
+// day of grace keeps a row around long enough to be visible in a "your
+// session expired" investigation.
+func (q *Queries) DeleteExpiredSessions(ctx context.Context) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteExpiredSessions)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteSession = `-- name: DeleteSession :exec
 DELETE FROM sessions WHERE token_hash = $1
 `
@@ -65,20 +81,30 @@ func (q *Queries) GetSession(ctx context.Context, tokenHash string) (Session, er
 }
 
 const touchSession = `-- name: TouchSession :exec
-UPDATE sessions SET last_used_at = now(), expires_at = $2
-WHERE token_hash = $1 AND last_used_at < now() - interval '1 hour'
+UPDATE sessions SET
+    last_used_at = now(),
+    expires_at   = LEAST($1::timestamptz, created_at + interval '1 year')
+WHERE token_hash = $2 AND last_used_at < now() - interval '1 hour'
 `
 
 type TouchSessionParams struct {
-	TokenHash string             `json:"token_hash"`
 	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
+	TokenHash string             `json:"token_hash"`
 }
 
-// Sliding renewal, self-throttled. Renewing on every authenticated request
-// turns every GET into a write: WAL traffic proportional to all API traffic,
-// and a row lock that serialises concurrent requests sharing one session. At a
-// 30-day TTL, renewing at most hourly is indistinguishable to the user.
+// Sliding renewal, self-throttled, under an absolute ceiling.
+//
+// Renewing on every authenticated request turns every GET into a write: WAL
+// traffic proportional to all API traffic, and a row lock that serialises
+// concurrent requests sharing one session. At a 30-day TTL, renewing at most
+// hourly is indistinguishable to the user.
+//
+// LEAST(..., created_at + 1 year) is the ceiling. Without it the renewal is
+// unbounded: a session used once a week never expires, so a token stolen from
+// a device that stays in use is good forever, and "sign out everywhere" is the
+// only revocation that exists. A year is long enough that no parent is thrown
+// out of the app by it and short enough that an abandoned token dies.
 func (q *Queries) TouchSession(ctx context.Context, arg TouchSessionParams) error {
-	_, err := q.db.Exec(ctx, touchSession, arg.TokenHash, arg.ExpiresAt)
+	_, err := q.db.Exec(ctx, touchSession, arg.ExpiresAt, arg.TokenHash)
 	return err
 }
