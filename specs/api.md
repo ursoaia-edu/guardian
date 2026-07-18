@@ -80,7 +80,9 @@ omitted.
 {"account_id": "…", "user_id": "…"}
 ```
 
-**Response** `400` — invalid email, or password under 8 characters.
+**Response** `400` — the email does not parse as a plain address (a bare `@`
+is not a check: `parent@` and `Parent <p@example.com>` are both refused), or
+the password is under 8 or over 1024 characters.
 **Response** `409` — that email is already registered.
 
 ### `POST /api/v1/auth/login`
@@ -392,9 +394,14 @@ those individually is `DELETE /api/v1/computers/{computerID}`.
 `next_cursor` is present only when the page was full; its absence means the
 end of the feed.
 
+Events older than 180 days are purged hourly (`specs/server.md`,
+**Maintenance**).
+
 Recorded types: `room.created`, `room.updated`, `room.deleted`,
 `application.added`, `application.updated`, `application.removed`,
-`computer.enrolled`, `computer.blocked`, `computer.unblocked`,
+`computer.enrolled`, `computer.token_rotated` (a known machine enrolled
+again, taking a new credential — see `specs/server.md`), `computer.blocked`,
+`computer.unblocked`,
 `computer.assigned`, `computer.renamed`, `computer.removed`,
 `room_member.granted`, `room_member.revoked`, `account_member.added`,
 `account_member.removed`, `binding_token.created`, `binding_token.revoked`.

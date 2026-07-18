@@ -27,6 +27,7 @@ every account authenticates its own users (via a session) and its own agents
 | `handlers.go`            | `/health` only (pings Postgres, see **Health**)                |
 | `responses.go`           | the API's own response types — the wire format, kept separate from the schema |
 | `logging.go`             | `clientIP` (proxy-aware address resolution), slog request logger, panic recoverer |
+| `maintenance.go`         | the hourly purge of expired sessions and aged-out events        |
 | `migrate.go`             | embeds and runs `db/migrations/*.sql` via goose                |
 | `models.go`              | the agent's wire format (`ClientApplication`, `ClientEntry`, `ClientSyncResponse`) plus `ErrorResponse` |
 | `helpers.go`             | JSON writer, `.env` loader, small utilities                    |
@@ -66,8 +67,12 @@ There are exactly two ways in, and no shared secret anywhere:
   `TestBrowserLoginDoesNotReturnTheTokenInTheBody` is the guard.
 - The plaintext is never stored — only its SHA-256 digest, in `sessions`.
   Sessions use a sliding 30-day TTL: any authenticated request touches
-  `last_used_at`/`expires_at` forward, so an account in active use is never
-  signed out mid-session.
+  `last_used_at`/`expires_at` forward (at most hourly), so an account in
+  active use is never signed out mid-session. The slide is capped at one year
+  from the session's creation: unbounded renewal means a session used once a
+  week never expires at all, so a token taken from a device that stays in use
+  would be good forever and "sign out everywhere" would be the only
+  revocation there is.
 - `SessionAuth` resolves the session to a user, then to the accounts that
   user can act in (`ListAccessibleAccounts`, see **Roles** below), and puts a
   `Tenant{AccountID, UserID, Role}` in the request context. `account_id`
@@ -379,6 +384,14 @@ Per-room blacklist/whitelist entries. `id`, `account_id`, `room_id`, `name`,
 same room independently, exactly as the single-tenant server allowed per
 (name, mode).
 
+### Telemetry writes are throttled
+
+`TouchComputer` only writes when `last_seen_at` is more than 30 seconds old.
+Every agent in the fleet syncs on a timer whether anything changed or not, and
+each sync rewrites a `jsonb` column: at a 20-second poll that is three row
+versions per machine per minute — all of it WAL and vacuum work — to record a
+timestamp nobody reads at that resolution.
+
 ### `computers`
 `id`, `account_id`, `room_id` (nullable — unassigned means "enforce
 nothing"), `display_name`, `machine_guid`, `hostname`, `os_name`, `os_build`,
@@ -394,6 +407,24 @@ enforces at the database level that a computer can never point at a room
 belonging to a different account — RLS alone cannot express this, because a
 policy on `computers` only ever tests that row's own `account_id`, never the
 `account_id` of the room it references.
+
+### Re-enrollment rotates a live machine's token
+
+`UpsertComputerByGUID` mints a new agent token whenever a known
+`machine_guid` enrolls again, which stops whatever agent was holding the old
+one. That is the normal shape of a reinstall. It is also what somebody
+holding a leaked binding token can do to a machine that is running perfectly
+well: enroll its GUID and take its credential.
+
+Requiring the previous agent token for a re-enrollment was considered and
+rejected: the ordinary reinstall — the console stops the service and runs the
+installer — has no access to it, so the check would break the common case to
+inconvenience an attacker who must already hold an account-wide token. What
+is done instead is that the rotation is recorded as its own event type,
+`computer.token_rotated`, distinct from `computer.enrolled`, so an owner
+watching the feed sees a machine's credential change when nobody was
+reinstalling it. The kill switch for the underlying cause is
+`DELETE /api/v1/binding-tokens`.
 
 ### The seat limit is taken under a lock
 
@@ -444,7 +475,7 @@ is permanently skipped rather than reused — goose orders by number, so
 renumbering a later migration down to fill the gap would silently reorder
 history on any database that had already applied the migrations under their
 original numbers. Do not create a new `00004_*.sql`; the next migration after
-`00015` is `00016`.
+`00016` is `00017`.
 
 ## Migrations
 
@@ -569,6 +600,25 @@ working, and the logs say so), too high resolves no address at all and every
 limiter shares one bucket. `TestSpoofedXFFDoesNotEscapeTheLimitWithoutAProxy`
 holds the default to its promise.
 
+## Maintenance
+
+`runMaintenance` (`maintenance.go`) runs hourly alongside the HTTP server and
+stops with it. It deletes sessions a day past expiry — already unusable, so
+this is housekeeping rather than security — and events older than 180 days.
+
+Event retention cannot be a plain `DELETE` from the application role:
+`events` carries an account-scoped RLS policy, so an unscoped delete matches
+nothing, and scoping it per account would need exactly the fleet-wide read
+that migration `00014` removed. `00016` therefore adds
+`purge_old_events(interval)`, a `SECURITY DEFINER` function with a pinned
+`search_path` whose only ability is to delete rows older than the interval it
+is given and return a count — it cannot read a row out. Same narrow-escape
+pattern as `account_for_agent_token`.
+
+It runs in-process rather than as a cron job or a database scheduler because
+both are another thing to deploy and another thing to forget; a second server
+running it too would simply find nothing to do.
+
 ## Health
 
 `GET /health` pings the pool with a 2-second timeout and answers `200
@@ -611,6 +661,11 @@ if o := os.Getenv("CABINET_ORIGIN"); o != "" {
     origins = strings.Split(o, ",")
 }
 ```
+
+`CABINET_ORIGIN` has no default. It used to fall back to
+`http://localhost:5173`, which is right on a developer's machine and, unset in
+production, quietly means a page served from that developer's laptop may act
+as any signed-in user of the service. `NewServer` refuses to start without it.
 
 `AllowCredentials: true` with an explicit origin list — never a wildcard. A
 wildcard origin cannot legally coexist with credentialed (cookie) requests;
@@ -676,7 +731,7 @@ precedence.
 |--------------------------|--------------------------------------------------------------|
 | `DATABASE_URL`            | `guardian_app` connection string, used by the running service |
 | `MIGRATE_DATABASE_URL`    | `guardian_owner` connection string, used only by `guardian-server migrate` |
-| `CABINET_ORIGIN`          | comma-separated origins allowed to send credentialed requests |
+| `CABINET_ORIGIN`          | comma-separated origins allowed to send credentialed requests. **Required** — startup fails without it |
 | `SERVER_ADDRESS`          | listen address (full URL or `host:port`), default `0.0.0.0:8080` |
 | `TRUSTED_PROXIES`         | reverse-proxy hops in front of the server; `0` (default) ignores `X-Forwarded-For`, `1` behind Caddy/nginx. A non-integer or negative value is a startup error |
 

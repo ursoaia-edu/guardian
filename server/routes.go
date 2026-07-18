@@ -2,8 +2,6 @@ package main
 
 import (
 	"net/http"
-	"os"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -104,10 +102,11 @@ func (s *Server) setupRoutes() *chi.Mux {
 	r.Use(middleware.Timeout(requestTimeout))
 	r.Use(limitBody(maxRequestBodyBytes))
 
-	origins := []string{"http://localhost:5173"}
-	if o := os.Getenv("CABINET_ORIGIN"); o != "" {
-		origins = strings.Split(o, ",")
-	}
+	// NewServer refuses to start without CABINET_ORIGIN, so an empty list here
+	// is only reachable from a test that builds a Server directly — and an
+	// empty allow-list denies every cross-origin request, which is the right
+	// way for this to fail.
+	origins, _ := cabinetOriginsFromEnv()
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   origins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
