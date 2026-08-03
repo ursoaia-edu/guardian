@@ -73,9 +73,12 @@ cd mobile && flutter pub run flutter_launcher_icons
 - `.env` keys: `SERVER_ADDRESS`, `BINDING_TOKEN`, `CHECK_INTERVAL` (`TOKEN`/`IDENTITY` are gone). `agentVersion` in `agent.go`, stampable with `-ldflags "-X main.agentVersion=…"`, printed by `-version`
 - Pure Go, cross-compiles from Linux (`GOOS=windows GOARCH=386 go build`); `go test ./...` needs no server
 
-### Mobile (`mobile/lib/`)
-- 4 screens: `HomeScreen` (blocked apps), `SystemScreen`, `ComputersScreen`, `SettingsScreen`
-- `SettingsService` handles all HTTP calls and local persistence via `shared_preferences`
+### Mobile (`mobile/`)
+- Signs in as a person (`POST /api/v1/auth/login` with `"client": "mobile"`, which is what returns the token in the body) and sends `Authorization: Bearer <session token>` plus `X-Guardian-Account`. The shared `ADMIN_TOKEN` field is gone
+- `LoginScreen` (sign in / register) gates the app; `_Root` in `main.dart` listens to `SettingsService` so signing in or out swaps the screen
+- 4 tabs: `HomeScreen` (**Rules** — one room's applications), `SystemScreen` (**Room** — protection, mode, power, rename/delete/create), `ComputersScreen` (pool, room assignment, lock, unenrol, mint an installer token), `SettingsScreen` (server address, account switcher, sign out)
+- `SettingsService` is the whole API client plus `shared_preferences` state (server address, session token, selected account and room). Failures raise `ApiException` carrying the server's message — the old client returned `false`/`[]`, so an outage looked like an empty account
+- `flutter test` needs no Android SDK and no server: API contract tests drive the service against `MockClient`, plus a login-screen widget test. See `specs/mobile.md`
 
 ### Landing page (`docs/`)
 - Static marketing landing page — single self-contained `docs/index.html`
@@ -121,7 +124,7 @@ Server installs to `/usr/local/bin/guardian/` as a systemd service running as th
 
 ## Rules
 
-- **Always update specs on code changes:** After any code change, update the corresponding files in `specs/` (`server.md`, `agent.md`, `api.md`, `whitelist-gui.md`) and this `CLAUDE.md` to keep documentation in sync. This includes API changes, schema changes, config changes, file structure changes, and build output paths.
+- **Always update specs on code changes:** After any code change, update the corresponding files in `specs/` (`server.md`, `agent.md`, `api.md`, `mobile.md`, `whitelist-gui.md`) and this `CLAUDE.md` to keep documentation in sync. This includes API changes, schema changes, config changes, file structure changes, and build output paths.
 - **The agent's `.env` keys are shared with the console:** `agent/agent.go` reads them, `tools/whitelist-gui/envfile.go` (`knownEnvOrder`) writes them, and `dist/agent/agent.env` templates them — change all three together.
 
 ## Notes
@@ -132,7 +135,7 @@ Server installs to `/usr/local/bin/guardian/` as a systemd service running as th
 - `server/isolation_test.go` is mandatory: every new account-scoped endpoint gets a row in its table
 - Tests that read an account-scoped table back must scope the read, or use `observe(t)` (a pool on the owner role, not subject to RLS) when the point is to observe the database independently of the app's scoping — this now includes `accounts` and `account_members`
 - CI: `.github/workflows/server.yml` runs gofmt, `go vet`, `sqlc diff` (committed `internal/db/` must match `db/queries/`), the full suite against a Postgres 16 service, and the static release build on every push touching `server/`
-- Agent tests (`agent/agent_test.go`) run against an `httptest` server on any platform; the mobile app still has none
+- Agent tests (`agent/agent_test.go`) run against an `httptest` server on any platform; mobile tests (`mobile/test/`) run with `flutter test` and need no Android SDK. CI covers server, agent and mobile (`.github/workflows/`); the Windows console is still tested only by hand (`tools/whitelist-gui/test.ps1`)
 - `tools/whitelist-gui/builtin.go` mirrors the hardcoded protected-process list in `agent/main.go` and must be kept in sync by hand
 - `tools/mkico` is a separate module (it needs `golang.org/x/image` only to build the console's icon)
 - Server and agent have separate `go.mod` files (modules `server` and `agent`)

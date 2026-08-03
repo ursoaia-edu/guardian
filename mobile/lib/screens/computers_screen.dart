@@ -1,10 +1,14 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../services/settings_service.dart';
 import '../utils/snackbar_helper.dart';
 
+/// The account's computers. A machine belongs to the account, not to a room —
+/// moving it between rooms reinstalls nothing, it just receives a different
+/// policy on its next sync.
 class ComputersScreen extends StatefulWidget {
   const ComputersScreen({super.key});
 
@@ -13,403 +17,212 @@ class ComputersScreen extends StatefulWidget {
 }
 
 class _ComputersScreenState extends State<ComputersScreen> {
-  final SettingsService _settingsService = SettingsService();
+  final SettingsService _service = SettingsService();
 
   List<Map<String, dynamic>> _computers = [];
-  bool _isLoading = true;
-  bool _isConnected = false;
-  DateTime? _currentServerTime;
-  Timer? _refreshTimer;
+  List<Map<String, dynamic>> _rooms = [];
+  bool _loading = true;
+  String? _error;
+  Timer? _refresh;
 
   @override
   void initState() {
     super.initState();
-    _settingsService.addListener(_onSettingsChanged);
-    _settingsService.serverEnabledNotifier.addListener(_onServerEnabledChanged);
-    _loadData();
-    _refreshTimer = Timer.periodic(const Duration(seconds: 10), (_) {
-      _updateServerTime();
-    });
-  }
-
-  void _onSettingsChanged() {
-    _loadData();
-  }
-
-  void _onServerEnabledChanged() {
-    if (mounted) setState(() {});
+    _service.addListener(_onServiceChanged);
+    _load();
+    _refresh = Timer.periodic(const Duration(seconds: 15), (_) => _load());
   }
 
   @override
   void dispose() {
-    _settingsService.removeListener(_onSettingsChanged);
-    _settingsService.serverEnabledNotifier.removeListener(_onServerEnabledChanged);
-    _refreshTimer?.cancel();
+    _service.removeListener(_onServiceChanged);
+    _refresh?.cancel();
     super.dispose();
   }
 
-  Future<void> _loadData() async {
-    setState(() {
-      _isLoading = true;
-    });
+  void _onServiceChanged() => _load();
 
+  Future<void> _load() async {
+    if (!mounted) return;
     try {
-      final serverAddress = await _settingsService.getServerAddress();
-      _isConnected = await _settingsService.testConnection(serverAddress);
-
-      if (_isConnected) {
-        final results = await Future.wait([
-          _settingsService.getComputersData(),
-          _settingsService.getServerStatus(),
-        ]);
-        final result = results[0] as Map<String, dynamic>;
-        setState(() {
-          _computers = result['computers'] ?? [];
-          _currentServerTime = result['current_time'];
-        });
-      } else {
-        setState(() {
-          _computers = [];
-          _currentServerTime = null;
-        });
-      }
-    } catch (e) {
+      final computers = await _service.computers();
+      final rooms = await _service.rooms();
+      if (!mounted) return;
       setState(() {
-        _isConnected = false;
+        _computers = computers;
+        _rooms = rooms;
+        _error = null;
+      });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.message;
         _computers = [];
-        _currentServerTime = null;
       });
-
-      if (mounted) {
-        showSnackBarMessage(
-          context,
-          message: 'Error loading computers: $e',
-          backgroundColor: Colors.red,
-
-        );
-      }
     } finally {
-      setState(() {
-        _isLoading = false;
-      });
+      if (mounted) setState(() => _loading = false);
     }
   }
 
-  Future<void> _updateServerTime() async {
+  Future<void> _run(Future<void> Function() action, String success) async {
     try {
-      final result = await _settingsService.getComputersData();
-      final newComputers = result['computers'] ?? [];
-      final newTime = result['current_time'];
-
-      if (mounted && newTime != null) {
-        setState(() {
-          _computers = List<Map<String, dynamic>>.from(newComputers);
-          _currentServerTime = newTime;
-        });
-      }
-    } catch (e) {
-      // Silently fail on background update
-    }
-  }
-
-  Future<void> _toggleComputerBlocked(
-    int computerId,
-    bool currentBlocked,
-  ) async {
-    final newBlocked = !currentBlocked;
-
-    final success = await _settingsService.updateComputerBlocked(
-      computerId,
-      newBlocked,
-    );
-
-    if (success) {
-      setState(() {
-        final computerIndex = _computers.indexWhere(
-          (computer) => computer['identity'] == computerId,
-        );
-        if (computerIndex != -1) {
-          _computers[computerIndex]['blocked'] = newBlocked;
-        }
-      });
-
-      if (mounted) {
-        showSnackBarMessage(
-          context,
-          message: 'Computer #$computerId ${newBlocked ? 'blocked' : 'unblocked'}',
-          backgroundColor: Colors.green,
-        );
-      }
-    } else {
-      if (mounted) {
-        showSnackBarMessage(
-          context,
-          message: 'Failed to update computer status',
-          backgroundColor: Colors.red,
-
-        );
-      }
-    }
-  }
-
-  Future<void> _unblockAllComputers() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Unblock All?'),
-        content: const Text('This will unblock all computers.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Unblock All'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true) return;
-
-    final success = await _settingsService.resetAllComputers();
-
-    if (success) {
-      await _updateServerTime();
-      if (mounted) {
-        showSnackBarMessage(
-          context,
-          message: 'All computers unblocked',
-          backgroundColor: Colors.green,
-        );
-      }
-    } else {
-      if (mounted) {
-        showSnackBarMessage(
-          context,
-          message: 'Failed to unblock computers',
-          backgroundColor: Colors.red,
-
-        );
-      }
-    }
-  }
-
-  Future<void> _blockAllComputers() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Block All?'),
-        content: const Text('This will block all computers.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
-            child: const Text('Block All'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true) return;
-
-    final success = await _settingsService.blockAllComputers();
-
-    if (success) {
-      await _updateServerTime();
-      if (mounted) {
-        showSnackBarMessage(
-          context,
-          message: 'All computers blocked',
-          backgroundColor: Colors.green,
-        );
-      }
-    } else {
-      if (mounted) {
-        showSnackBarMessage(
-          context,
-          message: 'Failed to block computers',
-          backgroundColor: Colors.red,
-
-        );
-      }
-    }
-  }
-
-  Future<void> _toggleServerStatus() async {
-    final newStatus = !_settingsService.serverEnabled;
-    final success = await _settingsService.toggleServerStatus(newStatus);
-
-    if (!success && mounted) {
+      await action();
+      if (!mounted) return;
       showSnackBarMessage(
         context,
-        message: 'Failed to update server status',
+        message: success,
+        backgroundColor: Colors.green,
+      );
+      await _load();
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      showSnackBarMessage(
+        context,
+        message: e.message,
         backgroundColor: Colors.red,
+        duration: const Duration(seconds: 3),
       );
     }
   }
 
-  bool _isComputerOnline(String datetimeStr) {
-    if (_currentServerTime == null) return false;
+  /// A machine is "online" if it has synced within three poll intervals. The
+  /// server records last_seen_at at most every 30 seconds, so anything much
+  /// tighter than a minute would report healthy machines as missing.
+  bool _isOnline(Map<String, dynamic> computer) {
+    final raw = computer['last_seen_at'] as String?;
+    if (raw == null) return false;
+    final seen = DateTime.tryParse(raw);
+    if (seen == null) return false;
+    return DateTime.now().toUtc().difference(seen.toUtc()) <
+        const Duration(seconds: 90);
+  }
 
+  String _nameOf(Map<String, dynamic> computer) {
+    final display = (computer['display_name'] as String?) ?? '';
+    if (display.isNotEmpty) return display;
+    final hostname = (computer['hostname'] as String?) ?? '';
+    return hostname.isNotEmpty ? hostname : 'Unnamed computer';
+  }
+
+  Future<void> _addComputer() async {
+    String? token;
+    String? error;
     try {
-      final computerTime = DateTime.parse(datetimeStr);
-      final difference = _currentServerTime!
-          .difference(computerTime)
-          .inSeconds
-          .abs();
-      return difference < 60;
-    } catch (e) {
-      return false;
+      token = await _service.createBindingToken();
+    } on ApiException catch (e) {
+      error = e.message;
     }
-  }
+    if (!mounted) return;
 
-  String _formatLastSeen(String datetimeStr) {
-    try {
-      final computerTime = DateTime.parse(datetimeStr);
-      final localTime = computerTime.toLocal();
-
-      final hour = localTime.hour > 12
-          ? localTime.hour - 12
-          : (localTime.hour == 0 ? 12 : localTime.hour);
-      final minute = localTime.minute.toString().padLeft(2, '0');
-      final period = localTime.hour >= 12 ? 'PM' : 'AM';
-      final monthAbbr = _monthAbbr(localTime.month);
-
-      return '$monthAbbr ${localTime.day}, $hour:$minute $period';
-    } catch (e) {
-      return datetimeStr;
-    }
-  }
-
-  String _monthAbbr(int month) {
-    const months = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
-    ];
-    return months[month - 1];
-  }
-
-  Widget _buildDisconnected() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.cloud_off, size: 72, color: Colors.grey.shade400),
-          const SizedBox(height: 16),
-          const Text(
-            'Server Not Connected',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            'Check your server settings and connection',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.grey),
-          ),
-          const SizedBox(height: 24),
-          OutlinedButton.icon(
-            onPressed: _loadData,
-            icon: const Icon(Icons.refresh),
-            label: const Text('Retry'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildEmpty() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.computer, size: 72, color: Colors.grey.shade300),
-          const SizedBox(height: 16),
-          const Text(
-            'No Computers',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            'No computers have connected yet',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.grey),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildComputersList() {
-    return ListView.builder(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      itemCount: _computers.length,
-      itemBuilder: (context, index) {
-        final computer = _computers[index];
-        final identity = computer['identity'] as int;
-        final blocked = computer['blocked'] as bool;
-        final datetime = computer['datetime'] as String;
-        final isOnline = _isComputerOnline(datetime);
-
-        return Card(
-          margin: const EdgeInsets.symmetric(vertical: 6),
-          child: Padding(
-            padding: const EdgeInsets.all(14.0),
-            child: Row(
-              children: [
-                // Online indicator
-                Container(
-                  width: 10,
-                  height: 10,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: isOnline ? Colors.green : Colors.grey.shade400,
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Add a computer'),
+        content: error != null
+            ? Text(error)
+            : Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Install the Guardian agent on the machine and put this token in its '
+                    'agent.env as BINDING_TOKEN. The agent trades it for its own credential '
+                    'on first run and then deletes it from the file.',
                   ),
-                ),
-                const SizedBox(width: 14),
-                // Info
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Computer #$identity',
-                        style: const TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        isOnline
-                            ? 'Online'
-                            : 'Last seen ${_formatLastSeen(datetime)}',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: isOnline
-                              ? Colors.green
-                              : Colors.grey.shade600,
-                        ),
-                      ),
-                    ],
+                  const SizedBox(height: 12),
+                  SelectableText(
+                    token!,
+                    style: const TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 12,
+                    ),
                   ),
-                ),
-                // Block switch
-                Switch(
-                  value: blocked,
-                  onChanged: (_) =>
-                      _toggleComputerBlocked(identity, blocked),
-                  inactiveThumbColor: Colors.grey,
-                  inactiveTrackColor: Colors.grey.shade300,
-                ),
-              ],
+                ],
+              ),
+        actions: [
+          if (error == null)
+            TextButton(
+              onPressed: () {
+                Clipboard.setData(ClipboardData(text: token!));
+                Navigator.pop(context);
+              },
+              child: const Text('Copy'),
             ),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
           ),
-        );
-      },
+        ],
+      ),
+    );
+  }
+
+  Future<void> _rename(Map<String, dynamic> computer) async {
+    final controller = TextEditingController(
+      text: (computer['display_name'] as String?) ?? '',
+    );
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Rename computer'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: InputDecoration(
+            labelText: 'Name',
+            hintText: (computer['hostname'] as String?) ?? '',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    final name = controller.text.trim();
+    controller.dispose();
+    if (ok != true) return;
+    await _run(
+      () => _service.updateComputer(computer['id'] as String, {
+        'display_name': name,
+      }),
+      'Computer renamed',
+    );
+  }
+
+  Future<void> _unenroll(Map<String, dynamic> computer) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Remove ${_nameOf(computer)}?'),
+        content: const Text(
+          'This revokes that machine\'s credential, so its agent stops syncing. It keeps '
+          'enforcing the last policy it received until somebody reinstalls it, and it frees '
+          'a seat on your plan.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await _run(
+      () => _service.deleteComputer(computer['id'] as String),
+      'Computer removed',
     );
   }
 
@@ -419,71 +232,155 @@ class _ComputersScreenState extends State<ComputersScreen> {
       appBar: AppBar(
         title: const Text('Computers'),
         actions: [
-          if (_isConnected && _computers.isNotEmpty) ...[
-            IconButton(
-              onPressed: _blockAllComputers,
-              icon: const Icon(Icons.lock),
-              tooltip: 'Block all',
-            ),
-            IconButton(
-              onPressed: _unblockAllComputers,
-              icon: const Icon(Icons.lock_open),
-              tooltip: 'Unblock all',
-            ),
-          ],
-          IconButton(onPressed: _loadData, icon: const Icon(Icons.refresh)),
-          if (_isConnected)
-            IconButton(
-              onPressed: _toggleServerStatus,
-              icon: Icon(
-                _settingsService.serverEnabled ? Icons.shield : Icons.shield_outlined,
-                color: _settingsService.serverEnabled ? Colors.green : Colors.orange,
-              ),
-              tooltip: _settingsService.serverEnabled ? 'Disable server' : 'Enable server',
-            ),
+          IconButton(
+            icon: const Icon(Icons.add),
+            tooltip: 'Add a computer',
+            onPressed: _addComputer,
+          ),
+          IconButton(icon: const Icon(Icons.refresh), onPressed: _load),
         ],
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : !_isConnected
-              ? _buildDisconnected()
-              : RefreshIndicator(
-                  onRefresh: _loadData,
-                  child: Column(
-                    children: [
-                      // Device count bar
-                      if (_computers.isNotEmpty)
-                        Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 8,
-                          ),
-                          color: Colors.grey.shade100,
-                          child: Text(
-                            '${_computers.length} device${_computers.length != 1 ? 's' : ''}'
-                            ' \u2022 '
-                            '${_computers.where((c) => _isComputerOnline(c['datetime'] as String)).length} online',
-                            style: TextStyle(
-                              fontSize: 13,
-                              color: Colors.grey.shade700,
-                            ),
-                          ),
-                        ),
-                      Expanded(
-                        child: _computers.isEmpty
-                            ? ListView(children: [
-                                SizedBox(
-                                  height:
-                                      MediaQuery.of(context).size.height * 0.5,
-                                  child: _buildEmpty(),
-                                ),
-                              ])
-                            : _buildComputersList(),
-                      ),
-                    ],
-                  ),
+      body: RefreshIndicator(onRefresh: _load, child: _buildBody()),
+    );
+  }
+
+  Widget _buildBody() {
+    if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_error != null) {
+      return ListView(
+        children: [
+          const SizedBox(height: 120),
+          Icon(Icons.cloud_off, size: 56, color: Colors.grey.shade400),
+          const SizedBox(height: 12),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 32),
+            child: Text(_error!, textAlign: TextAlign.center),
+          ),
+        ],
+      );
+    }
+    if (_computers.isEmpty) {
+      return ListView(
+        children: const [
+          SizedBox(height: 120),
+          Icon(Icons.computer, size: 56, color: Colors.grey),
+          SizedBox(height: 12),
+          Padding(
+            padding: EdgeInsets.symmetric(horizontal: 32),
+            child: Text(
+              'No computers yet. Use + to get an installer token.',
+              textAlign: TextAlign.center,
+            ),
+          ),
+        ],
+      );
+    }
+
+    return ListView.builder(
+      padding: const EdgeInsets.all(12),
+      itemCount: _computers.length,
+      itemBuilder: (context, index) {
+        final computer = _computers[index];
+        final online = _isOnline(computer);
+        final blocked = computer['blocked'] as bool? ?? false;
+        final roomId = computer['room_id'] as String?;
+
+        return Card(
+          child: Column(
+            children: [
+              ListTile(
+                leading: Icon(
+                  Icons.circle,
+                  size: 14,
+                  color: online ? Colors.green : Colors.grey,
                 ),
+                title: Text(_nameOf(computer)),
+                subtitle: Text(
+                  [
+                        computer['hostname'],
+                        computer['os_name'],
+                        if ((computer['agent_version'] as String?)
+                                ?.isNotEmpty ??
+                            false)
+                          'agent ${computer['agent_version']}',
+                      ]
+                      .where((e) => e != null && (e as String).isNotEmpty)
+                      .join(' · '),
+                ),
+                trailing: PopupMenuButton<String>(
+                  onSelected: (choice) {
+                    if (choice == 'rename') _rename(computer);
+                    if (choice == 'remove') _unenroll(computer);
+                  },
+                  itemBuilder: (context) => const [
+                    PopupMenuItem(value: 'rename', child: Text('Rename')),
+                    PopupMenuItem(
+                      value: 'remove',
+                      child: Text('Remove from account'),
+                    ),
+                  ],
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.meeting_room,
+                      size: 18,
+                      color: Colors.grey,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: DropdownButton<String?>(
+                        isExpanded: true,
+                        value: _rooms.any((r) => r['id'] == roomId)
+                            ? roomId
+                            : null,
+                        hint: const Text('No room — enforces nothing'),
+                        items: [
+                          const DropdownMenuItem<String?>(
+                            value: null,
+                            child: Text('No room — enforces nothing'),
+                          ),
+                          for (final room in _rooms)
+                            DropdownMenuItem<String?>(
+                              value: room['id'] as String,
+                              child: Text(room['name'] as String),
+                            ),
+                        ],
+                        onChanged: (value) => _run(
+                          () => _service.updateComputer(
+                            computer['id'] as String,
+                            {'room_id': value},
+                          ),
+                          value == null ? 'Taken out of every room' : 'Moved',
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              SwitchListTile(
+                dense: true,
+                title: const Text('Locked'),
+                subtitle: Text(
+                  blocked
+                      ? 'Allows nothing but the system processes the agent protects'
+                      : 'Follows its room\'s policy',
+                ),
+                value: blocked,
+                onChanged: (v) => _run(
+                  () => _service.updateComputer(computer['id'] as String, {
+                    'blocked': v,
+                  }),
+                  v ? 'Computer locked' : 'Computer unlocked',
+                ),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 }

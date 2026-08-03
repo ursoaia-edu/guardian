@@ -1,0 +1,46 @@
+# The agent enrols, holds a credential, and decides which processes die. Its
+# tests need no server and no Windows, so there is no reason not to run them.
+name: agent
+
+on:
+  push:
+    paths: ["agent/**", ".github/workflows/agent.yml"]
+  pull_request:
+    paths: ["agent/**", ".github/workflows/agent.yml"]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agent
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: agent/go.mod
+          cache-dependency-path: agent/go.sum
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "gofmt needed on:" $unformatted
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test ./... -count=1
+
+      # The agent ships as two Windows binaries; both have to compile, and the
+      # 32-bit one is the universal installer's target.
+      - name: cross-compile the shipped binaries
+        run: |
+          GOOS=windows GOARCH=amd64 go build -o /dev/null .
+          GOOS=windows GOARCH=386 go build -o /dev/null .
+
+      - name: vet for windows
+        run: GOOS=windows go vet ./...

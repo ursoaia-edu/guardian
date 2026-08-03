@@ -1,12 +1,15 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
+
+import 'screens/computers_screen.dart';
 import 'screens/home_screen.dart';
+import 'screens/login_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/system_screen.dart';
-import 'screens/computers_screen.dart';
 import 'services/settings_service.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await SettingsService().load();
   runApp(const ProcSentinelApp());
 }
 
@@ -29,9 +32,44 @@ class ProcSentinelApp extends StatelessWidget {
           elevation: 2,
         ),
       ),
-      home: const MainNavigation(),
+      home: const _Root(),
       debugShowCheckedModeBanner: false,
     );
+  }
+}
+
+/// Chooses between signing in and the app itself. The service is the single
+/// source of truth for "is there a session", so signing in or out anywhere
+/// swaps this without anyone navigating.
+class _Root extends StatefulWidget {
+  const _Root();
+
+  @override
+  State<_Root> createState() => _RootState();
+}
+
+class _RootState extends State<_Root> {
+  final SettingsService _service = SettingsService();
+
+  @override
+  void initState() {
+    super.initState();
+    _service.addListener(_onChanged);
+  }
+
+  @override
+  void dispose() {
+    _service.removeListener(_onChanged);
+    super.dispose();
+  }
+
+  void _onChanged() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _service.isSignedIn ? const MainNavigation() : const LoginScreen();
   }
 }
 
@@ -42,117 +80,35 @@ class MainNavigation extends StatefulWidget {
   State<MainNavigation> createState() => _MainNavigationState();
 }
 
-class _MainNavigationState extends State<MainNavigation> with WidgetsBindingObserver {
+class _MainNavigationState extends State<MainNavigation> {
   int _currentIndex = 0;
-  final SettingsService _settingsService = SettingsService();
-  bool _powerEnabled = true;
-  bool _isConnected = false;
-  Timer? _statusTimer;
 
-  final List<Widget> _screens = [
-    const HomeScreen(),
-    const SystemScreen(),
-    const ComputersScreen(),
-    const SettingsScreen(),
+  final List<Widget> _screens = const [
+    HomeScreen(),
+    SystemScreen(),
+    ComputersScreen(),
+    SettingsScreen(),
   ];
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addObserver(this);
-    _settingsService.addListener(_checkStatus);
-    _checkStatus();
-    _statusTimer = Timer.periodic(const Duration(seconds: 10), (_) {
-      _checkStatus();
-    });
-  }
-
-  @override
-  void dispose() {
-    _settingsService.removeListener(_checkStatus);
-    WidgetsBinding.instance.removeObserver(this);
-    _statusTimer?.cancel();
-    super.dispose();
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      _checkStatus();
-    }
-  }
-
-  Future<void> _checkStatus() async {
-    try {
-      final serverAddress = await _settingsService.getServerAddress();
-      final connected = await _settingsService.testConnection(serverAddress);
-
-      bool power = true;
-      if (connected) {
-        final systems = await _settingsService.getClientData();
-        final powerSystem = systems.firstWhere(
-          (system) => system['name'] == 'power',
-          orElse: () => {'name': 'power', 'status': true},
-        );
-        power = powerSystem['status'] ?? true;
-      }
-
-      if (mounted) {
-        setState(() {
-          _isConnected = connected;
-          _powerEnabled = power;
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _isConnected = false;
-          _powerEnabled = true;
-        });
-      }
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: IndexedStack(
-        index: _currentIndex,
-        children: _screens,
-      ),
+      body: IndexedStack(index: _currentIndex, children: _screens),
       bottomNavigationBar: BottomNavigationBar(
         type: BottomNavigationBarType.fixed,
         currentIndex: _currentIndex,
-        onTap: (index) {
-          setState(() {
-            _currentIndex = index;
-          });
-          if (index == 1) {
-            _checkStatus();
-          }
-        },
-        items: [
+        onTap: (index) => setState(() => _currentIndex = index),
+        items: const [
+          BottomNavigationBarItem(icon: Icon(Icons.rule), label: 'Rules'),
           BottomNavigationBarItem(
-            icon: Icon(
-              _isConnected ? Icons.security : Icons.cloud_off,
-              color: _currentIndex == 0
-                  ? null
-                  : (_isConnected ? null : Colors.red.shade300),
-            ),
-            label: 'Dashboard',
+            icon: Icon(Icons.meeting_room),
+            label: 'Room',
           ),
           BottomNavigationBarItem(
-            icon: Icon(
-              Icons.power_settings_new,
-              color: _powerEnabled ? Colors.green : Colors.red,
-            ),
-            label: 'System',
-          ),
-          const BottomNavigationBarItem(
             icon: Icon(Icons.computer),
             label: 'Computers',
           ),
-          const BottomNavigationBarItem(
+          BottomNavigationBarItem(
             icon: Icon(Icons.settings),
             label: 'Settings',
           ),

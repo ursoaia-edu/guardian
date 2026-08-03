@@ -10,7 +10,7 @@ All notable changes to this project will be documented in this file.
 - Replace the shared `TOKEN`/`ADMIN_TOKEN` bearer secrets with per-principal credentials: a session per signed-in user and a per-machine agent token minted at enrollment (`POST /agent/enroll`, replacing the old `/client/sync` identity parameter)
 - Add `guardian-server migrate`, running schema migrations (goose) under a separate owner role; the running service's own database role can read and write but cannot alter the schema
 - Remove `server/db.go`, the old `applications`/`server`/`client`/`computers` SQLite tables and in-memory caches, and the `modernc.org/sqlite` dependency
-- The agent's own wire format (`/agent/sync`'s `applications`/`mode`/`client` shape) is unchanged on purpose, so the plan 3 agent rewrite is a URL and credential change rather than a protocol change — **no client that ships today works against this server.** The route moved from `/client/sync` to `/agent/sync` and the shared `TOKEN` to a per-machine one, and the current `agent/main.go` still calls the old route with the old credential, so every deployed agent 404s on every poll; the Flutter app's five calls all target `/manage/*` with `ADMIN_TOKEN`, which no longer exists, so it is entirely non-functional against this server. Both are expected — the agent is plan 3 and the Flutter migration is separate — but neither currently works, unlike a plain reading of "agents already in the field keep working" would suggest
+- The agent's own wire format (`/agent/sync`'s `applications`/`mode`/`client` shape) is unchanged on purpose, so moving the agent over was a URL and credential change rather than a protocol change. **No previously deployed client works against this server**, and both have since been rewritten in this release (see Agent and Mobile below): the route moved from `/client/sync` to `/agent/sync` and the shared `TOKEN` to a per-machine one, and the Flutter app's `/manage/*` calls with `ADMIN_TOKEN` have no endpoints left to reach. Upgrading means reinstalling the agent from an installer carrying a binding token, and signing in on the phone
 - Tighten CORS to an explicit, credentialed `CABINET_ORIGIN` allow-list instead of a wildcard
 - Resolve the client IP from `TRUSTED_PROXIES` (default `0`: the TCP peer, `X-Forwarded-For` ignored) instead of unconditionally trusting one forwarded hop — without a proxy in front, the old behaviour let any client pick its own rate-limit bucket; sessions and failed-login logs now record that resolved IP rather than the proxy's
 - Add per-request structured logging with request ids, a slog-backed panic recoverer, and a 10-second handler timeout
@@ -37,7 +37,7 @@ All notable changes to this project will be documented in this file.
 - `dist/server/docker-compose.yml` adds Caddy (automatic TLS for `GUARDIAN_DOMAIN`, the one trusted proxy hop) and stops publishing the server's port directly; the server has a compose healthcheck
 - `dist/server/Dockerfile` runs as a non-root user and ships CA certificates; `server/build.sh` builds a static Linux binary (`CGO_ENABLED=0`) so it actually starts on Alpine
 - `guardian-server.service` runs as an unprivileged `guardian` user under systemd sandboxing; `install.sh` creates that user, keeps an existing `.env` on re-runs, and restricts `.env` to `root:guardian 0640`
-- Add `.github/workflows/server.yml`: gofmt, vet, sqlc drift check, the full server suite against Postgres 16, and the static release build
+- Add CI (`.github/workflows/`): `server.yml` (gofmt, vet, sqlc drift, the full suite against Postgres 16, the static release build), `agent.yml` (vet, tests, and the two Windows cross-builds it ships), and `mobile.yml` (format, analyze, test)
 
 ### Agent (rewrite for the multi-tenant server)
 - Enroll once with the cabinet's `BINDING_TOKEN` (`POST /agent/enroll`), save a per-machine token to `agent_credentials.json`, and delete the binding token from `.env`; sync with `POST /agent/sync`. `TOKEN` and `IDENTITY` are gone, and with them the hardcoded fallback token
@@ -46,6 +46,13 @@ All notable changes to this project will be documented in this file.
 - Add `-version`; `agentVersion` is stampable with `-ldflags`
 - Add unit tests (`agent/agent_test.go`) — enrollment, the binding-token wipe, revocation, credentials for another server — that run on any platform
 - Console (`tools/whitelist-gui`) and the PowerShell installers collect `BINDING_TOKEN` instead of `TOKEN`/`IDENTITY`; the console reports "enrolled" from `agent_credentials.json` and does not require a token to reinstall over an enrolled agent
+
+### Mobile (rewrite)
+- Sign in as a person instead of pasting a shared `ADMIN_TOKEN`: `POST /api/v1/auth/login` with `"client": "mobile"`, the session token in `shared_preferences`, and a sign-out that ends the session server-side. Registration is in the app, so a phone can be the first client an account ever has
+- Follow the domain to rooms: **Rules** and **Room** are scoped to a room chosen in the app bar, **Computers** manages the account's pool (assign to a room, lock, rename, unenrol, mint an installer token), and Settings switches between the accounts a user can act in (`X-Guardian-Account`)
+- Surface failures instead of swallowing them: every call raises `ApiException` carrying the server's own message, where the previous client returned `false` or an empty list and made an outage look like an empty account
+- Add tests (`mobile/test/`): the API contract against a mock HTTP client, and a login-screen widget test. Neither needs an Android SDK or a server
+- Add `specs/mobile.md`
 
 ### Guardian Console (new)
 - Windows GUI (`tools/whitelist-gui`) for managing the agent on a single machine
