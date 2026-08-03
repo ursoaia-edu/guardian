@@ -2,7 +2,11 @@ import 'package:flutter/material.dart';
 
 import '../services/settings_service.dart';
 import '../utils/snackbar_helper.dart';
+import '../widgets/room_selector.dart';
 
+/// The room itself: whether it enforces anything, which way round its list
+/// works, and whether the machines in it may be powered off. These were three
+/// global settings on one server; each room carries its own now.
 class SystemScreen extends StatefulWidget {
   const SystemScreen({super.key});
 
@@ -11,300 +15,308 @@ class SystemScreen extends StatefulWidget {
 }
 
 class _SystemScreenState extends State<SystemScreen> {
-  final SettingsService _settingsService = SettingsService();
+  final SettingsService _service = SettingsService();
 
-  List<Map<String, dynamic>> _systems = [];
-  bool _isLoading = true;
-  bool _isConnected = false;
+  List<Map<String, dynamic>> _rooms = [];
+  Map<String, dynamic>? _room;
+  bool _loading = true;
+  String? _error;
 
   @override
   void initState() {
     super.initState();
-    _settingsService.addListener(_onSettingsChanged);
-    _settingsService.serverEnabledNotifier.addListener(_onServerEnabledChanged);
-    _loadData();
-  }
-
-  void _onSettingsChanged() {
-    _loadData();
-  }
-
-  void _onServerEnabledChanged() {
-    if (mounted) setState(() {});
+    _service.addListener(_onServiceChanged);
+    _load();
   }
 
   @override
   void dispose() {
-    _settingsService.removeListener(_onSettingsChanged);
-    _settingsService.serverEnabledNotifier.removeListener(_onServerEnabledChanged);
+    _service.removeListener(_onServiceChanged);
     super.dispose();
   }
 
-  Future<void> _loadData() async {
+  void _onServiceChanged() => _load();
+
+  Future<void> _load() async {
+    if (!mounted) return;
     setState(() {
-      _isLoading = true;
+      _loading = true;
+      _error = null;
     });
-
     try {
-      final serverAddress = await _settingsService.getServerAddress();
-      _isConnected = await _settingsService.testConnection(serverAddress);
-
-      if (_isConnected) {
-        final results = await Future.wait([
-          _settingsService.getClientData(),
-          _settingsService.getServerStatus(),
-        ]);
-        setState(() {
-          _systems = results[0] as List<Map<String, dynamic>>;
-        });
-      } else {
-        setState(() {
-          _systems = [];
-        });
-      }
-    } catch (e) {
+      final rooms = await _service.rooms();
+      if (!mounted) return;
       setState(() {
-        _isConnected = false;
-        _systems = [];
+        _rooms = rooms;
+        _room = pickRoom(rooms, _service.roomId);
       });
-
-      if (mounted) {
-        showSnackBarMessage(
-          context,
-          message: 'Error loading data: $e',
-          backgroundColor: Colors.red,
-
-        );
-      }
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.message;
+        _rooms = [];
+        _room = null;
+      });
     } finally {
-      setState(() {
-        _isLoading = false;
-      });
+      if (mounted) setState(() => _loading = false);
     }
   }
 
-  Future<void> _toggleSystemStatus(String name, bool currentStatus) async {
-    final newStatus = !currentStatus;
-
-    // Confirmation for dangerous actions (e.g. disabling power)
-    if (name == 'power' && !newStatus) {
-      final confirmed = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Disable Power?'),
-          content: const Text(
-            'This will trigger a shutdown on connected computers.',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('Cancel'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(true),
-              style: TextButton.styleFrom(foregroundColor: Colors.red),
-              child: const Text('Disable'),
-            ),
-          ],
-        ),
-      );
-      if (confirmed != true) return;
-    }
-
-    final success = await _settingsService.updateClientStatus(name, newStatus);
-
-    if (success) {
-      setState(() {
-        final systemIndex = _systems.indexWhere(
-          (system) => system['name'] == name,
-        );
-        if (systemIndex != -1) {
-          _systems[systemIndex]['status'] = newStatus;
-        }
-      });
-
-      if (mounted) {
-        showSnackBarMessage(
-          context,
-          message: '$name ${newStatus ? 'enabled' : 'disabled'}',
-          backgroundColor: Colors.green,
-        );
-      }
-    } else {
-      if (mounted) {
-        showSnackBarMessage(
-          context,
-          message: 'Failed to update status',
-          backgroundColor: Colors.red,
-
-        );
-      }
-    }
-  }
-
-  Widget _buildDisconnected() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.cloud_off, size: 72, color: Colors.grey.shade400),
-          const SizedBox(height: 16),
-          const Text(
-            'Server Not Connected',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            'Check your server settings and connection',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.grey),
-          ),
-          const SizedBox(height: 24),
-          OutlinedButton.icon(
-            onPressed: _loadData,
-            icon: const Icon(Icons.refresh),
-            label: const Text('Retry'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildEmpty() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.settings, size: 72, color: Colors.grey.shade300),
-          const SizedBox(height: 16),
-          const Text(
-            'No Client Entries',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            'No entries available on the server',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.grey),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSystemGrid() {
-    return GridView.builder(
-      padding: const EdgeInsets.all(16),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2,
-        crossAxisSpacing: 12,
-        mainAxisSpacing: 12,
-        childAspectRatio: 1.2,
-      ),
-      itemCount: _systems.length,
-      itemBuilder: (context, index) {
-        final system = _systems[index];
-        final name = system['name'] as String;
-        final status = system['status'] as bool;
-
-        return GestureDetector(
-          onTap: () => _toggleSystemStatus(name, status),
-          child: Card(
-            elevation: 2,
-            color: status ? Colors.green.shade600 : Colors.red.shade600,
-            child: Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(_getSystemIcon(name), size: 40, color: Colors.white),
-                  const SizedBox(height: 10),
-                  Text(
-                    name[0].toUpperCase() + name.substring(1),
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.white,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    status ? 'Enabled' : 'Disabled',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.white.withValues(alpha: 0.8),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  Future<void> _toggleServerStatus() async {
-    final newStatus = !_settingsService.serverEnabled;
-    final success = await _settingsService.toggleServerStatus(newStatus);
-
-    if (!success && mounted) {
+  Future<void> _run(Future<void> Function() action, String success) async {
+    try {
+      await action();
+      if (!mounted) return;
       showSnackBarMessage(
         context,
-        message: 'Failed to update server status',
+        message: success,
+        backgroundColor: Colors.green,
+      );
+      await _load();
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      showSnackBarMessage(
+        context,
+        message: e.message,
         backgroundColor: Colors.red,
+        duration: const Duration(seconds: 3),
       );
     }
   }
 
-  IconData _getSystemIcon(String systemName) {
-    switch (systemName.toLowerCase()) {
-      case 'power':
-        return Icons.power_settings_new;
-      case 'network':
-        return Icons.network_check;
-      case 'security':
-        return Icons.security;
-      case 'storage':
-        return Icons.storage;
-      default:
-        return Icons.settings;
-    }
+  Future<String?> _askForName(String title, String initial) async {
+    final controller = TextEditingController(text: initial);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(title),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(
+            labelText: 'Room name',
+            hintText: 'Kids room',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    final name = controller.text.trim();
+    controller.dispose();
+    return ok == true && name.isNotEmpty ? name : null;
+  }
+
+  Future<void> _createRoom() async {
+    final name = await _askForName('New room', '');
+    if (name == null) return;
+    await _run(() async {
+      final room = await _service.createRoom(name);
+      await _service.setRoomId(room['id'] as String?);
+    }, 'Room created');
+  }
+
+  Future<void> _deleteRoom(Map<String, dynamic> room) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Delete ${room['name']}?'),
+        content: const Text(
+          'Its rules are deleted with it. Computers in the room are not: they stay in the '
+          'account, unassigned, and stop enforcing anything until they are put somewhere.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await _run(() async {
+      await _service.deleteRoom(room['id'] as String);
+      await _service.setRoomId(null);
+    }, 'Room deleted');
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('System Control'),
+        title: RoomSelector(
+          rooms: _rooms,
+          selected: _room,
+          onChanged: (r) async => _service.setRoomId(r?['id'] as String?),
+        ),
         actions: [
-          IconButton(onPressed: _loadData, icon: const Icon(Icons.refresh)),
-          if (_isConnected)
-            IconButton(
-              onPressed: _toggleServerStatus,
-              icon: Icon(
-                _settingsService.serverEnabled ? Icons.shield : Icons.shield_outlined,
-                color: _settingsService.serverEnabled ? Colors.green : Colors.orange,
-              ),
-              tooltip: _settingsService.serverEnabled ? 'Disable server' : 'Enable server',
-            ),
+          IconButton(
+            icon: const Icon(Icons.add),
+            tooltip: 'New room',
+            onPressed: _createRoom,
+          ),
+          IconButton(icon: const Icon(Icons.refresh), onPressed: _load),
         ],
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : !_isConnected
-              ? _buildDisconnected()
-              : RefreshIndicator(
-                  onRefresh: _loadData,
-                  child: _systems.isEmpty
-                      ? ListView(children: [
-                          SizedBox(
-                            height: MediaQuery.of(context).size.height * 0.6,
-                            child: _buildEmpty(),
-                          ),
-                        ])
-                      : _buildSystemGrid(),
-                ),
+      body: RefreshIndicator(onRefresh: _load, child: _buildBody()),
     );
   }
+
+  Widget _buildBody() {
+    if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_error != null) {
+      return ListView(
+        children: [
+          const SizedBox(height: 120),
+          _centered(Icons.cloud_off, _error!),
+        ],
+      );
+    }
+    final room = _room;
+    if (room == null) {
+      return ListView(
+        children: [
+          const SizedBox(height: 120),
+          _centered(
+            Icons.meeting_room_outlined,
+            'No rooms yet. Create one with + above, then put a computer in it.',
+          ),
+        ],
+      );
+    }
+
+    final id = room['id'] as String;
+    final mode = (room['mode'] as String?) ?? 'blacklist';
+    final protection = room['protection_enabled'] as bool? ?? false;
+    final power = room['power_allowed'] as bool? ?? true;
+
+    return ListView(
+      padding: const EdgeInsets.all(12),
+      children: [
+        Card(
+          child: SwitchListTile(
+            title: const Text('Protection'),
+            subtitle: Text(
+              protection
+                  ? 'The rules below are being enforced'
+                  : 'Nothing is enforced in this room',
+            ),
+            secondary: Icon(
+              protection ? Icons.shield : Icons.shield_outlined,
+              color: protection ? Colors.green : Colors.grey,
+            ),
+            value: protection,
+            onChanged: (v) => _run(
+              () => _service
+                  .updateRoom(id, {'protection_enabled': v})
+                  .then((_) {}),
+              v ? 'Protection on' : 'Protection off',
+            ),
+          ),
+        ),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Mode', style: Theme.of(context).textTheme.titleMedium),
+                const SizedBox(height: 4),
+                Text(
+                  mode == 'whitelist'
+                      ? 'Only the listed programs may run. Everything else is closed.'
+                      : 'The listed programs are closed. Everything else may run.',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                const SizedBox(height: 12),
+                SegmentedButton<String>(
+                  segments: const [
+                    ButtonSegment(value: 'blacklist', label: Text('Blocklist')),
+                    ButtonSegment(value: 'whitelist', label: Text('Allowlist')),
+                  ],
+                  selected: {mode},
+                  onSelectionChanged: (s) => _run(
+                    () =>
+                        _service.updateRoom(id, {'mode': s.first}).then((_) {}),
+                    'Mode changed',
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        Card(
+          child: SwitchListTile(
+            title: const Text('Power allowed'),
+            subtitle: Text(
+              power
+                  ? 'Machines in this room may stay on'
+                  : 'Machines in this room shut themselves down',
+            ),
+            secondary: Icon(
+              Icons.power_settings_new,
+              color: power ? Colors.green : Colors.red,
+            ),
+            value: power,
+            onChanged: (v) => _run(
+              () => _service.updateRoom(id, {'power_allowed': v}).then((_) {}),
+              v ? 'Power allowed' : 'Shutdown requested',
+            ),
+          ),
+        ),
+        Card(
+          child: Column(
+            children: [
+              ListTile(
+                leading: const Icon(Icons.edit),
+                title: const Text('Rename room'),
+                onTap: () async {
+                  final name = await _askForName(
+                    'Rename room',
+                    room['name'] as String,
+                  );
+                  if (name == null) return;
+                  await _run(
+                    () => _service.updateRoom(id, {'name': name}).then((_) {}),
+                    'Room renamed',
+                  );
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.delete_outline, color: Colors.red),
+                title: const Text(
+                  'Delete room',
+                  style: TextStyle(color: Colors.red),
+                ),
+                onTap: () => _deleteRoom(room),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _centered(IconData icon, String text) => Column(
+    children: [
+      Icon(icon, size: 56, color: Colors.grey),
+      const SizedBox(height: 12),
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 32),
+        child: Text(text, textAlign: TextAlign.center),
+      ),
+    ],
+  );
 }
