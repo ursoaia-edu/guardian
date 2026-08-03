@@ -4,6 +4,9 @@ import 'package:package_info_plus/package_info_plus.dart';
 import '../services/settings_service.dart';
 import '../utils/snackbar_helper.dart';
 
+/// Where the server is, who is signed in, and which account is being acted in.
+/// The token field that used to live here is gone: the app holds a session it
+/// obtained by signing in, not a shared secret somebody pasted.
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
 
@@ -12,274 +15,222 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  final TextEditingController _serverAddressController =
-      TextEditingController();
-  final TextEditingController _tokenController = TextEditingController();
-  final SettingsService _settingsService = SettingsService();
-  bool _isLoading = true;
-  bool _isSaving = false;
+  final SettingsService _service = SettingsService();
+  final TextEditingController _serverController = TextEditingController();
+
+  List<Map<String, dynamic>> _accounts = [];
+  String? _email;
   String _version = '';
+  bool _loading = true;
+  bool _busy = false;
+  String? _error;
 
   @override
   void initState() {
     super.initState();
-    _loadSettings();
-  }
-
-  Future<void> _loadSettings() async {
-    try {
-      final serverAddress = await _settingsService.getServerAddress();
-      final token = await _settingsService.getToken();
-      final info = await PackageInfo.fromPlatform();
-      _serverAddressController.text = serverAddress;
-      _tokenController.text = token ?? '';
-      _version = info.version;
-    } catch (e) {
-      if (mounted) {
-        showSnackBarMessage(
-          context,
-          message: 'Error loading settings: $e',
-          backgroundColor: Colors.red,
-
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
-    }
-  }
-
-  Future<void> _saveSettings() async {
-    setState(() {
-      _isSaving = true;
-    });
-
-    try {
-      final serverAddress = _serverAddressController.text.trim();
-      final token = _tokenController.text.trim();
-
-      if (serverAddress.isEmpty) {
-        throw Exception('Server address cannot be empty');
-      }
-
-      if (!serverAddress.startsWith('http://') &&
-          !serverAddress.startsWith('https://')) {
-        throw Exception('Server address must start with http:// or https://');
-      }
-
-      await _settingsService.setServerAddress(serverAddress);
-      await _settingsService.setToken(token.isEmpty ? null : token);
-
-      if (mounted) {
-        showSnackBarMessage(
-          context,
-          message: 'Settings saved',
-          backgroundColor: Colors.green,
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        showSnackBarMessage(
-          context,
-          message: '$e',
-          backgroundColor: Colors.red,
-
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isSaving = false;
-        });
-      }
-    }
-  }
-
-  Future<void> _testConnection() async {
-    final serverAddress = _serverAddressController.text.trim();
-
-    if (serverAddress.isEmpty) {
-      showSnackBarMessage(
-        context,
-        message: 'Please enter a server address first',
-        backgroundColor: Colors.orange,
-      );
-      return;
-    }
-
-    setState(() {
-      _isSaving = true;
-    });
-
-    try {
-      final isConnected = await _settingsService.testConnection(serverAddress);
-
-      if (mounted) {
-        showSnackBarMessage(
-          context,
-          message: isConnected
-              ? 'Connection successful!'
-              : 'Connection failed. Check the server address.',
-          backgroundColor: isConnected ? Colors.green : Colors.red,
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        showSnackBarMessage(
-          context,
-          message: 'Connection test failed: $e',
-          backgroundColor: Colors.red,
-
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isSaving = false;
-        });
-      }
-    }
+    _serverController.text = _service.serverAddress;
+    _load();
   }
 
   @override
   void dispose() {
-    _serverAddressController.dispose();
-    _tokenController.dispose();
+    _serverController.dispose();
     super.dispose();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final info = await PackageInfo.fromPlatform();
+      final identity = await _service.me();
+      if (!mounted) return;
+      setState(() {
+        _version = info.version;
+        _email = identity['email'] as String?;
+        _accounts =
+            (identity['accounts'] as List?)
+                ?.map((e) => Map<String, dynamic>.from(e as Map))
+                .toList() ??
+            [];
+      });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() => _error = e.message);
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _saveServer() async {
+    final address = _serverController.text.trim();
+    if (!address.startsWith('http://') && !address.startsWith('https://')) {
+      showSnackBarMessage(
+        context,
+        message: 'The address must start with http:// or https://',
+        backgroundColor: Colors.orange,
+      );
+      return;
+    }
+    setState(() => _busy = true);
+    final reachable = await _service.testConnection(address);
+    await _service.setServerAddress(address);
+    if (!mounted) return;
+    setState(() => _busy = false);
+    showSnackBarMessage(
+      context,
+      message: reachable
+          ? 'Saved — the server answered'
+          : 'Saved, but the server did not answer',
+      backgroundColor: reachable ? Colors.green : Colors.orange,
+      duration: const Duration(seconds: 2),
+    );
+  }
+
+  Future<void> _signOut() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Sign out?'),
+        content: const Text(
+          'This ends the session on the server, so this phone stops having access. '
+          'Your computers keep enforcing their policy.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Sign out'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await _service.signOut();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Settings')),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : SingleChildScrollView(
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Server Configuration',
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                      ),
+      appBar: AppBar(
+        title: const Text('Settings'),
+        actions: [
+          IconButton(icon: const Icon(Icons.refresh), onPressed: _load),
+        ],
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(12),
+        children: [
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Server',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _serverController,
+                    decoration: const InputDecoration(
+                      labelText: 'Server address',
+                      border: OutlineInputBorder(),
                     ),
-                    const SizedBox(height: 16),
-                    Card(
-                      child: Padding(
-                        padding: const EdgeInsets.all(16.0),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text(
-                              'Server Address',
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            TextField(
-                              controller: _serverAddressController,
-                              decoration: const InputDecoration(
-                                hintText: 'http://192.168.1.10:8080',
-                                prefixIcon: Icon(Icons.link),
-                                border: OutlineInputBorder(),
-                              ),
-                              keyboardType: TextInputType.url,
-                              enabled: !_isSaving,
-                            ),
-                            const SizedBox(height: 24),
-                            const Text(
-                              'Authentication Token',
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            TextField(
-                              controller: _tokenController,
-                              decoration: const InputDecoration(
-                                hintText: 'Token',
-                                prefixIcon: Icon(Icons.security),
-                                border: OutlineInputBorder(),
-                              ),
-                              obscureText: true,
-                              enabled: !_isSaving,
-                            ),
-                            const SizedBox(height: 16),
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: ElevatedButton.icon(
-                                    onPressed: _isSaving
-                                        ? null
-                                        : _testConnection,
-                                    icon: _isSaving
-                                        ? const SizedBox(
-                                            width: 16,
-                                            height: 16,
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 2,
-                                            ),
-                                          )
-                                        : const Icon(Icons.wifi_tethering),
-                                    label: const Text('Test'),
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: Colors.blue,
-                                      foregroundColor: Colors.white,
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  child: ElevatedButton.icon(
-                                    onPressed: _isSaving ? null : _saveSettings,
-                                    icon: _isSaving
-                                        ? const SizedBox(
-                                            width: 16,
-                                            height: 16,
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 2,
-                                            ),
-                                          )
-                                        : const Icon(Icons.save),
-                                    label: const Text('Save'),
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: const Color(0xFF2D3748),
-                                      foregroundColor: Colors.white,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
+                    keyboardType: TextInputType.url,
+                    autocorrect: false,
+                  ),
+                  const SizedBox(height: 12),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: FilledButton(
+                      onPressed: _busy ? null : _saveServer,
+                      child: const Text('Save and test'),
                     ),
-                    const SizedBox(height: 32),
-                    // Compact about footer
-                    Center(
-                      child: Text(
-                        'Guardian Mobile v$_version',
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: Colors.grey.shade500,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
+          ),
+          Card(
+            child: Column(
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.person),
+                  title: Text(_email ?? 'Signed in'),
+                  subtitle: _error == null
+                      ? null
+                      : Text(
+                          _error!,
+                          style: const TextStyle(color: Colors.red),
+                        ),
+                ),
+                if (_loading) const LinearProgressIndicator(),
+                if (_accounts.length > 1)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                    child: DropdownButton<String>(
+                      isExpanded: true,
+                      value:
+                          _accounts.any(
+                            (a) => a['account_id'] == _service.accountId,
+                          )
+                          ? _service.accountId
+                          : null,
+                      hint: const Text('Choose an account'),
+                      items: [
+                        for (final account in _accounts)
+                          DropdownMenuItem(
+                            value: account['account_id'] as String,
+                            child: Text(
+                              '${account['name'] ?? 'Account'} · ${account['role']}',
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                      ],
+                      onChanged: (id) async {
+                        // The messenger is taken before the await: the context
+                        // this closure captured may be gone by the time the
+                        // account switch finishes.
+                        final messenger = ScaffoldMessenger.of(context);
+                        await _service.setAccountId(id);
+                        messenger.showSnackBar(
+                          const SnackBar(
+                            content: Text('Switched account'),
+                            backgroundColor: Colors.green,
+                            duration: Duration(seconds: 1),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ListTile(
+                  leading: const Icon(Icons.logout, color: Colors.red),
+                  title: const Text(
+                    'Sign out',
+                    style: TextStyle(color: Colors.red),
+                  ),
+                  onTap: _signOut,
+                ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Text(
+              _version.isEmpty ? '' : 'Guardian $_version',
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
