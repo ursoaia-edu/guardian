@@ -2,7 +2,10 @@ import 'package:flutter/material.dart';
 
 import '../services/settings_service.dart';
 import '../utils/snackbar_helper.dart';
+import '../widgets/room_selector.dart';
 
+/// The rules of one room. Policy is per-room now, not one global list, so this
+/// screen is always about the room named in the app bar.
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -11,589 +14,263 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  final SettingsService _settingsService = SettingsService();
-  final TextEditingController _addAppController = TextEditingController();
+  final SettingsService _service = SettingsService();
 
-  List<Map<String, dynamic>> _allApps = [];
-  String _serverMode = 'blacklist';
-  bool _isLoading = true;
-  bool _isConnected = false;
-
-  List<Map<String, dynamic>> get _filteredApps =>
-      _allApps.where((app) => (app['mode'] ?? 'blacklist') == _serverMode).toList()
-        ..sort((a, b) {
-          final aEnabled = a['enabled'] as bool;
-          final bEnabled = b['enabled'] as bool;
-          if (aEnabled != bEnabled) return aEnabled ? 1 : -1;
-          return (a['name'] as String).compareTo(b['name'] as String);
-        });
+  List<Map<String, dynamic>> _rooms = [];
+  List<Map<String, dynamic>> _apps = [];
+  Map<String, dynamic>? _room;
+  bool _loading = true;
+  String? _error;
 
   @override
   void initState() {
     super.initState();
-    _settingsService.addListener(_onSettingsChanged);
-    _settingsService.serverEnabledNotifier.addListener(_onServerEnabledChanged);
-    _loadData();
+    _service.addListener(_onServiceChanged);
+    _load();
   }
 
-  void _onSettingsChanged() {
-    _loadData();
+  @override
+  void dispose() {
+    _service.removeListener(_onServiceChanged);
+    super.dispose();
   }
 
-  void _onServerEnabledChanged() {
-    if (mounted) setState(() {});
-  }
+  void _onServiceChanged() => _load();
 
-  Future<void> _loadData() async {
+  Future<void> _load() async {
+    if (!mounted) return;
     setState(() {
-      _isLoading = true;
+      _loading = true;
+      _error = null;
     });
-
     try {
-      final serverAddress = await _settingsService.getServerAddress();
-      _isConnected = await _settingsService.testConnection(serverAddress);
-
-      if (_isConnected) {
-        final results = await Future.wait([
-          _settingsService.getBlockedApplications(),
-          _settingsService.getServerStatus(),
-        ]);
-
-        setState(() {
-          _allApps = results[0] as List<Map<String, dynamic>>;
-          final status = results[1] as Map<String, dynamic>;
-          _serverMode = status['mode'] as String;
-        });
-      } else {
-        setState(() {
-          _allApps = [];
-          _serverMode = 'blacklist';
-        });
-      }
-    } catch (e) {
+      final rooms = await _service.rooms();
+      final room = pickRoom(rooms, _service.roomId);
+      final apps = room == null
+          ? <Map<String, dynamic>>[]
+          : await _service.applications(room['id'] as String);
+      if (!mounted) return;
       setState(() {
-        _isConnected = false;
-        _allApps = [];
-        _serverMode = 'blacklist';
+        _rooms = rooms;
+        _room = room;
+        _apps = apps;
       });
-
-      if (mounted) {
-        showSnackBarMessage(
-          context,
-          message: 'Error loading data: $e',
-          backgroundColor: Colors.red,
-
-        );
-      }
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.message;
+        _rooms = [];
+        _apps = [];
+        _room = null;
+      });
     } finally {
-      setState(() {
-        _isLoading = false;
-      });
+      if (mounted) setState(() => _loading = false);
     }
   }
 
-  void _showAddAppSheet() {
-    _addAppController.clear();
-    showModalBottomSheet(
+  Future<void> _run(Future<void> Function() action, String success) async {
+    try {
+      await action();
+      if (!mounted) return;
+      showSnackBarMessage(
+        context,
+        message: success,
+        backgroundColor: Colors.green,
+      );
+      await _load();
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      showSnackBarMessage(
+        context,
+        message: e.message,
+        backgroundColor: Colors.red,
+        duration: const Duration(seconds: 3),
+      );
+    }
+  }
+
+  Future<void> _addApplication() async {
+    final room = _room;
+    if (room == null) return;
+    final controller = TextEditingController();
+    var list = (room['mode'] as String?) ?? 'blacklist';
+
+    final confirmed = await showDialog<bool>(
       context: context,
-      isScrollControlled: true,
-      builder: (context) => Padding(
-        padding: EdgeInsets.only(
-          left: 16,
-          right: 16,
-          top: 24,
-          bottom: MediaQuery.of(context).viewInsets.bottom + 24,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Add Application',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: _addAppController,
-              autofocus: true,
-              decoration: const InputDecoration(
-                hintText: 'Process name (e.g. firefox)',
-                prefixIcon: Icon(Icons.app_blocking),
-                border: OutlineInputBorder(),
-              ),
-              onSubmitted: (_) {
-                Navigator.pop(context);
-                _addApplication();
-              },
-            ),
-            const SizedBox(height: 12),
-            Text(
-              'Will be added as $_serverMode',
-              style: TextStyle(fontSize: 13, color: _modeColor(_serverMode)),
-            ),
-            const SizedBox(height: 16),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: () {
-                  Navigator.pop(context);
-                  _addApplication();
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF2D3748),
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Add a rule'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: controller,
+                autofocus: true,
+                decoration: const InputDecoration(
+                  labelText: 'Process name',
+                  hintText: 'steam.exe',
                 ),
-                child: const Text('Add'),
               ),
+              const SizedBox(height: 16),
+              SegmentedButton<String>(
+                segments: const [
+                  ButtonSegment(value: 'blacklist', label: Text('Blocked')),
+                  ButtonSegment(value: 'whitelist', label: Text('Allowed')),
+                ],
+                selected: {list},
+                onSelectionChanged: (s) => setDialogState(() => list = s.first),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Add'),
             ),
           ],
         ),
       ),
     );
-  }
 
-  Future<void> _addApplication() async {
-    final appName = _addAppController.text.trim();
-
-    if (appName.isEmpty) {
-      showSnackBarMessage(
-        context,
-        message: 'Please enter an application name',
-        backgroundColor: Colors.orange,
-      );
-      return;
-    }
-
-    if (_allApps.any((app) => app['name'] == appName && app['mode'] == _serverMode)) {
-      showSnackBarMessage(
-        context,
-        message: 'Application is already in this mode',
-        backgroundColor: Colors.orange,
-      );
-      return;
-    }
-
-    final success = await _settingsService.addBlockedApplication(appName, mode: _serverMode);
-
-    if (success) {
-      final apps = await _settingsService.getBlockedApplications();
-      setState(() {
-        _allApps = apps;
-      });
-      _addAppController.clear();
-
-    } else {
-      if (mounted) {
-        showSnackBarMessage(
-          context,
-          message: 'Failed to add application',
-          backgroundColor: Colors.red,
-        );
-      }
-    }
-  }
-
-  Future<void> _removeApplication(String appName, {String? mode}) async {
-    final success = await _settingsService.removeBlockedApplication(appName, mode: mode);
-
-    if (success) {
-      setState(() {
-        _allApps.removeWhere((app) =>
-            app['name'] == appName && (mode == null || app['mode'] == mode));
-      });
-
-      if (mounted) {
-        showSnackBarMessage(
-          context,
-          message: 'Removed "$appName"',
-          backgroundColor: Colors.green,
-        );
-      }
-    } else {
-      if (mounted) {
-        showSnackBarMessage(
-          context,
-          message: 'Failed to remove application',
-          backgroundColor: Colors.red,
-
-        );
-      }
-    }
-  }
-
-  Future<void> _updateApplicationStatus(String name, bool enabled, {String? mode}) async {
-    final success = await _settingsService.updateApplicationStatus(
-      name,
-      enabled,
-      mode: mode,
+    final name = controller.text.trim();
+    controller.dispose();
+    if (confirmed != true || name.isEmpty) return;
+    await _run(
+      () => _service.addApplication(room['id'] as String, name, list),
+      'Rule added',
     );
-
-    if (success) {
-      setState(() {
-        final index = _allApps.indexWhere((app) => app['name'] == name && (mode == null || app['mode'] == mode));
-        if (index != -1) {
-          _allApps[index]['enabled'] = enabled;
-        }
-      });
-    } else {
-      if (mounted) {
-        showSnackBarMessage(
-          context,
-          message: 'Failed to update application',
-          backgroundColor: Colors.red,
-
-        );
-      }
-    }
-  }
-
-  Future<void> _resetApplications() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Remove All'),
-        content: const Text(
-          'Are you sure you want to remove all applications?',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
-            child: const Text('Remove All'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed == true) {
-      final success = await _settingsService.resetBlockedApplications();
-
-      if (success) {
-        setState(() {
-          _allApps.clear();
-        });
-
-        if (mounted) {
-          showSnackBarMessage(
-            context,
-            message: 'All applications removed',
-            backgroundColor: Colors.green,
-          );
-        }
-      } else {
-        if (mounted) {
-          showSnackBarMessage(
-            context,
-            message: 'Failed to reset applications',
-            backgroundColor: Colors.red,
-  
-          );
-        }
-      }
-    }
-  }
-
-  Future<void> _toggleServerStatus() async {
-    final newStatus = !_settingsService.serverEnabled;
-    final success = await _settingsService.toggleServerStatus(newStatus);
-
-    if (!success && mounted) {
-      showSnackBarMessage(
-        context,
-        message: 'Failed to update server status',
-        backgroundColor: Colors.red,
-      );
-    }
-  }
-
-  Future<void> _setMode(String mode) async {
-    if (mode == _serverMode) return;
-
-    final success = await _settingsService.toggleServerStatus(_settingsService.serverEnabled, mode: mode);
-
-    if (success) {
-      setState(() {
-        _serverMode = mode;
-      });
-    } else {
-      if (mounted) {
-        showSnackBarMessage(
-          context,
-          message: 'Failed to change mode',
-          backgroundColor: Colors.red,
-
-        );
-      }
-    }
-  }
-
-  Color _modeColor(String mode) {
-    return mode == 'whitelist' ? Colors.blue : Colors.deepOrange;
-  }
-
-  Widget _buildDisconnected() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.cloud_off, size: 72, color: Colors.grey.shade400),
-          const SizedBox(height: 16),
-          const Text(
-            'Server Not Connected',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            'Check your server settings and connection',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.grey),
-          ),
-          const SizedBox(height: 24),
-          OutlinedButton.icon(
-            onPressed: _loadData,
-            icon: const Icon(Icons.refresh),
-            label: const Text('Retry'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildEmptyState() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.security, size: 72, color: Colors.green.shade300),
-          const SizedBox(height: 16),
-          const Text(
-            'No Applications',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            'Tap + to add an application',
-            style: TextStyle(color: Colors.grey),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildAppList() {
-    final apps = _filteredApps;
-    return ListView.builder(
-      padding: const EdgeInsets.only(bottom: 80),
-      itemCount: apps.length,
-      itemBuilder: (context, index) {
-        final app = apps[index];
-        final appName = app['name'] as String;
-        final enabled = app['enabled'] as bool;
-        final mode = (app['mode'] as String?) ?? 'blacklist';
-        return Dismissible(
-          key: Key('$appName:$mode'),
-          direction: DismissDirection.endToStart,
-          confirmDismiss: (_) async {
-            return await showDialog<bool>(
-              context: context,
-              builder: (context) => AlertDialog(
-                title: Text('Remove "$appName"?'),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.of(context).pop(false),
-                    child: const Text('Cancel'),
-                  ),
-                  TextButton(
-                    onPressed: () => Navigator.of(context).pop(true),
-                    style: TextButton.styleFrom(foregroundColor: Colors.red),
-                    child: const Text('Remove'),
-                  ),
-                ],
-              ),
-            );
-          },
-          onDismissed: (_) => _removeApplication(appName, mode: mode),
-          background: Container(
-            alignment: Alignment.centerRight,
-            padding: const EdgeInsets.only(right: 20),
-            color: Colors.red,
-            child: const Icon(Icons.delete, color: Colors.white),
-          ),
-          child: Card(
-            child: ListTile(
-              leading: Icon(
-                mode == 'whitelist' ? Icons.check_circle_outline : Icons.block,
-                color: _modeColor(mode),
-              ),
-              title: Text(appName),
-              subtitle: Text(
-                mode,
-                style: TextStyle(
-                  fontSize: 12,
-                  color: _modeColor(mode),
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-              trailing: Switch(
-                value: enabled,
-                onChanged: (newValue) =>
-                    _updateApplicationStatus(appName, newValue, mode: mode),
-                inactiveThumbColor: Colors.grey,
-                inactiveTrackColor: Colors.grey.shade300,
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  @override
-  void dispose() {
-    _settingsService.removeListener(_onSettingsChanged);
-    _settingsService.serverEnabledNotifier.removeListener(_onServerEnabledChanged);
-    _addAppController.dispose();
-    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    final room = _room;
+    final mode = (room?['mode'] as String?) ?? 'blacklist';
+
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Dashboard'),
+        title: RoomSelector(
+          rooms: _rooms,
+          selected: room,
+          onChanged: (r) async {
+            await _service.setRoomId(r?['id'] as String?);
+          },
+        ),
         actions: [
-          if (_isConnected)
-            PopupMenuButton<String>(
-              onSelected: (value) {
-                if (value == 'remove_all') _resetApplications();
-              },
-              itemBuilder: (context) => [
-                const PopupMenuItem(
-                  value: 'remove_all',
-                  child: Text('Remove All'),
-                ),
-              ],
-            ),
-          IconButton(onPressed: _loadData, icon: const Icon(Icons.refresh)),
-          if (_isConnected)
-            IconButton(
-              onPressed: _toggleServerStatus,
-              icon: Icon(
-                _settingsService.serverEnabled ? Icons.shield : Icons.shield_outlined,
-                color: _settingsService.serverEnabled ? Colors.green : Colors.orange,
-              ),
-              tooltip: _settingsService.serverEnabled ? 'Disable server' : 'Enable server',
-            ),
+          IconButton(icon: const Icon(Icons.refresh), onPressed: _load),
         ],
       ),
-      floatingActionButton: _isConnected
-          ? FloatingActionButton(
-              onPressed: _showAddAppSheet,
-              backgroundColor: const Color(0xFF2D3748),
-              foregroundColor: Colors.white,
+      floatingActionButton: room == null
+          ? null
+          : FloatingActionButton(
+              onPressed: _addApplication,
               child: const Icon(Icons.add),
-            )
-          : null,
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : !_isConnected
-              ? _buildDisconnected()
-              : RefreshIndicator(
-                  onRefresh: _loadData,
-                  child: Column(
-                    children: [
-                      // Mode toggle
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-                        child: SizedBox(
-                          width: double.infinity,
-                          child: SegmentedButton<String>(
-                            segments: [
-                              ButtonSegment<String>(
-                                value: 'blacklist',
-                                label: const Text('Blacklist'),
-                                icon: Icon(
-                                  Icons.block,
-                                  size: 18,
-                                  color: _serverMode == 'blacklist'
-                                      ? Colors.white
-                                      : Colors.deepOrange,
-                                ),
-                              ),
-                              ButtonSegment<String>(
-                                value: 'whitelist',
-                                label: const Text('Whitelist'),
-                                icon: Icon(
-                                  Icons.check_circle_outline,
-                                  size: 18,
-                                  color: _serverMode == 'whitelist'
-                                      ? Colors.white
-                                      : Colors.blue,
-                                ),
-                              ),
-                            ],
-                            selected: {_serverMode},
-                            onSelectionChanged: (selected) {
-                              _setMode(selected.first);
-                            },
-                            style: ButtonStyle(
-                              backgroundColor:
-                                  WidgetStateProperty.resolveWith(
-                                (states) {
-                                  if (states
-                                      .contains(WidgetState.selected)) {
-                                    return _serverMode == 'blacklist'
-                                        ? Colors.deepOrange
-                                        : Colors.blue;
-                                  }
-                                  return null;
-                                },
-                              ),
-                              foregroundColor:
-                                  WidgetStateProperty.resolveWith(
-                                (states) {
-                                  if (states
-                                      .contains(WidgetState.selected)) {
-                                    return Colors.white;
-                                  }
-                                  return null;
-                                },
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-
-                      // App count header
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-                        child: Row(
-                          children: [
-                            Text(
-                              '${_filteredApps.length} application${_filteredApps.length != 1 ? 's' : ''}',
-                              style: TextStyle(
-                                fontSize: 13,
-                                color: Colors.grey.shade600,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-
-                      // App list or empty state
-                      Expanded(
-                        child: _filteredApps.isEmpty
-                            ? _buildEmptyState()
-                            : _buildAppList(),
-                      ),
-                    ],
-                  ),
-                ),
+            ),
+      body: RefreshIndicator(onRefresh: _load, child: _buildBody(room, mode)),
     );
   }
+
+  Widget _buildBody(Map<String, dynamic>? room, String mode) {
+    if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_error != null) return _message(Icons.cloud_off, _error!);
+    if (room == null) {
+      return _message(
+        Icons.meeting_room_outlined,
+        'No rooms yet. Create one on the Room tab, then put a computer in it.',
+      );
+    }
+
+    final active = _apps.where((a) => a['list'] == mode).toList();
+    final other = _apps.where((a) => a['list'] != mode).toList();
+    if (_apps.isEmpty) {
+      return _message(Icons.rule, 'No rules in ${room['name']} yet.');
+    }
+
+    return ListView(
+      children: [
+        if ((room['protection_enabled'] as bool?) != true)
+          Card(
+            margin: const EdgeInsets.all(12),
+            color: Colors.orange.shade50,
+            child: const ListTile(
+              leading: Icon(Icons.shield_outlined, color: Colors.orange),
+              title: Text('Protection is off for this room'),
+              subtitle: Text('These rules are stored but nothing is enforced.'),
+            ),
+          ),
+        ..._section(
+          context,
+          mode == 'whitelist' ? 'Allowed' : 'Blocked',
+          active,
+          room,
+        ),
+        if (other.isNotEmpty)
+          ..._section(context, 'Inactive in this mode', other, room),
+      ],
+    );
+  }
+
+  List<Widget> _section(
+    BuildContext context,
+    String title,
+    List<Map<String, dynamic>> apps,
+    Map<String, dynamic> room,
+  ) {
+    if (apps.isEmpty) return const [];
+    apps.sort((a, b) {
+      final ae = a['enabled'] as bool? ?? true;
+      final be = b['enabled'] as bool? ?? true;
+      if (ae != be) return ae ? -1 : 1;
+      return (a['name'] as String).compareTo(b['name'] as String);
+    });
+    return [
+      Padding(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+        child: Text(title, style: Theme.of(context).textTheme.labelLarge),
+      ),
+      for (final app in apps)
+        ListTile(
+          title: Text(app['name'] as String),
+          subtitle: Text(
+            (app['enabled'] as bool? ?? true) ? 'Enforced' : 'Switched off',
+          ),
+          leading: Switch(
+            value: app['enabled'] as bool? ?? true,
+            onChanged: (v) => _run(
+              () => _service.setApplicationEnabled(
+                room['id'] as String,
+                app['id'] as String,
+                v,
+              ),
+              v ? 'Rule switched on' : 'Rule switched off',
+            ),
+          ),
+          trailing: IconButton(
+            icon: const Icon(Icons.delete_outline),
+            onPressed: () => _run(
+              () => _service.deleteApplication(
+                room['id'] as String,
+                app['id'] as String,
+              ),
+              'Rule removed',
+            ),
+          ),
+        ),
+    ];
+  }
+
+  Widget _message(IconData icon, String text) => ListView(
+    children: [
+      const SizedBox(height: 120),
+      Icon(icon, size: 56, color: Colors.grey),
+      const SizedBox(height: 12),
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 32),
+        child: Text(text, textAlign: TextAlign.center),
+      ),
+    ],
+  );
 }
