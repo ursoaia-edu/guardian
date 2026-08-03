@@ -1,453 +1,398 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
+/// Raised for anything the server refused or could not answer. The old client
+/// swallowed every failure and returned `false` or an empty list, so an outage,
+/// an expired session and "there is nothing here" were indistinguishable — on
+/// screen and in the code. They are different things and the UI says so.
+class ApiException implements Exception {
+  ApiException(this.message, {this.statusCode});
+
+  final String message;
+  final int? statusCode;
+
+  bool get isUnauthorized => statusCode == 401;
+  bool get isForbidden => statusCode == 403;
+
+  @override
+  String toString() => message;
+}
+
+/// The Guardian API client and the little state that goes with it: where the
+/// server is, the session token, which account is being acted in, and which
+/// room is on screen.
+///
+/// Session auth, not a shared admin token. The app signs in as a person and
+/// sends `Authorization: Bearer <session token>`; login asks for
+/// `"client": "mobile"` because a browser deliberately gets the token only in
+/// an HttpOnly cookie it cannot read.
 class SettingsService extends ChangeNotifier {
   static final SettingsService _instance = SettingsService._internal();
   factory SettingsService() => _instance;
   SettingsService._internal();
 
   static const String _serverAddressKey = 'server_address';
-  static const String _tokenKey = 'auth_token';
+  static const String _tokenKey = 'session_token';
+  static const String _accountKey = 'account_id';
+  static const String _roomKey = 'room_id';
   static const String _defaultServerAddress = 'http://192.168.1.10:8080';
 
-  final ValueNotifier<bool> serverEnabledNotifier = ValueNotifier(false);
+  static const Duration _timeout = Duration(seconds: 10);
 
-  bool get serverEnabled => serverEnabledNotifier.value;
-  set serverEnabled(bool value) => serverEnabledNotifier.value = value;
+  /// How an HTTP client is obtained. Overridden by tests with a mock, which is
+  /// the only reason it is not simply `http.Client()` inline: the API contract
+  /// this class encodes — the Bearer header, X-Guardian-Account, the shape of
+  /// an error — is worth testing without a server.
+  @visibleForTesting
+  http.Client Function() clientFactory = http.Client.new;
 
-  /// Gets the server address from persistent storage
-  Future<String> getServerAddress() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_serverAddressKey) ?? _defaultServerAddress;
+  /// Puts the service straight into a signed-in state, skipping the login
+  /// round trip. Tests only.
+  @visibleForTesting
+  Future<void> signInForTest(String token, String accountId) async {
+    await _setToken(token);
+    await setAccountId(accountId);
   }
 
-  /// Sets the server address in persistent storage
+  /// Drops everything read from storage. Tests only: the singleton otherwise
+  /// carries one test's session into the next.
+  @visibleForTesting
+  void resetForTest() {
+    _loaded = false;
+    _token = null;
+    _accountId = null;
+    _roomId = null;
+    _serverAddress = _defaultServerAddress;
+  }
+
+  String _serverAddress = _defaultServerAddress;
+  String? _token;
+  String? _accountId;
+  String? _roomId;
+  bool _loaded = false;
+
+  String get serverAddress => _serverAddress;
+  String? get accountId => _accountId;
+  String? get roomId => _roomId;
+  bool get isSignedIn => _token != null && _token!.isNotEmpty;
+
+  /// Reads the stored state once, at startup. Everything after this is
+  /// synchronous, so a widget can ask whether it is signed in while building.
+  Future<void> load() async {
+    if (_loaded) return;
+    final prefs = await SharedPreferences.getInstance();
+    _serverAddress =
+        prefs.getString(_serverAddressKey) ?? _defaultServerAddress;
+    _token = prefs.getString(_tokenKey);
+    _accountId = prefs.getString(_accountKey);
+    _roomId = prefs.getString(_roomKey);
+    _loaded = true;
+    notifyListeners();
+  }
+
   Future<void> setServerAddress(String address) async {
     final prefs = await SharedPreferences.getInstance();
+    _serverAddress = address;
     await prefs.setString(_serverAddressKey, address);
     notifyListeners();
   }
 
-  /// Gets the authentication token from persistent storage
-  Future<String?> getToken() async {
+  Future<void> _setToken(String? token) async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_tokenKey);
-  }
-
-  /// Sets the authentication token in persistent storage
-  Future<void> setToken(String? token) async {
-    final prefs = await SharedPreferences.getInstance();
+    _token = token;
     if (token == null || token.isEmpty) {
       await prefs.remove(_tokenKey);
     } else {
       await prefs.setString(_tokenKey, token);
     }
+  }
+
+  /// The account this session acts in. A user owns their own account and may
+  /// also be an admin or a room guest of somebody else's, so which one is meant
+  /// has to be said — see X-Guardian-Account in specs/api.md.
+  Future<void> setAccountId(String? id) async {
+    final prefs = await SharedPreferences.getInstance();
+    _accountId = id;
+    if (id == null) {
+      await prefs.remove(_accountKey);
+    } else {
+      await prefs.setString(_accountKey, id);
+    }
+    // Rooms belong to an account, so the selected one cannot survive a switch.
+    await setRoomId(null);
     notifyListeners();
   }
 
-  /// Gets HTTP headers with authorization token if available
-  Future<Map<String, String>> _getHeaders({
-    Map<String, String>? additionalHeaders,
-  }) async {
-    final headers = <String, String>{};
-
-    final token = await getToken();
-    if (token != null && token.isNotEmpty) {
-      headers['Authorization'] = 'Bearer $token';
+  Future<void> setRoomId(String? id) async {
+    final prefs = await SharedPreferences.getInstance();
+    _roomId = id;
+    if (id == null) {
+      await prefs.remove(_roomKey);
+    } else {
+      await prefs.setString(_roomKey, id);
     }
+    notifyListeners();
+  }
 
-    if (additionalHeaders != null) {
-      headers.addAll(additionalHeaders);
-    }
-
+  Map<String, String> _headers({bool json = true}) {
+    final headers = <String, String>{'Accept': 'application/json'};
+    if (json) headers['Content-Type'] = 'application/json';
+    if (isSignedIn) headers['Authorization'] = 'Bearer $_token';
+    if (_accountId != null) headers['X-Guardian-Account'] = _accountId!;
     return headers;
   }
 
-  /// Tests connection to the server
-  Future<bool> testConnection(String serverAddress) async {
-    final client = http.Client();
+  Future<dynamic> _send(
+    String method,
+    String path, {
+    Object? body,
+    bool authenticated = true,
+  }) async {
+    final client = clientFactory();
     try {
-      final uri = Uri.parse('$serverAddress/health');
-      final headers = await _getHeaders(
-        additionalHeaders: {'Content-Type': 'application/json'},
-      );
+      final uri = Uri.parse('$_serverAddress$path');
+      final headers = _headers();
+      if (!authenticated) {
+        headers.remove('Authorization');
+        headers.remove('X-Guardian-Account');
+      }
+      final encoded = body == null ? null : json.encode(body);
 
-      final response = await client
-          .get(uri, headers: headers)
-          .timeout(const Duration(seconds: 10));
+      late http.Response response;
+      switch (method) {
+        case 'GET':
+          response = await client.get(uri, headers: headers).timeout(_timeout);
+        case 'POST':
+          response = await client
+              .post(uri, headers: headers, body: encoded)
+              .timeout(_timeout);
+        case 'PATCH':
+          response = await client
+              .patch(uri, headers: headers, body: encoded)
+              .timeout(_timeout);
+        case 'DELETE':
+          response = await client
+              .delete(uri, headers: headers, body: encoded)
+              .timeout(_timeout);
+        default:
+          throw ArgumentError('unsupported method $method');
+      }
 
-      if (response.statusCode == 200) {
-        try {
-          final body = json.decode(response.body);
-          return body['status'] == 'ok';
-        } catch (_) {
-          return true;
+      if (response.statusCode == 204 || response.body.isEmpty) {
+        if (response.statusCode >= 400) {
+          throw ApiException(
+            _messageFor(response.statusCode, null),
+            statusCode: response.statusCode,
+          );
         }
+        return null;
       }
 
-      return false;
+      dynamic decoded;
+      try {
+        decoded = json.decode(response.body);
+      } catch (_) {
+        if (response.statusCode >= 400) {
+          throw ApiException(
+            _messageFor(response.statusCode, null),
+            statusCode: response.statusCode,
+          );
+        }
+        throw ApiException('The server sent a reply this app could not read.');
+      }
+
+      if (response.statusCode >= 400) {
+        final serverSaid = decoded is Map && decoded['error'] is String
+            ? decoded['error'] as String
+            : null;
+        throw ApiException(
+          _messageFor(response.statusCode, serverSaid),
+          statusCode: response.statusCode,
+        );
+      }
+      return decoded;
+    } on ApiException {
+      rethrow;
+    } on TimeoutException {
+      throw ApiException('The server did not answer in time.');
     } catch (e) {
-      return false;
+      throw ApiException('Could not reach the server at $_serverAddress.');
     } finally {
       client.close();
     }
   }
 
-  /// Gets the list of blocked applications from the server
-  Future<List<Map<String, dynamic>>> getBlockedApplications() async {
-    final client = http.Client();
-    try {
-      final serverAddress = await getServerAddress();
-      final uri = Uri.parse('$serverAddress/manage/applications');
-      final headers = await _getHeaders(
-        additionalHeaders: {'Content-Type': 'application/json'},
-      );
-
-      final response = await client
-          .get(uri, headers: headers)
-          .timeout(const Duration(seconds: 10));
-
-      if (response.statusCode == 200) {
-        final body = json.decode(response.body);
-        final List<dynamic> applications = body['applications'] ?? [];
-        return applications.cast<Map<String, dynamic>>();
-      }
-
-      return [];
-    } catch (e) {
-      return [];
-    } finally {
-      client.close();
+  String _messageFor(int status, String? serverSaid) {
+    if (serverSaid != null && serverSaid.isNotEmpty) return serverSaid;
+    switch (status) {
+      case 401:
+        return 'Please sign in again.';
+      case 403:
+        return 'Only account admins can do that.';
+      case 404:
+        return 'Not found.';
+      case 402:
+        return 'Your plan does not cover that.';
+      default:
+        return 'The server returned an error ($status).';
     }
   }
 
-  /// Gets the server status (enabled state and mode)
-  Future<Map<String, dynamic>> getServerStatus() async {
-    final client = http.Client();
+  Future<bool> testConnection([String? address]) async {
+    final client = clientFactory();
     try {
-      final serverAddress = await getServerAddress();
-      final uri = Uri.parse('$serverAddress/status');
-      final headers = await _getHeaders(
-        additionalHeaders: {'Content-Type': 'application/json'},
-      );
-
-      final response = await client
-          .get(uri, headers: headers)
-          .timeout(const Duration(seconds: 10));
-
-      if (response.statusCode == 200) {
-        final body = json.decode(response.body);
-        serverEnabled = body['enabled'] ?? false;
-        return {
-          'enabled': serverEnabled,
-          'mode': body['mode'] ?? 'blacklist',
-        };
-      }
-
-      return {'enabled': false, 'mode': 'blacklist'};
-    } catch (e) {
-      return {'enabled': false, 'mode': 'blacklist'};
-    } finally {
-      client.close();
-    }
-  }
-
-  /// Adds a new blocked application
-  Future<bool> addBlockedApplication(String applicationName, {String mode = 'blacklist'}) async {
-    final client = http.Client();
-    try {
-      final serverAddress = await getServerAddress();
-      final uri = Uri.parse('$serverAddress/manage/applications');
-      final headers = await _getHeaders(
-        additionalHeaders: {'Content-Type': 'application/json'},
-      );
-
-      final response = await client
-          .post(
-            uri,
-            headers: headers,
-            body: json.encode({'name': applicationName, 'mode': mode}),
-          )
-          .timeout(const Duration(seconds: 10));
-
-      return response.statusCode == 201;
-    } catch (e) {
-      return false;
-    } finally {
-      client.close();
-    }
-  }
-
-  /// Removes a blocked application
-  Future<bool> removeBlockedApplication(String applicationName, {String? mode}) async {
-    final client = http.Client();
-    try {
-      final serverAddress = await getServerAddress();
-      final uri = Uri.parse('$serverAddress/manage/applications');
-      final headers = await _getHeaders(
-        additionalHeaders: {'Content-Type': 'application/json'},
-      );
-
-      final payload = <String, dynamic>{'name': applicationName};
-      if (mode != null) {
-        payload['mode'] = mode;
-      }
-
-      final response = await client
-          .delete(
-            uri,
-            headers: headers,
-            body: json.encode(payload),
-          )
-          .timeout(const Duration(seconds: 10));
-
+      final uri = Uri.parse('${address ?? _serverAddress}/health');
+      final response = await client.get(uri).timeout(_timeout);
       return response.statusCode == 200;
-    } catch (e) {
+    } catch (_) {
       return false;
     } finally {
       client.close();
     }
   }
 
-  /// Resets all blocked applications
-  Future<bool> resetBlockedApplications() async {
-    final client = http.Client();
-    try {
-      final serverAddress = await getServerAddress();
-      final uri = Uri.parse('$serverAddress/manage/applications/reset');
-      final headers = await _getHeaders(
-        additionalHeaders: {'Content-Type': 'application/json'},
-      );
+  // ---------------------------------------------------------------- accounts
 
-      final response = await client
-          .delete(uri, headers: headers)
-          .timeout(const Duration(seconds: 10));
-
-      return response.statusCode == 200;
-    } catch (e) {
-      return false;
-    } finally {
-      client.close();
+  Future<void> signIn(String email, String password) async {
+    // "client": "mobile" is what asks for the token in the body; without it the
+    // server answers with the cookie alone, which this app cannot use.
+    final body = await _send(
+      'POST',
+      '/api/v1/auth/login',
+      authenticated: false,
+      body: {'email': email, 'password': password, 'client': 'mobile'},
+    );
+    final token = body is Map ? body['token'] as String? : null;
+    if (token == null || token.isEmpty) {
+      throw ApiException('The server did not return a session token.');
     }
+    await _setToken(token);
+    _accountId = null;
+
+    // Land in an account straight away: the first one is the strongest role
+    // the user holds, which is their own account when they have one.
+    final identity = await me();
+    final accounts = (identity['accounts'] as List?) ?? const [];
+    if (accounts.isNotEmpty) {
+      await setAccountId((accounts.first as Map)['account_id'] as String?);
+    }
+    notifyListeners();
   }
 
-  /// Toggles server status (enable/disable) with optional mode
-  Future<bool> toggleServerStatus(bool enabled, {String? mode}) async {
-    final client = http.Client();
-    try {
-      final serverAddress = await getServerAddress();
-      final uri = Uri.parse('$serverAddress/status');
-      final headers = await _getHeaders(
-        additionalHeaders: {'Content-Type': 'application/json'},
-      );
-
-      final payload = <String, dynamic>{'enabled': enabled};
-      if (mode != null) {
-        payload['mode'] = mode;
-      }
-
-      final response = await client
-          .put(uri, headers: headers, body: json.encode(payload))
-          .timeout(const Duration(seconds: 10));
-
-      final success = response.statusCode == 200;
-      if (success) {
-        serverEnabled = enabled;
-      }
-      return success;
-    } catch (e) {
-      return false;
-    } finally {
-      client.close();
-    }
+  Future<void> register(String email, String password, String name) async {
+    await _send(
+      'POST',
+      '/api/v1/auth/register',
+      authenticated: false,
+      body: {'email': email, 'password': password, 'name': name},
+    );
   }
 
-  /// Gets client entries from the server
-  Future<List<Map<String, dynamic>>> getClientData() async {
-    final client = http.Client();
+  Future<void> signOut() async {
     try {
-      final serverAddress = await getServerAddress();
-      final uri = Uri.parse('$serverAddress/client');
-      final headers = await _getHeaders(
-        additionalHeaders: {'Content-Type': 'application/json'},
-      );
-
-      final response = await client
-          .get(uri, headers: headers)
-          .timeout(const Duration(seconds: 10));
-
-      if (response.statusCode == 200) {
-        final body = json.decode(response.body);
-        final List<dynamic> entries = body['entries'] ?? [];
-        return entries.cast<Map<String, dynamic>>();
-      }
-
-      return [];
-    } catch (e) {
-      return [];
-    } finally {
-      client.close();
+      await _send('POST', '/api/v1/auth/logout');
+    } on ApiException {
+      // The session may already be gone server-side; signing out locally is
+      // still the right outcome and never fails.
     }
+    await _setToken(null);
+    await setAccountId(null);
+    notifyListeners();
   }
 
-  /// Updates an application's enabled status
-  Future<bool> updateApplicationStatus(String name, bool enabled, {String? mode}) async {
-    final client = http.Client();
-    try {
-      final serverAddress = await getServerAddress();
-      final uri = Uri.parse('$serverAddress/manage/applications');
-      final headers = await _getHeaders(
-        additionalHeaders: {'Content-Type': 'application/json'},
-      );
-
-      final body = <String, dynamic>{'name': name, 'enabled': enabled};
-      if (mode != null) body['mode'] = mode;
-
-      final response = await client
-          .put(
-            uri,
-            headers: headers,
-            body: json.encode(body),
-          )
-          .timeout(const Duration(seconds: 10));
-
-      return response.statusCode == 200;
-    } catch (e) {
-      return false;
-    } finally {
-      client.close();
-    }
+  Future<Map<String, dynamic>> me() async {
+    final body = await _send('GET', '/api/v1/me');
+    return Map<String, dynamic>.from(body as Map);
   }
 
-  /// Updates a client entry status
-  Future<bool> updateClientStatus(String name, bool status) async {
-    final client = http.Client();
-    try {
-      final serverAddress = await getServerAddress();
-      final uri = Uri.parse('$serverAddress/client');
-      final headers = await _getHeaders(
-        additionalHeaders: {'Content-Type': 'application/json'},
-      );
-
-      final response = await client
-          .put(
-            uri,
-            headers: headers,
-            body: json.encode({'name': name, 'status': status}),
-          )
-          .timeout(const Duration(seconds: 10));
-
-      return response.statusCode == 200;
-    } catch (e) {
-      return false;
-    } finally {
-      client.close();
-    }
+  Future<List<Map<String, dynamic>>> accounts() async {
+    final identity = await me();
+    return _asMaps(identity['accounts']);
   }
 
-  /// Gets computers data from the server
-  Future<Map<String, dynamic>> getComputersData() async {
-    final client = http.Client();
-    try {
-      final serverAddress = await getServerAddress();
-      final uri = Uri.parse('$serverAddress/manage/computers');
-      final headers = await _getHeaders(
-        additionalHeaders: {'Content-Type': 'application/json'},
+  // ------------------------------------------------------------------- rooms
+
+  Future<List<Map<String, dynamic>>> rooms() async =>
+      _asMaps((await _send('GET', '/api/v1/rooms') as Map)['rooms']);
+
+  Future<Map<String, dynamic>> createRoom(String name) async =>
+      Map<String, dynamic>.from(
+        await _send('POST', '/api/v1/rooms', body: {'name': name}) as Map,
       );
 
-      final response = await client
-          .get(uri, headers: headers)
-          .timeout(const Duration(seconds: 10));
+  Future<Map<String, dynamic>> updateRoom(
+    String roomId,
+    Map<String, dynamic> changes,
+  ) async => Map<String, dynamic>.from(
+    await _send('PATCH', '/api/v1/rooms/$roomId', body: changes) as Map,
+  );
 
-      if (response.statusCode == 200) {
-        final body = json.decode(response.body);
-        final List<dynamic> computersList = body['computers'] ?? [];
-        return {
-          'computers': computersList.cast<Map<String, dynamic>>(),
-          'current_time': body['current_time'] != null
-              ? DateTime.parse(body['current_time'] as String)
-              : null,
-        };
-      }
+  Future<void> deleteRoom(String roomId) =>
+      _send('DELETE', '/api/v1/rooms/$roomId');
 
-      return {'computers': [], 'current_time': null};
-    } catch (e) {
-      return {'computers': [], 'current_time': null};
-    } finally {
-      client.close();
-    }
+  // ------------------------------------------------------------ applications
+
+  Future<List<Map<String, dynamic>>> applications(String roomId) async =>
+      _asMaps(
+        (await _send('GET', '/api/v1/rooms/$roomId/applications')
+            as Map)['applications'],
+      );
+
+  Future<void> addApplication(String roomId, String name, String list) => _send(
+    'POST',
+    '/api/v1/rooms/$roomId/applications',
+    body: {'name': name, 'list': list},
+  );
+
+  /// Switches a rule off without losing it — /agent/sync stops sending a
+  /// disabled entry, and turning it back on restores it unchanged.
+  Future<void> setApplicationEnabled(
+    String roomId,
+    String appId,
+    bool enabled,
+  ) => _send(
+    'PATCH',
+    '/api/v1/rooms/$roomId/applications/$appId',
+    body: {'enabled': enabled},
+  );
+
+  Future<void> deleteApplication(String roomId, String appId) =>
+      _send('DELETE', '/api/v1/rooms/$roomId/applications/$appId');
+
+  // --------------------------------------------------------------- computers
+
+  Future<List<Map<String, dynamic>>> computers() async =>
+      _asMaps((await _send('GET', '/api/v1/computers') as Map)['computers']);
+
+  Future<void> updateComputer(
+    String computerId,
+    Map<String, dynamic> changes,
+  ) => _send('PATCH', '/api/v1/computers/$computerId', body: changes);
+
+  /// Unenrols a machine: it revokes that one agent's token. The machine keeps
+  /// enforcing its last policy until somebody reinstalls it.
+  Future<void> deleteComputer(String computerId) =>
+      _send('DELETE', '/api/v1/computers/$computerId');
+
+  // ------------------------------------------------------------------ events
+
+  Future<List<Map<String, dynamic>>> events({int limit = 50}) async => _asMaps(
+    (await _send('GET', '/api/v1/events?limit=$limit') as Map)['events'],
+  );
+
+  // --------------------------------------------------------- binding tokens
+
+  Future<String> createBindingToken() async {
+    final body = await _send('POST', '/api/v1/binding-tokens');
+    return (body as Map)['token'] as String;
   }
 
-  /// Updates computer blocked status
-  Future<bool> updateComputerBlocked(int computerId, bool blocked) async {
-    final client = http.Client();
-    try {
-      final serverAddress = await getServerAddress();
-      final uri = Uri.parse('$serverAddress/manage/computers');
-      final headers = await _getHeaders(
-        additionalHeaders: {'Content-Type': 'application/json'},
-      );
-
-      final response = await client
-          .put(
-            uri,
-            headers: headers,
-            body: json.encode({'identity': computerId, 'blocked': blocked}),
-          )
-          .timeout(const Duration(seconds: 10));
-
-      return response.statusCode == 200;
-    } catch (e) {
-      return false;
-    } finally {
-      client.close();
-    }
-  }
-
-  /// Resets all computers (unblocks all)
-  Future<bool> resetAllComputers() async {
-    final client = http.Client();
-    try {
-      final serverAddress = await getServerAddress();
-      final uri = Uri.parse('$serverAddress/manage/computers/reset');
-      final headers = await _getHeaders(
-        additionalHeaders: {'Content-Type': 'application/json'},
-      );
-
-      final response = await client
-          .delete(uri, headers: headers)
-          .timeout(const Duration(seconds: 10));
-
-      return response.statusCode == 200;
-    } catch (e) {
-      return false;
-    } finally {
-      client.close();
-    }
-  }
-
-  /// Blocks all computers
-  Future<bool> blockAllComputers() async {
-    final client = http.Client();
-    try {
-      final serverAddress = await getServerAddress();
-      final uri = Uri.parse('$serverAddress/manage/computers/block_all');
-      final headers = await _getHeaders(
-        additionalHeaders: {'Content-Type': 'application/json'},
-      );
-
-      final response = await client
-          .put(uri, headers: headers)
-          .timeout(const Duration(seconds: 10));
-
-      return response.statusCode == 200;
-    } catch (e) {
-      return false;
-    } finally {
-      client.close();
-    }
+  List<Map<String, dynamic>> _asMaps(dynamic value) {
+    if (value is! List) return const [];
+    return value.map((e) => Map<String, dynamic>.from(e as Map)).toList();
   }
 }
