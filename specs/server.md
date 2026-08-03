@@ -600,6 +600,15 @@ working, and the logs say so), too high resolves no address at all and every
 limiter shares one bucket. `TestSpoofedXFFDoesNotEscapeTheLimitWithoutAProxy`
 holds the default to its promise.
 
+### Authentication costs three round trips (accepted)
+
+`SessionAuth` looks the session up, then opens a transaction to read the
+caller's accounts under `app.user_id`, then touches the session. Folding that
+into one query is possible only with a `SECURITY DEFINER` lookup that steps
+around the very policies migration 00014 added, and nothing has measured a
+problem worth that. It is written down here so the next person to notice it
+knows it was noticed.
+
 ## Maintenance
 
 `runMaintenance` (`maintenance.go`) runs hourly alongside the HTTP server and
