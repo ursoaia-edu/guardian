@@ -67,6 +67,15 @@ type app struct {
 }
 
 func main() {
+	// Before a window exists, because the most common installation mistake
+	// makes every later error message a technical one about a missing file:
+	// the console started from inside the downloaded ZIP. See archive.go.
+	verdict, surroundingsMsg := surroundings()
+	if verdict == archiveUnextracted {
+		walk.MsgBox(nil, "Extract the archive first", surroundingsMsg, walk.MsgBoxIconError)
+		os.Exit(1)
+	}
+
 	a := &app{
 		wl:        map[string]bool{},
 		running:   map[string]bool{},
@@ -101,6 +110,10 @@ func main() {
 			*canceled = true
 		}
 	})
+
+	if verdict == archivePayloadMissing {
+		walk.MsgBox(a.mw, "Agent files not found", surroundingsMsg, walk.MsgBoxIconWarning)
+	}
 
 	if !isElevated() {
 		walk.MsgBox(a.mw, "Administrator rights required",
