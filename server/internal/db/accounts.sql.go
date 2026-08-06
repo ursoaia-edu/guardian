@@ -97,6 +97,29 @@ func (q *Queries) DeleteAccountMember(ctx context.Context, userID uuid.UUID) (in
 	return result.RowsAffected(), nil
 }
 
+const getAccount = `-- name: GetAccount :one
+SELECT id, name, owner_user_id, plan, computer_limit, stripe_customer_id, subscription_status, grace_until, created_at FROM accounts WHERE id = $1
+`
+
+// The caller's own account row. RLS scopes it: called inside inAccount, it can
+// only ever return the account the scope names.
+func (q *Queries) GetAccount(ctx context.Context, id uuid.UUID) (Account, error) {
+	row := q.db.QueryRow(ctx, getAccount, id)
+	var i Account
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.OwnerUserID,
+		&i.Plan,
+		&i.ComputerLimit,
+		&i.StripeCustomerID,
+		&i.SubscriptionStatus,
+		&i.GraceUntil,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const getUserByEmail = `-- name: GetUserByEmail :one
 SELECT id, email, password_hash, name, email_verified_at, created_at FROM users WHERE email = $1
 `

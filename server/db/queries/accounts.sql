@@ -26,3 +26,8 @@ DELETE FROM account_members WHERE user_id = $1 AND role <> 'owner';
 -- name: AddAccountMember :exec
 INSERT INTO account_members (account_id, user_id, role)
 VALUES ($1, $2, $3);
+
+-- name: GetAccount :one
+-- The caller's own account row. RLS scopes it: called inside inAccount, it can
+-- only ever return the account the scope names.
+SELECT * FROM accounts WHERE id = $1;

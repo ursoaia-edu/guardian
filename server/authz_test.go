@@ -52,6 +52,7 @@ func managerOnlyRoutes(roomID, userID, computerID string) []struct {
 			map[string]string{"email": "someone@example.com"}},
 		{"DELETE /api/v1/rooms/{roomID}/members/{userID}", "DELETE",
 			"/api/v1/rooms/" + roomID + "/members/" + userID, nil},
+		{"GET /api/v1/installer", "GET", "/api/v1/installer", nil},
 		{"POST /api/v1/binding-tokens", "POST", "/api/v1/binding-tokens", nil},
 		{"DELETE /api/v1/binding-tokens", "DELETE", "/api/v1/binding-tokens", nil},
 		{"GET /api/v1/events", "GET", "/api/v1/events", nil},

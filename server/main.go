@@ -19,6 +19,19 @@ import (
 type Server struct {
 	pool *pgxpool.Pool
 
+	// cabinet serves the embedded web cabinet (server/webui). It is built
+	// once at startup because the assets never change at run time; a nil
+	// cabinet simply means no SPA is mounted, which is what a test that
+	// constructs a Server directly gets.
+	cabinet *cabinetHandler
+
+	// installerArchive is the path to the pre-built reference ZIP handed out
+	// by GET /api/v1/installer. Empty, or missing on disk, is not a startup
+	// failure — a server that cannot hand out an installer still runs every
+	// agent already enrolled — so it is reported as a warning and answered
+	// with a 503 on the one route that needs it. See installer.go.
+	installerArchive string
+
 	// trustedProxies is the number of reverse-proxy hops between the public
 	// internet and this process — the value the client-IP middleware in
 	// routes.go keys rate limits and session IPs on. Zero means "nothing in
@@ -50,7 +63,24 @@ func NewServer(ctx context.Context) (*Server, error) {
 		pool.Close()
 		return nil, fmt.Errorf("ping: %w", err)
 	}
-	return &Server{pool: pool, trustedProxies: proxies}, nil
+	cabinet, err := newCabinetHandler()
+	if err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("load the cabinet: %w", err)
+	}
+
+	archive := installerArchiveFromEnv()
+	if _, err := os.Stat(archive); err != nil {
+		slog.Warn("no installer archive; the installer download will answer 503",
+			"path", archive, "error", err)
+	}
+
+	return &Server{
+		pool:             pool,
+		trustedProxies:   proxies,
+		installerArchive: archive,
+		cabinet:          cabinet,
+	}, nil
 }
 
 // cabinetOriginsFromEnv reads CABINET_ORIGIN, the list of origins allowed to
