@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Guardian</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/app.css" />
+  </head>
+  <body>
+    <div id="app"><noscript>The Guardian cabinet needs JavaScript.</noscript></div>
+
+    <!--
+      React, ReactDOM and htm are vendored rather than fetched from a CDN: the
+      cabinet is served by the same binary as the API, and a page that cannot
+      load without reaching a third party is a page that fails on exactly the
+      isolated network this product is often installed on. They load as plain
+      scripts, before the module below, so window.React exists by the time it
+      runs. See specs/cabinet.md.
+    -->
+    <script src="/vendor/react.production.min.js"></script>
+    <script src="/vendor/react-dom.production.min.js"></script>
+    <script src="/vendor/htm.js"></script>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
