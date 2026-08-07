@@ -172,12 +172,24 @@ func (s *Server) setupRoutes() *chi.Mux {
 			r.Post("/account/members", s.handleAddAccountMember)
 			r.Delete("/account/members/{userID}", s.handleDeleteAccountMember)
 
+			// The download mints a binding token of its own, so it belongs on
+			// the same side of the guard as minting one by hand.
+			r.Get("/installer", s.handleDownloadInstaller)
+
 			r.Post("/binding-tokens", s.handleCreateBindingToken)
 			r.Delete("/binding-tokens", s.handleRevokeBindingTokens)
 
 			r.Get("/events", s.handleListEvents)
 		})
 	})
+
+	// The cabinet. Every path the API has not claimed is the SPA's, and the
+	// handler itself refuses the API prefixes so a mistyped /api/v1/... keeps
+	// answering JSON rather than a page. Registered last, because NotFound is
+	// what it hangs on: chi consults it only after every route above missed.
+	if s.cabinet != nil {
+		r.NotFound(s.cabinet.ServeHTTP)
+	}
 
 	r.Group(func(r chi.Router) {
 		r.Use(s.AgentAuth)
