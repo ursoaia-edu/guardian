@@ -64,6 +64,16 @@ cd mobile && flutter pub run flutter_launcher_icons
 - Postgres tables: `users`, `accounts`, `account_members`, `sessions`, `rooms`, `room_members`, `applications`, `computers`, `binding_tokens`, `events`
 - See `specs/server.md` for the full architecture (RLS policies, roles, the `account_for_agent_token` function, migrations)
 
+### Web cabinet (`server/webui/` — React with no build step)
+- Served by the server binary itself (`server/webui.go`, `go:embed all:webui`), same origin as the API, hanging on chi's `NotFound`; it refuses `/api/`, `/agent/` and `/health` so a mistyped API path still gets the API's JSON 404, and serves `index.html` for every other path so deep links and refreshes work
+- React 18, ReactDOM and `htm` are **vendored files** in `webui/vendor/`, the screens are plain ES modules, and nothing is transpiled: what a developer edits is what ships, `go build` alone produces a working cabinet, and there is no build output to regenerate. This is what lets the CSP be `default-src 'self'` with no `unsafe-inline` and no `unsafe-eval`
+- Routing is on the hash (`#/rooms/<id>/rules`), so no reverse proxy needs teaching about the cabinet's routes
+- `app.js` (session, account scope, the rail shell), `api.js` (the whole HTTP surface, injectable `fetch`), `hooks.js` (`usePoll` — 7s refresh, hidden-tab pause, backoff; `useAction`; `useFreshness`), `ui.js` (shared components), `format.js` (`isOnline`, `computerState`, `roomPolicy`, …), `router.js` (pure), `app.css` (the whole stylesheet), `screens/*.js` (ten screens)
+- **Design system** (`specs/cabinet.md` is the reference): dark only, palette and three faces taken from the landing page `docs/index.html`. Two rules run through it — *type carries who is speaking* (Space Grotesk headings, Inter for human words, JetBrains Mono for everything a machine reported: hostnames, GUIDs, agent versions, sync times), and *colour carries state and nothing else* (green enforcing/online, amber locked, red destructive; everything else greyscale)
+- Fonts are vendored as Latin/Latin-ext `woff2` subsets in `webui/vendor/fonts/` (SIL OFL, see the `LICENSE.txt` there) because the CSP forbids Google Fonts and the product is installed on isolated networks. Changing `app.css`'s `unicode-range` blocks means re-subsetting
+- A list of machines is a table with sortable columns; a handful of people or rooms is a `.rows` list. The overview's hero is the rooms as racks of machine cells, coloured by state
+- No JS tests and no CI step for the cabinet yet; `server/webui_test.go` covers the Go side. `api.js`, `router.js` and `format.js` are written to be testable under `node --test`
+
 ### Agent (`agent/`)
 - `main.go` (wire types, flags, console entry, process list/kill, whitelist, `sync.json`), `agent.go` (the single run loop shared by console and service mode: config, enrollment, sync, enforcement, `logger` seam), `client.go` (HTTP client, `agent_credentials.json`, `.env` reading and the binding-token wipe), `passport_windows.go`/`passport_other.go` (machine GUID, OS info)
 - Enrolls once: `.env`'s `BINDING_TOKEN` (from the cabinet's installer) → `POST /agent/enroll` → per-machine token saved to `agent_credentials.json` (`0600`), then the `BINDING_TOKEN` line is deleted from `.env`. Machine identity is the OS's stable id (Windows `MachineGuid`, `/etc/machine-id`, macOS `IOPlatformUUID`)
@@ -124,7 +134,7 @@ Server installs to `/usr/local/bin/guardian/` as a systemd service running as th
 
 ## Rules
 
-- **Always update specs on code changes:** After any code change, update the corresponding files in `specs/` (`server.md`, `agent.md`, `api.md`, `mobile.md`, `whitelist-gui.md`) and this `CLAUDE.md` to keep documentation in sync. This includes API changes, schema changes, config changes, file structure changes, and build output paths.
+- **Always update specs on code changes:** After any code change, update the corresponding files in `specs/` (`server.md`, `agent.md`, `api.md`, `cabinet.md`, `mobile.md`, `whitelist-gui.md`) and this `CLAUDE.md` to keep documentation in sync. This includes API changes, schema changes, config changes, file structure changes, and build output paths.
 - **The agent's `.env` keys are shared with the console:** `agent/agent.go` reads them, `tools/whitelist-gui/envfile.go` (`knownEnvOrder`) writes them, and `dist/agent/agent.env` templates them — change all three together.
 
 ## Notes
