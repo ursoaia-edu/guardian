@@ -1,20 +1,24 @@
 const { useMemo } = window.React
 
-import { html, Card, Empty, Loading, ErrorBanner, Stat, Button } from '../ui.js'
+import { html, Card, Empty, Loading, ErrorBanner, Tally, Button } from '../ui.js'
 import { usePoll } from '../hooks.js'
-import { isOnline, roomPolicy, relativeTime, eventLabel, eventDetail } from '../format.js'
+import { isOnline, computerName, computerState, roomPolicy, roomMode, relativeTime, eventLabel, eventDetail } from '../format.js'
 import { href, navigate } from '../router.js'
 
 // The overview answers the question somebody opens the cabinet to ask: is
-// everything where I left it? Rooms as tiles, each with the three facts that
-// change — how many machines, how many are on, whether protection is running.
+// everything where I left it?
+//
+// It answers it the way the customer thinks about their fleet — as rooms full
+// of machines. Each room is a panel, each machine a cell in it, and the cell's
+// left edge carries its state. Six machines or sixty, the shape is the same
+// and the eye goes straight to the edge that is the wrong colour.
 export function OverviewScreen({ api, role, onAuthError }) {
   const manager = role === 'owner' || role === 'admin'
   const rooms = usePoll(() => api.rooms(), { onAuthError })
   const computers = usePoll(() => api.computers(), { onAuthError })
   // The activity feed is manager-only; asking for it as a guest would be a
   // 403 on a screen where nothing is wrong.
-  const events = usePoll(() => (manager ? api.events({ limit: 8 }) : Promise.resolve({ events: [] })), {
+  const events = usePoll(() => (manager ? api.events({ limit: 7 }) : Promise.resolve({ events: [] })), {
     deps: [manager],
     interval: 15000,
     onAuthError,
@@ -40,16 +44,17 @@ export function OverviewScreen({ api, role, onAuthError }) {
 
   if (rooms.loading && !rooms.data) return html`<${Loading} what="Loading your rooms" />`
 
+  const tally = [
+    { label: computerList.length === 1 ? 'computer' : 'computers', value: computerList.length },
+    { label: 'online', value: online, tone: online > 0 ? 'good' : null },
+    { label: roomList.length === 1 ? 'room' : 'rooms', value: roomList.length },
+  ]
+  if (locked > 0) tally.push({ label: 'locked', value: locked, tone: 'warn' })
+
   return html`
     <div class="stack">
       <${ErrorBanner} error=${rooms.error || computers.error} />
-
-      <div class="stats">
-        <${Stat} label="Computers" value=${computerList.length} />
-        <${Stat} label="Online now" value=${online} tone=${online > 0 ? 'good' : null} />
-        <${Stat} label="Rooms" value=${roomList.length} />
-        ${locked > 0 && html`<${Stat} label="Locked" value=${locked} tone="warn" />`}
-      </div>
+      <${Tally} items=${tally} />
 
       ${roomList.length === 0
         ? html`<${Card} title="No rooms yet">
@@ -62,43 +67,32 @@ export function OverviewScreen({ api, role, onAuthError }) {
               html`<${Button} kind="primary" onClick=${() => navigate('rooms')}>Create a room<//>`}
             <//>
           <//>`
-        : html`<div class="tiles">
-            ${roomList.map((room) => {
-              const machines = byRoom.get(room.id) || []
-              const up = machines.filter((c) => isOnline(c.last_seen_at, now)).length
-              return html`
-                <a class="tile" key=${room.id} href=${href('room', { roomID: room.id })}>
-                  <div class="tile-head">
-                    <h3>${room.name}</h3>
-                    <span class=${'dot ' + (room.protection_enabled ? 'dot-on' : 'dot-off')}></span>
-                  </div>
-                  <p class="tile-policy">${roomPolicy(room)}</p>
-                  <p class="tile-counts">
-                    ${machines.length} ${machines.length === 1 ? 'computer' : 'computers'}
-                    ${machines.length > 0 ? html`<span class="tile-online">· ${up} online</span>` : null}
-                  </p>
-                  ${!room.power_allowed &&
-                  html`<p class="tile-flag">Shutdown blocked</p>`}
-                </a>
-              `
-            })}
-          </div>`}
+        : roomList.map(
+            (room) => html`<${RoomRack}
+              key=${room.id}
+              room=${room}
+              machines=${byRoom.get(room.id) || []}
+              now=${now}
+            />`,
+          )}
 
       ${unassigned.length > 0 &&
       html`<${Card}
-        title=${`${unassigned.length} ${unassigned.length === 1 ? 'computer is' : 'computers are'} in no room`}
-        actions=${html`<${Button} onClick=${() => navigate('computers')}>Assign<//>`}
+        className="room-panel"
+        title=${html`<span class="room-panel-title">
+          <h2>No room</h2>
+          <span class="room-panel-meta">nothing is enforced here</span>
+        </span>`}
+        actions=${html`<${Button} onClick=${() => navigate('computers')}>Assign to a room<//>`}
       >
-        <p>
-          A computer with no room enforces nothing at all — the agent reports in and waits. Put it
-          in a room to start applying that room's rules.
-        </p>
+        <${Rack} machines=${unassigned} now=${now} />
       <//>`}
 
       ${manager &&
       html`<${Card}
         title="Recent activity"
-        actions=${html`<${Button} onClick=${() => navigate('activity')}>See all<//>`}
+        flush
+        actions=${html`<${Button} kind="quiet" onClick=${() => navigate('activity')}>See all<//>`}
       >
         ${(events.data && events.data.events && events.data.events.length > 0)
           ? html`<ul class="feed">
@@ -114,6 +108,73 @@ export function OverviewScreen({ api, role, onAuthError }) {
             </ul>`
           : html`<${Empty} title="Nothing has happened yet" />`}
       <//>`}
+    </div>
+  `
+}
+
+// One room, with its machines. The head carries the three facts that change:
+// what the policy is, whether it is being enforced, and how much of the room
+// is switched on right now.
+function RoomRack({ room, machines, now }) {
+  const up = machines.filter((c) => isOnline(c.last_seen_at, now)).length
+  const off = !room.protection_enabled
+
+  return html`
+    <${Card}
+      className="room-panel"
+      title=${html`
+        <span class="room-panel-title">
+          <h2><a href=${href('room', { roomID: room.id })}>${room.name}</a></h2>
+          <span class="room-panel-meta">
+            <span class=${off ? 'badge badge-warn' : 'badge badge-on'}>
+              ${off ? 'Not enforced' : roomMode(room)}
+            </span>
+            ${!room.power_allowed && html`<span class="badge">Shutdown blocked</span>`}
+          </span>
+        </span>
+      `}
+      actions=${html`<span class="room-panel-count">
+        ${machines.length > 0 ? `${up}/${machines.length} online` : 'empty'}
+      </span>`}
+    >
+      ${machines.length === 0
+        ? html`<${Empty} title="No computers in this room">
+            <p>${roomPolicy(room)} — but there is nothing here to enforce it on yet.</p>
+            <${Button} onClick=${() => navigate('computers')}>Move a computer here<//>
+          <//>`
+        : html`<${Rack} machines=${machines} now=${now} />`}
+    <//>
+  `
+}
+
+// The rack itself: one cell per machine, sorted so the ones that need looking
+// at come first. A locked machine outranks an offline one, and an offline one
+// outranks a machine that is quietly doing its job.
+function Rack({ machines, now }) {
+  const order = { locked: 0, offline: 1, unassigned: 2, unknown: 3, online: 4 }
+  const sorted = [...machines].sort((a, b) => {
+    const rank = order[computerState(a, now)] - order[computerState(b, now)]
+    return rank !== 0 ? rank : computerName(a).localeCompare(computerName(b))
+  })
+
+  return html`
+    <div class="rack">
+      ${sorted.map((computer) => {
+        const state = computerState(computer, now)
+        return html`
+          <a
+            class=${`node node-${state}`}
+            key=${computer.id}
+            href=${href('computer', { computerID: computer.id })}
+            title=${`${computerName(computer)} — ${state}`}
+          >
+            <span class="node-name">${computerName(computer)}</span>
+            <span class="node-when">
+              ${state === 'locked' ? 'locked' : relativeTime(computer.last_seen_at, now)}
+            </span>
+          </a>
+        `
+      })}
     </div>
   `
 }

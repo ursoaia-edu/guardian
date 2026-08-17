@@ -3,7 +3,7 @@ const { useState } = window.React
 import { html, Card, Button, Field, TextInput, Empty, Loading, ErrorBanner, Confirm } from '../ui.js'
 import { usePoll, useAction } from '../hooks.js'
 import { roomPolicy } from '../format.js'
-import { href, navigate } from '../router.js'
+import { href } from '../router.js'
 
 export function RoomsScreen({ api, role, onAuthError }) {
   const manager = role === 'owner' || role === 'admin'
@@ -30,7 +30,7 @@ export function RoomsScreen({ api, role, onAuthError }) {
     <div class="stack">
       <${ErrorBanner} error=${rooms.error} />
 
-      <${Card} title="Rooms">
+      <${Card} title=${`${list.length} ${list.length === 1 ? 'room' : 'rooms'}`} flush>
         ${list.length === 0
           ? html`<${Empty} title="No rooms yet">
               <p>Rules are set per room; computers are put into rooms.</p>
@@ -43,11 +43,10 @@ export function RoomsScreen({ api, role, onAuthError }) {
                       <span class="row-title">${room.name}</span>
                       <span class="row-sub">${roomPolicy(room)}</span>
                     </a>
-                    <div class="row-actions">
-                      <${Button} onClick=${() => navigate('room', { roomID: room.id })}>Open<//>
-                      ${manager &&
-                      html`<${Button} kind="danger" onClick=${() => setDeleting(room)}>Delete<//>`}
-                    </div>
+                    ${manager &&
+                    html`<div class="row-actions">
+                      <${Button} kind="quiet" onClick=${() => setDeleting(room)}>Delete<//>
+                    </div>`}
                   </li>
                 `,
               )}

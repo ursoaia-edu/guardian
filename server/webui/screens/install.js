@@ -85,7 +85,7 @@ export function InstallScreen({ api, role }) {
 
   return html`
     <div class="stack">
-      <${Card} title="Install the agent on a computer">
+      <${Card} title="Four steps">
         <ol class="steps">
           <li>
             <strong>Download the installer.</strong> The archive is personalised for this account:

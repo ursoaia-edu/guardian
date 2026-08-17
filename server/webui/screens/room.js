@@ -13,6 +13,7 @@ import {
   Banner,
   StateBadge,
   Confirm,
+  PageHeader,
 } from '../ui.js'
 import { usePoll, useAction } from '../hooks.js'
 import { computerName, computerState, relativeTime, roomPolicy } from '../format.js'
@@ -61,37 +62,41 @@ export function RoomScreen({ api, role, roomID, tab, onAuthError }) {
   `
 }
 
+// The room names its own screen — the shell cannot, since the name lives on
+// the server — and the policy sentence sits under it, where a subtitle says
+// what the room is currently doing to the machines in it.
 function RoomHeader({ api, room, manager, onChanged }) {
   const [renaming, setRenaming] = useState(false)
   const [name, setName] = useState(room.name)
   const save = useAction(onChanged)
 
+  if (renaming) {
+    return html`
+      <form
+        class="inline-form"
+        onSubmit=${async (e) => {
+          e.preventDefault()
+          const done = await save.perform(() => api.patchRoom(room.id, { name: name.trim() }))
+          if (done) setRenaming(false)
+        }}
+      >
+        <${Field} label="Room name">
+          <${TextInput} value=${name} onChange=${setName} />
+        <//>
+        <${Button} type="submit" kind="primary" busy=${save.busy}>Save the name<//>
+        <${Button} onClick=${() => { setRenaming(false); setName(room.name) }}>Cancel<//>
+        <${ErrorBanner} error=${save.error} onDismiss=${save.clearError} />
+      </form>
+    `
+  }
+
   return html`
-    <header class="room-head">
-      <div class="room-title">
-        ${renaming
-          ? html`
-              <form
-                class="inline-form"
-                onSubmit=${async (e) => {
-                  e.preventDefault()
-                  const done = await save.perform(() => api.patchRoom(room.id, { name: name.trim() }))
-                  if (done) setRenaming(false)
-                }}
-              >
-                <${TextInput} value=${name} onChange=${setName} />
-                <${Button} type="submit" kind="primary" busy=${save.busy}>Save<//>
-                <${Button} onClick=${() => { setRenaming(false); setName(room.name) }}>Cancel<//>
-              </form>
-            `
-          : html`
-              <h1>${room.name}</h1>
-              ${manager && html`<button class="linkish" onClick=${() => setRenaming(true)}>Rename</button>`}
-            `}
-      </div>
-      <p class="room-policy">${roomPolicy(room)}</p>
-      <${ErrorBanner} error=${save.error} onDismiss=${save.clearError} />
-    </header>
+    <${PageHeader}
+      title=${room.name}
+      sub=${roomPolicy(room)}
+      actions=${manager &&
+      html`<${Button} kind="quiet" onClick=${() => setRenaming(true)}>Rename<//>`}
+    />
   `
 }
 
@@ -102,36 +107,51 @@ function RoomComputers({ api, room, onAuthError }) {
   const list = ((computers.data && computers.data.computers) || []).filter((c) => c.room_id === room.id)
 
   return html`
-    <${Card} title="Computers in this room">
+    <${Card} title=${`${list.length} ${list.length === 1 ? 'computer' : 'computers'} in this room`} flush>
       <${ErrorBanner} error=${computers.error || act.error} onDismiss=${act.clearError} />
       ${list.length === 0
         ? html`<${Empty} title="No computers here yet">
             <p>Move one in from the pool, or install the agent on a new machine.</p>
             <${Button} onClick=${() => navigate('computers')}>Open the computer pool<//>
           <//>`
-        : html`<ul class="rows">
-            ${list.map(
-              (computer) => html`
-                <li class="row" key=${computer.id}>
-                  <a class="row-main" href=${href('computer', { computerID: computer.id })}>
-                    <span class="row-title">${computerName(computer)}</span>
-                    <span class="row-sub">
-                      ${computer.os_name || 'Windows'} · last seen ${relativeTime(computer.last_seen_at, now)}
-                    </span>
-                  </a>
-                  <div class="row-actions">
-                    <${StateBadge} state=${computerState(computer, now)} />
-                    <${Button}
-                      busy=${act.busy}
-                      onClick=${() => act.perform(() => api.patchComputer(computer.id, { blocked: !computer.blocked }))}
-                    >
-                      ${computer.blocked ? 'Unlock' : 'Lock'}
-                    <//>
-                  </div>
-                </li>
-              `,
-            )}
-          </ul>`}
+        : html`<div class="table-scroll">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>Computer</th>
+                  <th>State</th>
+                  <th>Last seen</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                ${list.map((computer) => {
+                  const state = computerState(computer, now)
+                  return html`
+                    <tr key=${computer.id} class=${state === 'offline' ? 'row-quiet' : ''}>
+                      <td>
+                        <a class="cell-name" href=${href('computer', { computerID: computer.id })}>
+                          ${computerName(computer)}
+                        </a>
+                      </td>
+                      <td><${StateBadge} state=${state} /></td>
+                      <td class="mono">${relativeTime(computer.last_seen_at, now)}</td>
+                      <td class="num">
+                        <${Button}
+                          kind="quiet"
+                          busy=${act.busy}
+                          onClick=${() =>
+                            act.perform(() => api.patchComputer(computer.id, { blocked: !computer.blocked }))}
+                        >
+                          ${computer.blocked ? 'Unlock' : 'Lock'}
+                        <//>
+                      </td>
+                    </tr>
+                  `
+                })}
+              </tbody>
+            </table>
+          </div>`}
     <//>
   `
 }
@@ -188,8 +208,11 @@ function RoomRules({ api, room, onAuthError }) {
         <//>`}
       <//>
 
-      <${Card} title=${`Enforced now — the ${room.mode}`}>
-        <${ErrorBanner} error=${apps.error || act.error} onDismiss=${act.clearError} />
+      <${Card} title=${`Enforced now — the ${room.mode}`} flush>
+        ${(apps.error || act.error) &&
+        html`<div class="card-body">
+          <${ErrorBanner} error=${apps.error || act.error} onDismiss=${act.clearError} />
+        </div>`}
         ${enforced.length === 0
           ? html`<${Empty}
               title=${room.mode === 'whitelist'
@@ -202,13 +225,12 @@ function RoomRules({ api, room, onAuthError }) {
                   : 'Add the name of a program, exactly as it appears in Task Manager — steam.exe, for instance.'}
               </p>
             <//>`
-          : html`<ul class="rows">
-              ${enforced.map((app) => html`<${RuleRow} key=${app.id} app=${app} api=${api} room=${room} act=${act} />`)}
-            </ul>`}
+          : html`<${RuleTable} rows=${enforced} api=${api} room=${room} act=${act} />`}
 
+        <div class="card-body">
         <form class="inline-form" onSubmit=${add}>
           <${Field} label="Add a program" hint="The executable's name, as Task Manager shows it.">
-            <${TextInput} value=${name} onChange=${setName} placeholder="steam.exe" />
+            <${TextInput} value=${name} onChange=${setName} placeholder="steam.exe" mono=${true} />
           <//>
           <${Field} label="List">
             <select class="input" value=${list} onChange=${(e) => setList(e.target.value)}>
@@ -218,41 +240,69 @@ function RoomRules({ api, room, onAuthError }) {
           <//>
           <${Button} type="submit" kind="primary" busy=${act.busy}>Add<//>
         </form>
+        </div>
       <//>
 
       ${idle.length > 0 &&
-      html`<${Card} title=${`Kept for the other mode — the ${room.mode === 'blacklist' ? 'whitelist' : 'blacklist'}`} muted=${true}>
-        <p class="hint">
+      html`<${Card}
+        title=${`Kept for the other mode — the ${room.mode === 'blacklist' ? 'whitelist' : 'blacklist'}`}
+        flush
+        muted=${true}
+      >
+        <p class="hint" style="padding: 0.9rem 0.9rem 0">
           These are not enforced while the room is in ${room.mode} mode. They are kept so switching
           modes does not mean typing everything again.
         </p>
-        <ul class="rows">
-          ${idle.map((app) => html`<${RuleRow} key=${app.id} app=${app} api=${api} room=${room} act=${act} />`)}
-        </ul>
+        <${RuleTable} rows=${idle} api=${api} room=${room} act=${act} showList=${true} />
       <//>`}
     </div>
   `
 }
 
-function RuleRow({ app, api, room, act }) {
+// A rule is a program name and a switch. The name is what the machine will
+// report, so it is set in the machine's face; the switch is the whole row's
+// point, so it sits in its own column rather than after a sentence.
+function RuleTable({ rows, api, room, act, showList }) {
   return html`
-    <li class=${'row' + (app.enabled ? '' : ' row-off')}>
-      <div class="row-main">
-        <span class="row-title">${app.name}</span>
-        <span class="row-sub">${app.list}${app.enabled ? '' : ' · switched off'}</span>
-      </div>
-      <div class="row-actions">
-        <${Toggle}
-          checked=${app.enabled}
-          disabled=${act.busy}
-          label=${app.enabled ? 'On' : 'Off'}
-          onChange=${(v) => act.perform(() => api.setApplicationEnabled(room.id, app.id, v))}
-        />
-        <${Button} kind="danger" busy=${act.busy} onClick=${() => act.perform(() => api.deleteApplication(room.id, app.id))}>
-          Remove
-        <//>
-      </div>
-    </li>
+    <div class="table-scroll">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Program</th>
+            ${showList && html`<th>List</th>`}
+            <th>Enforced</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map(
+            (app) => html`
+              <tr key=${app.id} class=${app.enabled ? '' : 'row-quiet'}>
+                <td class="mono">${app.name}</td>
+                ${showList && html`<td class="cell-dim">${app.list}</td>`}
+                <td>
+                  <${Toggle}
+                    checked=${app.enabled}
+                    disabled=${act.busy}
+                    label=${app.enabled ? 'On' : 'Off'}
+                    onChange=${(v) => act.perform(() => api.setApplicationEnabled(room.id, app.id, v))}
+                  />
+                </td>
+                <td class="num">
+                  <${Button}
+                    kind="quiet"
+                    busy=${act.busy}
+                    onClick=${() => act.perform(() => api.deleteApplication(room.id, app.id))}
+                  >
+                    Remove
+                  <//>
+                </td>
+              </tr>
+            `,
+          )}
+        </tbody>
+      </table>
+    </div>
   `
 }
 
@@ -297,8 +347,11 @@ function RoomMembers({ api, room, manager, onAuthError }) {
 
   return html`
     <div class="stack">
-      <${Card} title="Who can see this room">
-        <${ErrorBanner} error=${members.error || act.error} onDismiss=${act.clearError} />
+      <${Card} title="Who can see this room" flush>
+        ${(members.error || act.error) &&
+        html`<div class="card-body">
+          <${ErrorBanner} error=${members.error || act.error} onDismiss=${act.clearError} />
+        </div>`}
         ${list.length === 0
           ? html`<${Empty} title="Only this account's owner and administrators" />`
           : html`<ul class="rows">
@@ -307,11 +360,11 @@ function RoomMembers({ api, room, manager, onAuthError }) {
                   <li class="row" key=${member.id}>
                     <div class="row-main">
                       <span class="row-title">${member.name || member.email}</span>
-                      <span class="row-sub">${member.email}</span>
+                      ${member.name && html`<span class="row-sub-data">${member.email}</span>`}
                     </div>
                     ${manager &&
                     html`<div class="row-actions">
-                      <${Button} kind="danger" onClick=${() => setRemoving(member)}>Revoke<//>
+                      <${Button} kind="quiet" onClick=${() => setRemoving(member)}>Revoke<//>
                     </div>`}
                   </li>
                 `,
