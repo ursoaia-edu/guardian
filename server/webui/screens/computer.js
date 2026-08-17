@@ -11,6 +11,7 @@ import {
   Banner,
   StateBadge,
   Confirm,
+  PageHeader,
 } from '../ui.js'
 import { usePoll, useAction } from '../hooks.js'
 import { computerName, computerState, relativeTime, formatDateTime } from '../format.js'
@@ -45,13 +46,11 @@ export function ComputerScreen({ api, role, computerID, onAuthError }) {
 
   return html`
     <div class="stack">
-      <header class="computer-head">
-        <div>
-          <h1>${computerName(data)}</h1>
-          <p class="hint">${data.hostname || '—'} · ${data.machine_guid}</p>
-        </div>
-        <${StateBadge} state=${computerState(data, now)} />
-      </header>
+      <${PageHeader}
+        title=${computerName(data)}
+        sub=${html`<span class="mono">${data.hostname || data.machine_guid}</span>`}
+        actions=${html`<${StateBadge} state=${computerState(data, now)} />`}
+      />
 
       <${ErrorBanner} error=${computer.error || act.error} onDismiss=${act.clearError} />
 

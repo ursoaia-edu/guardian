@@ -29,6 +29,14 @@ export function computerName(computer) {
   return guid ? `Machine ${guid.slice(0, 8)}` : 'Unnamed computer'
 }
 
+// lastSeenMillis is the raw age a sort needs. relativeTime renders the same
+// fact for a person; sorting on its words would put "9 min" before "3 h".
+export function lastSeenMillis(iso) {
+  if (!iso) return Number.NEGATIVE_INFINITY
+  const then = new Date(iso).getTime()
+  return Number.isNaN(then) ? Number.NEGATIVE_INFINITY : then
+}
+
 export function relativeTime(iso, now = new Date()) {
   if (!iso) return 'never'
   const then = new Date(iso).getTime()
@@ -73,6 +81,14 @@ export function roomPolicy(room) {
   if (!room.protection_enabled) return 'Protection off — nothing is enforced'
   if (room.mode === 'whitelist') return 'Whitelist — only listed applications may run'
   return 'Blacklist — listed applications are closed'
+}
+
+// roomMode is the policy in one word, for the places a whole sentence does not
+// fit — a panel head, a rail. roomPolicy is the sentence.
+export function roomMode(room) {
+  if (!room) return 'Unknown'
+  if (!room.protection_enabled) return 'Not enforced'
+  return room.mode === 'whitelist' ? 'Whitelist' : 'Blacklist'
 }
 
 // computerState folds the machine's row into the one word a list should show.

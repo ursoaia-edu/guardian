@@ -10,7 +10,7 @@ const React = window.React
 const { useState, useEffect, useCallback } = React
 
 import { createApi, ApiError } from './api.js'
-import { html, ErrorBanner, Loading, Banner } from './ui.js'
+import { html, ErrorBanner, Loading, Banner, BrandMark, PageHeader } from './ui.js'
 import { parseRoute, href, navigate } from './router.js'
 import { usePoll } from './hooks.js'
 import { SignInScreen } from './screens/signin.js'
@@ -145,7 +145,14 @@ function App({ api }) {
 
   const role = (me && me.role) || 'member'
   return html`
-    <${Shell} me=${me} role=${role} route=${route} onSignOut=${signOut}>
+    <${Shell}
+      api=${api}
+      me=${me}
+      role=${role}
+      route=${route}
+      onSignOut=${signOut}
+      onAuthError=${onAuthError}
+    >
       <${ErrorBanner} error=${error} onDismiss=${() => setError(null)} />
       <${Screen}
         api=${api}
@@ -227,13 +234,30 @@ function Screen(props) {
   }
 }
 
-function Shell({ me, role, route, onSignOut, children }) {
+// PAGE_TITLES are the screens the shell can name by itself. The room, the
+// computer and the wizard are not here: the first two are named after a thing
+// the server knows, and the wizard opens with a sentence rather than a label,
+// so those screens write their own header.
+const PAGE_TITLES = {
+  overview: 'Overview',
+  rooms: 'Rooms',
+  computers: 'Computers',
+  install: 'Install the agent',
+  activity: 'Activity',
+  settings: 'Settings',
+}
+
+// The rail is the cabinet's spine. It carries the six screens and, under
+// them, the rooms themselves with a live dot each — the question "is that
+// room still protected" is answerable from every screen, without navigating.
+function Shell({ api, me, role, route, onSignOut, onAuthError, children }) {
   const manager = role === 'owner' || role === 'admin'
   const current = (me && (me.accounts || []).find((a) => a.account_id === me.account_id)) || null
+  const rooms = usePoll(() => api.rooms(), { interval: 30000, onAuthError })
+  const roomList = (rooms.data && rooms.data.rooms) || []
 
   const links = [
     { name: 'overview', label: 'Overview' },
-    { name: 'rooms', label: 'Rooms' },
     { name: 'computers', label: 'Computers' },
   ]
   if (manager) {
@@ -242,36 +266,67 @@ function Shell({ me, role, route, onSignOut, children }) {
   }
   links.push({ name: 'settings', label: 'Settings' })
 
+  const title = PAGE_TITLES[route.name]
+
   return html`
     <div class="shell">
-      <header class="topbar">
+      <nav class="rail">
         <a class="brand" href=${href('overview')}>
-          <span class="brand-mark" aria-hidden="true"></span>
-          <span class="brand-name">Guardian</span>
+          <${BrandMark} />
+          <span>Guardian</span>
         </a>
-        <nav class="nav">
+
+        <div class="rail-group">
           ${links.map(
             (link) => html`
               <a
                 key=${link.name}
-                class=${'nav-link' + (route.name === link.name ? ' nav-active' : '')}
+                class="rail-link"
+                aria-current=${route.name === link.name ? 'page' : null}
                 href=${href(link.name)}
               >
-                ${link.label}
+                <span class="rail-link-name">${link.label}</span>
               </a>
             `,
           )}
-        </nav>
-        <div class="topbar-right">
-          ${current && html`<span class="account-name" title=${`Acting as ${role}`}>${current.name}</span>`}
-          <button class="linkish" onClick=${onSignOut}>Sign out</button>
         </div>
-      </header>
-      <main class="main">${children}</main>
-      <footer class="foot">
-        <span>Guardian cabinet</span>
-        ${role === 'member' && html`<span> · you are a guest in this account</span>`}
-      </footer>
+
+        <div class="rail-group">
+          <a class="rail-heading" href=${href('rooms')}>Rooms</a>
+          ${roomList.map(
+            (room) => html`
+              <a
+                key=${room.id}
+                class="rail-link"
+                aria-current=${route.name === 'room' && route.params.roomID === room.id ? 'page' : null}
+                href=${href('room', { roomID: room.id })}
+              >
+                <span
+                  class=${'dot dot-' + (room.protection_enabled ? 'online' : 'offline')}
+                  title=${room.protection_enabled ? 'Protection is on' : 'Protection is off'}
+                ></span>
+                <span class="rail-link-name">${room.name}</span>
+              </a>
+            `,
+          )}
+          ${manager &&
+          roomList.length === 0 &&
+          html`<a class="rail-link" href=${href('rooms')}><span class="rail-link-name">Add a room</span></a>`}
+        </div>
+
+        <div class="rail-foot">
+          ${current &&
+          html`<a class="rail-account" href=${href('settings')} title=${`You are ${role} here`}>
+            ${current.name}
+          </a>`}
+          <button class="linkish rail-signout" onClick=${onSignOut}>Sign out</button>
+        </div>
+      </nav>
+
+      <main class="main">
+        ${title && html`<${PageHeader} title=${title} />`}
+        ${children}
+      </main>
     </div>
   `
 }

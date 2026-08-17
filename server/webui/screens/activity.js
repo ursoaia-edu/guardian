@@ -55,11 +55,8 @@ export function ActivityScreen({ api, role, onAuthError }) {
 
   return html`
     <div class="stack">
-      <${Card}
-        title="Activity"
-        actions=${html`<${Button} onClick=${() => load(null)} busy=${loading && events.length === 0}>Refresh<//>`}
-      >
-        <${ErrorBanner} error=${error} onDismiss=${() => setError(null)} />
+      <${Card} flush>
+        ${error && html`<div class="card-body"><${ErrorBanner} error=${error} onDismiss=${() => setError(null)} /></div>`}
         ${events.length === 0 && loading
           ? html`<${Loading} what="Loading the feed" />`
           : events.length === 0
@@ -78,11 +75,12 @@ export function ActivityScreen({ api, role, onAuthError }) {
                 )}
               </ul>`}
 
-        ${!done && events.length > 0 &&
-        html`<div class="row-actions">
-          <${Button} busy=${loading} onClick=${() => load(cursor)}>Load more<//>
+        ${events.length > 0 &&
+        html`<div class="card-body inline-form">
+          ${!done && html`<${Button} busy=${loading} onClick=${() => load(cursor)}>Load more<//>`}
+          ${done && html`<p class="hint">That is the whole feed. Events older than 180 days are purged.</p>`}
+          <${Button} kind="quiet" onClick=${() => load(null)} busy=${loading && events.length === 0}>Refresh<//>
         </div>`}
-        ${done && events.length > 0 && html`<p class="hint">That is the whole feed. Events older than 180 days are purged.</p>`}
       <//>
     </div>
   `

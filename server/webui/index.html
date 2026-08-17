@@ -3,10 +3,19 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="color-scheme" content="light dark" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#07090A" />
     <title>Guardian</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/app.css" />
+    <!--
+      The two faces the first screen paints with. Preloading them stops the
+      page from drawing a frame in the fallback face and reflowing: they are
+      same-origin files, so this costs one round trip to the server already
+      being talked to. See app.css for why they are vendored at all.
+    -->
+    <link rel="preload" href="/vendor/fonts/inter-latin.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/vendor/fonts/grotesk-latin.woff2" as="font" type="font/woff2" crossorigin />
   </head>
   <body>
     <div id="app"><noscript>The Guardian cabinet needs JavaScript.</noscript></div>

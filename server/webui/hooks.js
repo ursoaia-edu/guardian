@@ -3,9 +3,31 @@
 // React arrives as a global from vendor/react.production.min.js rather than an
 // import: the cabinet ships as source with no build step, so there is no
 // bundler to resolve a bare specifier and no import map to maintain.
-const { useState, useEffect, useRef, useCallback } = window.React
+const { useState, useEffect, useRef, useCallback, useSyncExternalStore } = window.React
 
 import { ApiError } from './api.js'
+
+// Freshness is published rather than passed down: every screen polls its own
+// data, and the shell's "live" indicator has no business knowing which. Any
+// successful load anywhere means what is on screen is current, which is
+// exactly what the indicator claims.
+const freshnessListeners = new Set()
+let freshAt = Date.now()
+
+function publishFreshness() {
+  freshAt = Date.now()
+  for (const listener of freshnessListeners) listener()
+}
+
+export function useFreshness() {
+  return useSyncExternalStore(
+    (listener) => {
+      freshnessListeners.add(listener)
+      return () => freshnessListeners.delete(listener)
+    },
+    () => freshAt,
+  )
+}
 
 // POLL_INTERVAL_MS is the cabinet's refresh rate on the active screen. The
 // design spec settles the question: commands take twenty seconds to reach a
@@ -56,6 +78,7 @@ export function usePoll(loader, options = {}) {
       failures.current = 0
       setData(result)
       setError(null)
+      publishFreshness()
     } catch (err) {
       if (!alive.current) return
       if (err instanceof ApiError && err.isAuth && authRef.current) {
