@@ -1,0 +1,37 @@
+The three typefaces in this directory are redistributed under the SIL Open
+Font License, Version 1.1. Each is served from this server rather than from
+Google Fonts because the cabinet's Content-Security-Policy is
+`default-src 'self'` and the product is often installed on a network with no
+route to the public internet.
+
+The files are the Latin and Latin-Extended subsets of the variable fonts, as
+served by Google Fonts.
+
+  Inter
+    Copyright (c) 2016 The Inter Project Authors (https://github.com/rsms/inter)
+    inter-latin.woff2, inter-latin-ext.woff2
+
+  Space Grotesk
+    Copyright (c) 2020 The Space Grotesk Project Authors
+    (https://github.com/floriankarsten/space-grotesk)
+    grotesk-latin.woff2, grotesk-latin-ext.woff2
+
+  JetBrains Mono
+    Copyright (c) 2020 The JetBrains Mono Project Authors
+    (https://github.com/JetBrains/JetBrainsMono)
+    mono-latin.woff2, mono-latin-ext.woff2
+
+The full licence text is at https://scripts.sil.org/OFL. In short: the fonts
+may be used, studied, modified and redistributed freely, including bundled
+with software, as long as they are not sold on their own and this notice
+travels with them.
+
+To refresh a subset, ask Google Fonts for the CSS with a modern browser's
+User-Agent and download the woff2 URLs it names for the `latin` and
+`latin-ext` unicode ranges:
+
+  curl -A "Mozilla/5.0 ... Chrome/120.0 Safari/537.36" \
+    "https://fonts.googleapis.com/css2?family=Inter:wght@400..600&family=Space+Grotesk:wght@500..700&family=JetBrains+Mono:wght@400..600&display=swap"
+
+The `unicode-range` declarations in `app.css` must keep matching the ranges
+that CSS names, or a glyph outside the subset falls back to a system face.

@@ -44,7 +44,7 @@ export function SettingsScreen({ api, me, role, onAccountChange, onSignOut, onAu
                 </div>
                 <div class="row-actions">
                   ${account.account_id === me.account_id
-                    ? html`<span class="badge badge-online">Current</span>`
+                    ? html`<span class="badge badge-on">Current</span>`
                     : html`<${Button} onClick=${() => onAccountChange(account.account_id)}>Switch<//>`}
                 </div>
               </li>

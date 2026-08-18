@@ -1,6 +1,6 @@
 const { useState } = window.React
 
-import { html, Button, Field, TextInput, ErrorBanner } from '../ui.js'
+import { html, Button, Field, TextInput, ErrorBanner, BrandMark } from '../ui.js'
 
 // The sign-in screen doubles as registration, because a brand-new customer
 // arrives here with nothing: registering creates the user AND the account they
@@ -37,8 +37,8 @@ export function SignInScreen({ api, onSignedIn }) {
     <div class="signin">
       <div class="signin-card">
         <div class="brand">
-          <span class="brand-mark" aria-hidden="true"></span>
-          <span class="brand-name">Guardian</span>
+          <${BrandMark} />
+          <span>Guardian</span>
         </div>
         <h1>${registering ? 'Create an account' : 'Sign in'}</h1>
         <p class="signin-lede">

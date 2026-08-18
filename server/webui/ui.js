@@ -4,17 +4,35 @@
 // lets this cabinet be React without a build step: the browser parses the
 // template, no transform runs, and the file on disk is the file that ships.
 const React = window.React
+const { useState, useEffect, useRef } = React
 export const html = window.htm.bind(React.createElement)
 
-export function Card({ title, actions, children, muted }) {
+import { useFreshness } from './hooks.js'
+
+// The mark is inline rather than an <img> so it inherits the page's own
+// rendering and costs no second request. It is the same shape as
+// docs/assets/guardian-mark.png — the cabinet and the website wear one badge.
+export function BrandMark() {
   return html`
-    <section class=${'card' + (muted ? ' card-muted' : '')}>
+    <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+      <path
+        d="M16 2.5 28.5 7v9.1c0 7.2-5.1 11.9-12.5 13.9C8.6 28 3.5 23.3 3.5 16.1V7L16 2.5z"
+        fill="#4ADE80"
+      />
+      <path d="M16 4.6v24M4.8 15.2h22.4" stroke="#07090A" stroke-width="2.4" />
+    </svg>
+  `
+}
+
+export function Card({ title, actions, children, muted, flush, className }) {
+  return html`
+    <section class=${['card', muted && 'card-muted', className].filter(Boolean).join(' ')}>
       ${title &&
       html`<header class="card-head">
-        <h2>${title}</h2>
+        ${typeof title === 'string' ? html`<h2>${title}</h2>` : title}
         <div class="card-actions">${actions}</div>
       </header>`}
-      <div class="card-body">${children}</div>
+      <div class=${'card-body' + (flush ? ' card-body-flush' : '')}>${children}</div>
     </section>
   `
 }
@@ -44,10 +62,22 @@ export function Field({ label, hint, children }) {
   `
 }
 
-export function TextInput({ value, onChange, placeholder, type = 'text', autoComplete, required, name }) {
+// mono marks an input whose content is a machine's own spelling — an
+// executable's filename, a hostname — so what is typed looks like what the
+// machine will report back.
+export function TextInput({
+  value,
+  onChange,
+  placeholder,
+  type = 'text',
+  autoComplete,
+  required,
+  name,
+  mono,
+}) {
   return html`
     <input
-      class="input"
+      class=${'input' + (mono ? ' input-mono' : '')}
       type=${type}
       name=${name}
       value=${value}
@@ -74,18 +104,23 @@ export function Toggle({ checked, onChange, label, disabled }) {
   `
 }
 
-// StateBadge shows the one word computerState settled on, with the colour
-// carried by a class rather than by the text, so it stays readable to anyone
-// who cannot tell the colours apart.
+const STATE_LABELS = {
+  online: 'Online',
+  offline: 'Offline',
+  locked: 'Locked',
+  unassigned: 'No room',
+  unknown: 'Unknown',
+}
+
+// StateBadge pairs a coloured dot with the word, because colour alone is not
+// a label to anyone who cannot tell green from amber.
 export function StateBadge({ state }) {
-  const labels = {
-    online: 'Online',
-    offline: 'Offline',
-    locked: 'Locked',
-    unassigned: 'No room',
-    unknown: 'Unknown',
-  }
-  return html`<span class=${`badge badge-${state}`}>${labels[state] || state}</span>`
+  return html`
+    <span class=${`state state-${state}`}>
+      <span class=${`dot dot-${state}`}></span>
+      ${STATE_LABELS[state] || state}
+    </span>
+  `
 }
 
 // Banner is how every failure reaches a person. The message is the server's
@@ -141,11 +176,69 @@ export function Confirm({ open, title, body, confirmLabel = 'Confirm', onConfirm
   `
 }
 
-export function Stat({ label, value, tone }) {
+// Tally is the one line of numbers a screen opens with. It replaced a row of
+// boxes: the numbers are small facts about one fleet, not four separate
+// metrics, and reading them as a sentence takes one glance instead of four.
+export function Tally({ items }) {
   return html`
-    <div class=${'stat' + (tone ? ` stat-${tone}` : '')}>
-      <span class="stat-value">${value}</span>
-      <span class="stat-label">${label}</span>
+    <div class="tally">
+      ${items.map(
+        (item) => html`
+          <span class=${'tally-item' + (item.tone ? ` tally-${item.tone}` : '')} key=${item.label}>
+            <span class="tally-value">${item.value}</span>
+            <span>${item.label}</span>
+          </span>
+        `,
+      )}
     </div>
+  `
+}
+
+// PageHeader is the top line of every screen: what this is, one line of
+// context, the actions that belong to the whole screen, and how fresh it is.
+export function PageHeader({ title, sub, actions }) {
+  const at = useFreshness()
+  return html`
+    <div class="topline">
+      <div class="topline-text">
+        <h1>${title}</h1>
+        ${sub && html`<span class="topline-sub">${sub}</span>`}
+      </div>
+      <div class="topline-actions">
+        ${actions}
+        <${Live} at=${at} />
+      </div>
+    </div>
+  `
+}
+
+// Live says how fresh the screen is. The dot beats once when a refresh
+// actually landed — the only thing in the cabinet that moves on its own, and
+// it moves because a fact arrived, not to decorate the header.
+export function Live({ at }) {
+  const [, tick] = useState(0)
+  const [beat, setBeat] = useState(false)
+  const previous = useRef(at)
+
+  useEffect(() => {
+    const timer = setInterval(() => tick((n) => n + 1), 1000)
+    return () => clearInterval(timer)
+  }, [])
+
+  useEffect(() => {
+    if (at === previous.current) return
+    previous.current = at
+    setBeat(true)
+    const timer = setTimeout(() => setBeat(false), 900)
+    return () => clearTimeout(timer)
+  }, [at])
+
+  const seconds = Math.max(0, Math.round((Date.now() - at) / 1000))
+  const stale = seconds > 60
+  return html`
+    <span class=${'live' + (stale ? ' live-stale' : '')} title="The cabinet refreshes itself">
+      <span class=${'live-dot' + (beat ? ' live-beat' : '')}></span>
+      ${stale ? 'no answer' : seconds < 2 ? 'live' : `${seconds}s ago`}
+    </span>
   `
 }
