@@ -1,0 +1,38 @@
+# The cabinet has no build step and no dependencies, so this job installs
+# nothing: node --test runs the suite straight from the repository.
+#
+# It covers api.js, router.js and format.js — the three modules written to be
+# pure so they could be tested without a browser. The screens are not covered;
+# rendering them would mean a DOM and a package.json, which is a bigger
+# decision than this file.
+name: cabinet
+
+on:
+  push:
+    paths: ["server/webui/**", "server/webui-tests/**", ".github/workflows/cabinet.yml"]
+  pull_request:
+    paths: ["server/webui/**", "server/webui-tests/**", ".github/workflows/cabinet.yml"]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Test
+        working-directory: server/webui-tests
+        run: node --test
+
+      # The cabinet ships as source out of a go:embed of the whole directory,
+      # so a test file that drifted into it would be served to browsers.
+      - name: The shipped directory carries no tests
+        run: |
+          found=$(find server/webui -name '*.test.*' -o -name '*-test.*' -o -name 'test-*')
+          if [ -n "$found" ]; then
+            echo "these would be embedded by go:embed and served to browsers:"
+            echo "$found"
+            exit 1
+          fi
