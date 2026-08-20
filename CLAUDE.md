@@ -8,6 +8,7 @@ ProcSentinel is a process monitoring and control system with three components:
 - **Server** (Go) — REST API backend using SQLite, runs as a Linux systemd service
 - **Agent** (Go) — Client-side process monitor/killer, runs as a Windows service (also supports Linux/macOS)
 - **Mobile** (Flutter/Dart) — Android management app called "Guardian"
+- **Guardian Console** (Go + lxn/walk) — Windows GUI in `tools/whitelist-gui/` for installing, diagnosing and updating the agent, and editing its local `whitelist.txt`
 
 ## Build Commands
 
@@ -26,6 +27,15 @@ cd server && ./build.sh        # Builds binary and creates ../release/procsentin
 ```sh
 cd mobile && ./build.sh        # flutter build apk → ../release/guardian.apk
 ```
+
+### Guardian Console (Windows, requires PowerShell)
+```powershell
+./tools/whitelist-gui/build.ps1   # 32-bit universal build → dist/agent/Guardian.exe
+./tools/whitelist-gui/test.ps1    # tests, including the window smoke test
+```
+Built as 32-bit on purpose so one binary runs on both 32- and 64-bit Windows;
+it detects the OS architecture at run time and installs the matching agent.
+See `specs/whitelist-gui.md`.
 
 ### Flutter icon generation
 ```sh
@@ -90,7 +100,8 @@ cd mobile && flutter pub run flutter_launcher_icons
 dist/
 ├── server/          # Server binary, .env template, systemd service, install.sh, Docker files
 ├── guardian.apk     # Mobile app
-└── agent/           # Agent .env template, Install/Uninstall .bat files, PowerShell scripts, binaries
+└── agent/           # Agent .env template, Install/Uninstall .bat files, PowerShell scripts, binaries,
+                     # and Guardian.exe (the console)
 ```
 
 Server installs to `/usr/local/bin/procsentinel/` as a systemd service. Agent and server both read `.env` files for configuration (`SERVER_ADDRESS`, `TOKEN`, `ADMIN_TOKEN`).
@@ -101,7 +112,9 @@ Server installs to `/usr/local/bin/procsentinel/` as a systemd service. Agent an
 
 ## Notes
 
-- No automated tests exist yet
+- The only automated tests are for Guardian Console (`tools/whitelist-gui`); the server, agent and mobile app have none
+- `tools/whitelist-gui/builtin.go` mirrors the hardcoded protected-process list in `agent/main.go` and must be kept in sync by hand
+- `tools/mkico` is a separate module (it needs `golang.org/x/image` only to build the console's icon)
 - Server and agent have separate `go.mod` files (modules `server` and `agent`)
 - Server uses pure Go SQLite (`modernc.org/sqlite`) — CGO is NOT required for server builds
 - Agent builds require `CGO_ENABLED=1`
