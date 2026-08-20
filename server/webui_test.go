@@ -87,18 +87,39 @@ func TestCabinetServesModulesAsJavaScript(t *testing.T) {
 	}
 }
 
-// The SPA fallback must not swallow the API. A mistyped API path answers the
-// API's own JSON 404 — a client parsing an HTML page as JSON is a far more
-// confusing failure than a 404.
+// The SPA fallback must not swallow the API. A mistyped API path answers with
+// the API's own JSON error — a client parsing an HTML page as JSON is a far
+// more confusing failure than any status code.
+//
+// Which JSON error depends on where the path falls. Under /api/v1 the session
+// middleware runs before chi reaches its NotFound, so an unauthenticated
+// caller is told "Not signed in" rather than whether the route exists; that is
+// the better answer anyway, since a 404 there would map the API's surface for
+// anyone who asked. The unauthenticated groups have no such middleware and
+// answer 404. What must hold everywhere is that the reply is the API's, not a
+// page.
 func TestCabinetDoesNotAnswerForTheAPI(t *testing.T) {
 	h := cabinetRouter(t)
-	for _, path := range []string{"/api/v1/nope", "/api/v1/rooms/../x", "/agent/nope", "/health/nope"} {
-		rr := get(t, h, path)
-		if rr.Code != 404 {
-			t.Errorf("GET %s: %d, want 404", path, rr.Code)
+	cases := []struct {
+		path string
+		want int
+	}{
+		{"/api/v1/nope", 401},
+		{"/api/v1/rooms/../x", 401},
+		{"/api/v1/auth/nope", 404},
+		{"/agent/nope", 404},
+		{"/health/nope", 404},
+	}
+	for _, c := range cases {
+		rr := get(t, h, c.path)
+		if rr.Code != c.want {
+			t.Errorf("GET %s: %d, want %d", c.path, rr.Code, c.want)
+		}
+		if ct := rr.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+			t.Errorf("GET %s: Content-Type = %q, want the API's JSON", c.path, ct)
 		}
 		if strings.Contains(rr.Body.String(), "<!doctype html") {
-			t.Errorf("GET %s served the cabinet page instead of a JSON error", path)
+			t.Errorf("GET %s served the cabinet page instead of a JSON error", c.path)
 		}
 	}
 }
