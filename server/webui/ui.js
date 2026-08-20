@@ -176,6 +176,74 @@ export function Confirm({ open, title, body, confirmLabel = 'Confirm', onConfirm
   `
 }
 
+// ErrorBoundary is the difference between one broken screen and a black page.
+//
+// React unmounts the whole tree when a render throws, so without this a typo in
+// one screen's markup takes the rail, the navigation and every other screen
+// with it, and leaves nothing on the page to say what happened. It is a class
+// because getDerivedStateFromError has no hook equivalent.
+//
+// It does NOT catch what goes wrong in an event handler or a fetch — React
+// boundaries never do. Those already have a home: useAction keeps the error
+// next to the button that failed, and usePoll hands a failed load to
+// ErrorBanner.
+export class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props)
+    this.state = { error: null }
+  }
+
+  static getDerivedStateFromError(error) {
+    return { error }
+  }
+
+  componentDidCatch(error, info) {
+    // The console is the only reporting this cabinet has — there is no error
+    // service to send to, and adding one would mean talking to a third party
+    // the CSP deliberately forbids.
+    console.error('The cabinet could not draw this screen', error, info)
+  }
+
+  // A boundary that stays broken after the person navigates away is a dead
+  // tab. The route is the reset key, so moving to another screen clears it.
+  componentDidUpdate(previous) {
+    if (this.state.error && previous.resetKey !== this.props.resetKey) {
+      this.setState({ error: null })
+    }
+  }
+
+  render() {
+    const { error } = this.state
+    if (!error) return this.props.children
+
+    return html`
+      <div class=${this.props.standalone ? 'boot' : ''}>
+        <${Card} title="This screen did not draw">
+          <p>
+            Something in the cabinet failed while drawing this page. This is a fault in the
+            cabinet, not on your computers: the agents carry on enforcing the policy they
+            already have, whatever this page does.
+          </p>
+          <p class="hint mono">${error.message || String(error)}</p>
+          <div class="row-actions">
+            <${Button} kind="primary" onClick=${() => window.location.reload()}>
+              Reload the cabinet
+            <//>
+            ${!this.props.standalone &&
+            html`<${Button}
+              onClick=${() => {
+                window.location.hash = '#/'
+              }}
+            >
+              Back to the overview
+            <//>`}
+          </div>
+        <//>
+      </div>
+    `
+  }
+}
+
 // Tally is the one line of numbers a screen opens with. It replaced a row of
 // boxes: the numbers are small facts about one fleet, not four separate
 // metrics, and reading them as a sentence takes one glance instead of four.

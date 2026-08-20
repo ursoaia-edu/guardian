@@ -65,7 +65,7 @@ reach. Here it needs neither.
 | `app.js` | session, account scope, hash routing, and the shell (rail + page header) |
 | `api.js` | the whole HTTP surface; `fetch` is injectable so it is testable without a browser |
 | `hooks.js` | `usePoll` (refresh, backoff, hidden-tab pause), `useAction`, `useFreshness` |
-| `ui.js` | the shared components: `Card`, `Button`, `Field`, `Toggle`, `StateBadge`, `Banner`, `Confirm`, `Tally`, `PageHeader`, `Live`, `BrandMark` |
+| `ui.js` | the shared components: `Card`, `Button`, `Field`, `Toggle`, `StateBadge`, `Banner`, `Confirm`, `Tally`, `PageHeader`, `Live`, `BrandMark`, `ErrorBoundary` |
 | `format.js` | the presentation rules worth testing: `isOnline`, `computerName`, `computerState`, `roomPolicy`, `roomMode`, `relativeTime`, `lastSeenMillis`, event labels |
 | `router.js` | `parseRoute`, `href`, `navigate`, `ROUTES`, `ROOM_TABS` — pure, no DOM |
 | `app.css` | the entire stylesheet, tokens included |
@@ -78,6 +78,24 @@ reach. Here it needs neither.
 `signin` (doubles as registration) · `welcome` (the first-computer wizard) · `overview` ·
 `rooms` · `room` with four tabs (computers, rules, power, members) · `computers` (the
 pool) · `computer` (one machine's passport) · `install` · `activity` · `settings`.
+
+### When a screen throws
+
+`ErrorBoundary` (`ui.js`) is mounted twice, and the two catch different things.
+
+The inner one wraps `Screen` inside the shell, so a screen that fails to draw leaves the
+rail, the navigation and the page header standing, and the person can walk away from it.
+Its `resetKey` is the route, so navigating elsewhere clears the error — a boundary that
+stays broken after the person leaves the screen is a dead tab.
+
+The outer one wraps the whole app at the root, with `standalone`, for a throw in the shell
+itself — where there is no rail left to draw a fallback inside. Both say the same thing
+first: the fault is in the cabinet, not on the customer's machines, because the agents go
+on enforcing the policy they already hold whatever this page does.
+
+React boundaries never catch what happens in an event handler or a fetch, and those do not
+need one: `useAction` keeps a failed mutation's error next to the button that failed, and
+`usePoll` hands a failed load to `ErrorBanner`.
 
 ### Freshness
 
@@ -179,13 +197,41 @@ missing and put the action that fixes it within reach. Buttons say what happens
 
 ## Testing
 
-There is no automated test for the cabinet's JavaScript yet, and CI does not build it —
-there is nothing to build. `server/webui_test.go` covers the Go side: the index is served
-at the root, deep links fall back to it, the API prefixes are refused, and the vendored
-script tags are present.
+```sh
+cd server/webui-tests && node --test
+```
 
-`api.js`, `router.js` and `format.js` are written to be testable under `node --test`
-without a browser or a server, which is the obvious next step.
+No install, no `package.json`, no dependency: the three pure modules are imported
+straight out of `server/webui/` and driven with Node's own test runner.
+`.github/workflows/cabinet.yml` runs it on every push that touches the cabinet.
+
+**The tests live in `server/webui-tests/`, not beside the code.** `server/webui/` is
+embedded whole (`go:embed all:webui`) and every file in it is served, so a test file in
+there would ship inside the binary and be downloadable from the cabinet. The workflow
+fails the build if one appears.
+
+What is covered:
+
+- `format.js` — the online threshold and its boundary, what a machine is called, that
+  locked outranks offline, that protection-off outranks the mode, every step of
+  `relativeTime` including a clock that runs ahead, and that an unlabelled event falls
+  through to its raw type instead of vanishing.
+- `router.js` — every route parses and every route survives a round trip through its own
+  `href`, ids with spaces and slashes included; an unknown tab lands on the room's default
+  tab rather than a dead end; anything unrecognised is `notfound` rather than a guess.
+- `api.js` — the account header appears only once an account is chosen, every request
+  carries `same-origin` credentials, a `204` and an empty body are both `null`, the
+  server's own error message survives to the screen, a non-JSON reply falls back to its
+  status, a dropped connection is status `0` rather than a server error, and an abort
+  stays an abort.
+
+What is **not** covered: the screens and `ui.js`, because rendering them needs a DOM, and
+a DOM needs a `package.json` and a dependency — a bigger decision than this suite. The
+`ErrorBoundary` is verified by hand for the same reason (break an endpoint's shape in the
+harness below and the fallback appears with the rail intact).
+
+`server/webui_test.go` covers the Go side: the index is served at the root, deep links
+fall back to it, the API prefixes are refused, and the vendored script tags are present.
 
 For looking at the thing, a harness that serves `server/webui/` with fixture API
 responses (no Postgres, no agent) is enough to open every screen; the cabinet talks to

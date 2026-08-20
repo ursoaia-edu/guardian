@@ -10,7 +10,7 @@ const React = window.React
 const { useState, useEffect, useCallback } = React
 
 import { createApi, ApiError } from './api.js'
-import { html, ErrorBanner, Loading, Banner, BrandMark, PageHeader } from './ui.js'
+import { html, ErrorBanner, Loading, Banner, BrandMark, PageHeader, ErrorBoundary } from './ui.js'
 import { parseRoute, href, navigate } from './router.js'
 import { usePoll } from './hooks.js'
 import { SignInScreen } from './screens/signin.js'
@@ -144,6 +144,9 @@ function App({ api }) {
   }
 
   const role = (me && me.role) || 'member'
+  // Navigating is what clears a screen that failed to draw, so the boundary
+  // resets on the route rather than on every render.
+  const routeKey = route.name + ':' + JSON.stringify(route.params)
   return html`
     <${Shell}
       api=${api}
@@ -154,17 +157,19 @@ function App({ api }) {
       onAuthError=${onAuthError}
     >
       <${ErrorBanner} error=${error} onDismiss=${() => setError(null)} />
-      <${Screen}
-        api=${api}
-        me=${me}
-        role=${role}
-        route=${route}
-        onAuthError=${onAuthError}
-        onAccountChange=${switchAccount}
-        onSignOut=${signOut}
-        welcomeDone=${welcomeDone}
-        onWelcomeDone=${() => setWelcomeDone(true)}
-      />
+      <${ErrorBoundary} resetKey=${routeKey}>
+        <${Screen}
+          api=${api}
+          me=${me}
+          role=${role}
+          route=${route}
+          onAuthError=${onAuthError}
+          onAccountChange=${switchAccount}
+          onSignOut=${signOut}
+          welcomeDone=${welcomeDone}
+          onWelcomeDone=${() => setWelcomeDone(true)}
+        />
+      <//>
     <//>
   `
 }
@@ -333,4 +338,6 @@ function Shell({ api, me, role, route, onSignOut, onAuthError, children }) {
 
 const api = createApi()
 const root = window.ReactDOM.createRoot(document.getElementById('app'))
-root.render(React.createElement(App, { api }))
+root.render(
+  React.createElement(ErrorBoundary, { standalone: true }, React.createElement(App, { api })),
+)
