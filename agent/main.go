@@ -455,6 +455,9 @@ func isSystemProcess(name string) bool {
 
 		// ProcSentinel
 		"procsentinel-agent64.exe", "procsentinel-agent32.exe",
+		// Guardian Console: the admin tool that edits this very list. Without
+		// this entry the agent closes it about a second after it opens.
+		"guardian.exe",
 	}
 	for _, sys := range systemProcs {
 		if lower == sys {
