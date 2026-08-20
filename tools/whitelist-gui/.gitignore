@@ -1,0 +1,5 @@
+# Generated from whitelist-gui.manifest by build.ps1 (rsrc)
+*.syso
+
+# Stray binary from a bare "go build" (the real artifacts go to dist/agent)
+whitelist-gui.exe
