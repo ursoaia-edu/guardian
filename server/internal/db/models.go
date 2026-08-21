@@ -50,22 +50,23 @@ type BindingToken struct {
 }
 
 type Computer struct {
-	ID           uuid.UUID          `json:"id"`
-	AccountID    uuid.UUID          `json:"account_id"`
-	RoomID       *uuid.UUID         `json:"room_id"`
-	DisplayName  string             `json:"display_name"`
-	MachineGuid  string             `json:"machine_guid"`
-	Hostname     string             `json:"hostname"`
-	OsName       string             `json:"os_name"`
-	OsBuild      string             `json:"os_build"`
-	Arch         string             `json:"arch"`
-	AgentVersion string             `json:"agent_version"`
-	Hardware     json.RawMessage    `json:"hardware"`
-	Runtime      json.RawMessage    `json:"runtime"`
-	TokenHash    string             `json:"-"`
-	Blocked      bool               `json:"blocked"`
-	EnrolledAt   pgtype.Timestamptz `json:"enrolled_at"`
-	LastSeenAt   pgtype.Timestamptz `json:"last_seen_at"`
+	ID             uuid.UUID          `json:"id"`
+	AccountID      uuid.UUID          `json:"account_id"`
+	RoomID         *uuid.UUID         `json:"room_id"`
+	DisplayName    string             `json:"display_name"`
+	MachineGuid    string             `json:"machine_guid"`
+	Hostname       string             `json:"hostname"`
+	OsName         string             `json:"os_name"`
+	OsBuild        string             `json:"os_build"`
+	Arch           string             `json:"arch"`
+	AgentVersion   string             `json:"agent_version"`
+	Hardware       json.RawMessage    `json:"hardware"`
+	Runtime        json.RawMessage    `json:"runtime"`
+	TokenHash      string             `json:"-"`
+	Blocked        bool               `json:"blocked"`
+	EnrolledAt     pgtype.Timestamptz `json:"enrolled_at"`
+	LastSeenAt     pgtype.Timestamptz `json:"last_seen_at"`
+	LastEventBatch *string            `json:"last_event_batch"`
 }
 
 type Event struct {
@@ -75,6 +76,19 @@ type Event struct {
 	ComputerID *uuid.UUID         `json:"computer_id"`
 	Type       string             `json:"type"`
 	Payload    json.RawMessage    `json:"payload"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+}
+
+type ProcessEvent struct {
+	ID         uuid.UUID          `json:"id"`
+	AccountID  uuid.UUID          `json:"account_id"`
+	ComputerID uuid.UUID          `json:"computer_id"`
+	RoomID     *uuid.UUID         `json:"room_id"`
+	Process    string             `json:"process"`
+	Reason     string             `json:"reason"`
+	Count      int32              `json:"count"`
+	FirstAt    pgtype.Timestamptz `json:"first_at"`
+	LastAt     pgtype.Timestamptz `json:"last_at"`
 	CreatedAt  pgtype.Timestamptz `json:"created_at"`
 }
 

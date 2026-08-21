@@ -61,7 +61,7 @@ cd mobile && flutter pub run flutter_launcher_icons
 - Two scoping GUCs, both set only in `tenant.go`: a query that sets neither reads nothing, on every table. `app.user_id` (migration `00014`) narrows the pre-account policies on `accounts`/`account_members`/`room_members` to the calling user — `users` and the binding-token lookup remain deliberately un-narrowed, see `specs/server.md`
 - `/api/v1` is two route groups: a small guest-reachable one and everything else behind the `ManagerOnly` middleware. `server/authz_test.go` walks the router and fails on any route in neither list — add a route, classify it there
 - Two auth paths, no shared secret token anywhere: a session (cookie or Bearer) for the cabinet, a per-agent Bearer token (minted at `/agent/enroll`) for agents; both resolve to a `Tenant{AccountID, ...}` server-side
-- Postgres tables: `users`, `accounts`, `account_members`, `sessions`, `rooms`, `room_members`, `applications`, `computers`, `binding_tokens`, `events`
+- Postgres tables: `users`, `accounts`, `account_members`, `sessions`, `rooms`, `room_members`, `applications`, `computers`, `binding_tokens`, `events`, `process_events` (the blocking log — machine output, its own retention, deliberately not in `events`)
 - See `specs/server.md` for the full architecture (RLS policies, roles, the `account_for_agent_token` function, migrations)
 
 ### Web cabinet (`server/webui/` — React with no build step)

@@ -40,7 +40,7 @@ func (q *Queries) DeleteComputer(ctx context.Context, id uuid.UUID) (int64, erro
 }
 
 const getComputer = `-- name: GetComputer :one
-SELECT id, account_id, room_id, display_name, machine_guid, hostname, os_name, os_build, arch, agent_version, hardware, runtime, token_hash, blocked, enrolled_at, last_seen_at FROM computers WHERE id = $1
+SELECT id, account_id, room_id, display_name, machine_guid, hostname, os_name, os_build, arch, agent_version, hardware, runtime, token_hash, blocked, enrolled_at, last_seen_at, last_event_batch FROM computers WHERE id = $1
 `
 
 func (q *Queries) GetComputer(ctx context.Context, id uuid.UUID) (Computer, error) {
@@ -63,12 +63,13 @@ func (q *Queries) GetComputer(ctx context.Context, id uuid.UUID) (Computer, erro
 		&i.Blocked,
 		&i.EnrolledAt,
 		&i.LastSeenAt,
+		&i.LastEventBatch,
 	)
 	return i, err
 }
 
 const getComputerByGUID = `-- name: GetComputerByGUID :one
-SELECT id, account_id, room_id, display_name, machine_guid, hostname, os_name, os_build, arch, agent_version, hardware, runtime, token_hash, blocked, enrolled_at, last_seen_at FROM computers WHERE account_id = $1 AND machine_guid = $2
+SELECT id, account_id, room_id, display_name, machine_guid, hostname, os_name, os_build, arch, agent_version, hardware, runtime, token_hash, blocked, enrolled_at, last_seen_at, last_event_batch FROM computers WHERE account_id = $1 AND machine_guid = $2
 `
 
 type GetComputerByGUIDParams struct {
@@ -96,12 +97,13 @@ func (q *Queries) GetComputerByGUID(ctx context.Context, arg GetComputerByGUIDPa
 		&i.Blocked,
 		&i.EnrolledAt,
 		&i.LastSeenAt,
+		&i.LastEventBatch,
 	)
 	return i, err
 }
 
 const getComputerByTokenHash = `-- name: GetComputerByTokenHash :one
-SELECT id, account_id, room_id, display_name, machine_guid, hostname, os_name, os_build, arch, agent_version, hardware, runtime, token_hash, blocked, enrolled_at, last_seen_at FROM computers WHERE token_hash = $1
+SELECT id, account_id, room_id, display_name, machine_guid, hostname, os_name, os_build, arch, agent_version, hardware, runtime, token_hash, blocked, enrolled_at, last_seen_at, last_event_batch FROM computers WHERE token_hash = $1
 `
 
 func (q *Queries) GetComputerByTokenHash(ctx context.Context, tokenHash string) (Computer, error) {
@@ -124,12 +126,13 @@ func (q *Queries) GetComputerByTokenHash(ctx context.Context, tokenHash string) 
 		&i.Blocked,
 		&i.EnrolledAt,
 		&i.LastSeenAt,
+		&i.LastEventBatch,
 	)
 	return i, err
 }
 
 const listComputers = `-- name: ListComputers :many
-SELECT id, account_id, room_id, display_name, machine_guid, hostname, os_name, os_build, arch, agent_version, hardware, runtime, token_hash, blocked, enrolled_at, last_seen_at FROM computers ORDER BY COALESCE(NULLIF(display_name, ''), hostname)
+SELECT id, account_id, room_id, display_name, machine_guid, hostname, os_name, os_build, arch, agent_version, hardware, runtime, token_hash, blocked, enrolled_at, last_seen_at, last_event_batch FROM computers ORDER BY COALESCE(NULLIF(display_name, ''), hostname)
 `
 
 func (q *Queries) ListComputers(ctx context.Context) ([]Computer, error) {
@@ -158,6 +161,7 @@ func (q *Queries) ListComputers(ctx context.Context) ([]Computer, error) {
 			&i.Blocked,
 			&i.EnrolledAt,
 			&i.LastSeenAt,
+			&i.LastEventBatch,
 		); err != nil {
 			return nil, err
 		}
@@ -214,7 +218,7 @@ UPDATE computers SET
                         THEN $3 ELSE room_id END,
     blocked      = COALESCE($4, blocked)
 WHERE id = $5
-RETURNING id, account_id, room_id, display_name, machine_guid, hostname, os_name, os_build, arch, agent_version, hardware, runtime, token_hash, blocked, enrolled_at, last_seen_at
+RETURNING id, account_id, room_id, display_name, machine_guid, hostname, os_name, os_build, arch, agent_version, hardware, runtime, token_hash, blocked, enrolled_at, last_seen_at, last_event_batch
 `
 
 type UpdateComputerParams struct {
@@ -251,6 +255,7 @@ func (q *Queries) UpdateComputer(ctx context.Context, arg UpdateComputerParams) 
 		&i.Blocked,
 		&i.EnrolledAt,
 		&i.LastSeenAt,
+		&i.LastEventBatch,
 	)
 	return i, err
 }
@@ -269,7 +274,7 @@ ON CONFLICT (account_id, machine_guid) DO UPDATE SET
     hardware      = EXCLUDED.hardware,
     token_hash    = EXCLUDED.token_hash,
     enrolled_at   = now()
-RETURNING id, account_id, room_id, display_name, machine_guid, hostname, os_name, os_build, arch, agent_version, hardware, runtime, token_hash, blocked, enrolled_at, last_seen_at
+RETURNING id, account_id, room_id, display_name, machine_guid, hostname, os_name, os_build, arch, agent_version, hardware, runtime, token_hash, blocked, enrolled_at, last_seen_at, last_event_batch
 `
 
 type UpsertComputerByGUIDParams struct {
@@ -316,6 +321,7 @@ func (q *Queries) UpsertComputerByGUID(ctx context.Context, arg UpsertComputerBy
 		&i.Blocked,
 		&i.EnrolledAt,
 		&i.LastSeenAt,
+		&i.LastEventBatch,
 	)
 	return i, err
 }
