@@ -79,7 +79,7 @@ CREATE TABLE process_events (
     computer_id UUID NOT NULL REFERENCES computers(id) ON DELETE CASCADE,
     room_id     UUID          REFERENCES rooms(id)     ON DELETE SET NULL,
     process     TEXT NOT NULL,
-    reason      TEXT NOT NULL CHECK (reason IN ('blacklist', 'whitelist', 'locked')),
+    reason      TEXT NOT NULL CHECK (reason IN ('blacklist', 'whitelist', 'locked', 'overflow')),
     count       INTEGER NOT NULL DEFAULT 1 CHECK (count > 0),
     first_at    TIMESTAMPTZ NOT NULL,
     last_at     TIMESTAMPTZ NOT NULL,
@@ -98,6 +98,14 @@ history, and the room tab's query must not join through a column that has since 
 killed?" is the question the log exists to answer: an explicit blacklist entry, absence from
 a whitelist, or the machine being locked (`computers.blocked`, which the wire expresses as
 an empty whitelist — see the SaaS design).
+
+An agent never sends `locked`: it cannot tell a lock from an empty whitelist, since both
+arrive as `mode: whitelist` with no applications. The server rewrites `whitelist` to
+`locked` when the reporting machine is blocked, because only the server knows.
+
+A fourth value, `overflow`, carries the marker the agent writes when its buffer dropped
+entries (see **Overflow** below). It is in the CHECK because without it the server would
+reject the one row whose whole job is to say that data was lost.
 
 RLS is the same policy every account-scoped table carries:
 
@@ -140,13 +148,18 @@ recent past is what gets looked at.
 
 **Idempotency.** A sync whose response is lost is retried, and the server has already
 committed the batch. Without a guard the log double-counts, and a log that inflates its own
-numbers is worse than no log. The agent stamps each batch with a `batch_id` (UUID, generated
-when the batch is assembled, reused verbatim on retry); the server stores the last accepted
-one on the computer row and silently ignores a repeat:
+numbers is worse than no log. The agent stamps each batch with a `batch_id` (an opaque
+token generated when the batch is assembled, reused verbatim on retry); the server stores
+the last accepted one on the computer row and silently ignores a repeat:
 
 ```sql
-ALTER TABLE computers ADD COLUMN last_event_batch UUID;
+ALTER TABLE computers ADD COLUMN last_event_batch TEXT;
 ```
+
+`TEXT`, not `UUID`: the agent module depends on `golang.org/x/sys` and nothing else, and
+pulling in `google/uuid` to generate one identifier is not worth it — its existing
+`randomGUID()` (`agent/client.go`) already produces a non-UUID random string. The server
+treats the value as opaque and caps it at 64 characters.
 
 The agent generates a new `batch_id` only after a `200`, so the retry path is the same code
 as the first attempt.

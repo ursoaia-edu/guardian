@@ -468,6 +468,42 @@ activity feed is the normal case rather than the edge one.
 
 There is no retention policy yet: the table grows without bound.
 
+### `process_events`
+
+The blocking log: what a policy actually closed, on which machine, when.
+`id`, `account_id`, `computer_id` (`ON DELETE CASCADE`), `room_id` (nullable,
+`ON DELETE SET NULL`), `process`, `reason`, `count`, `first_at`, `last_at`,
+`created_at`. Indexed `(account_id, created_at DESC)`,
+`(room_id, created_at DESC)` and `(computer_id, created_at DESC)` — the three
+listings that exist. Migration `00017`.
+
+Deliberately not rows in `events`. That table records deliberate human acts:
+nineteen types, all rare, read as a narrative, kept 180 days. This one is
+machine output, and one misconfigured whitelist in a classroom produces
+thousands of rows an hour. Sharing a table would drown the audit feed in
+noise, force one retention policy onto two kinds of data with different
+value, and make "what did the administrator change last month" scan a table
+three orders of magnitude larger than it needs to be.
+
+`room_id` is denormalised on purpose: it is the room the machine was in **at
+the moment of the kill**, not the room it is in now. Moving a machine between
+rooms must not rewrite its history, and the room's own listing must not join
+through a column that has since changed.
+
+`reason` is `CHECK`ed against `blacklist`, `whitelist`, `locked` and
+`overflow`. An agent never sends `locked` — it cannot tell a locked machine
+from a whitelist that allows nothing, since both arrive on the wire as
+`mode: whitelist` with an empty list — so the server rewrites `whitelist` to
+`locked` when the reporting machine is `blocked`. `overflow` marks the entries
+an agent had to drop.
+
+`computers.last_event_batch TEXT`, added by the same migration, is the last
+batch a machine's agent shipped. A sync whose response is lost is retried and
+the server has already committed the batch; without the stamp the log
+double-counts, and a log that inflates its own numbers is worse than no log.
+It is `TEXT` because the value is opaque to the server and the agent module
+depends on `golang.org/x/sys` and nothing else.
+
 ### Migration 00004
 
 There is no `00004_*.sql`. It was retired during development and the number

@@ -46,7 +46,7 @@ func (q *Queries) DeleteRoomMember(ctx context.Context, arg DeleteRoomMemberPara
 }
 
 const getComputerForMember = `-- name: GetComputerForMember :one
-SELECT c.id, c.account_id, c.room_id, c.display_name, c.machine_guid, c.hostname, c.os_name, c.os_build, c.arch, c.agent_version, c.hardware, c.runtime, c.token_hash, c.blocked, c.enrolled_at, c.last_seen_at FROM computers c
+SELECT c.id, c.account_id, c.room_id, c.display_name, c.machine_guid, c.hostname, c.os_name, c.os_build, c.arch, c.agent_version, c.hardware, c.runtime, c.token_hash, c.blocked, c.enrolled_at, c.last_seen_at, c.last_event_batch FROM computers c
 JOIN room_members rm ON rm.room_id = c.room_id
 WHERE c.id = $1 AND rm.user_id = $2
 `
@@ -76,6 +76,7 @@ func (q *Queries) GetComputerForMember(ctx context.Context, arg GetComputerForMe
 		&i.Blocked,
 		&i.EnrolledAt,
 		&i.LastSeenAt,
+		&i.LastEventBatch,
 	)
 	return i, err
 }
@@ -155,7 +156,7 @@ func (q *Queries) ListAccessibleAccounts(ctx context.Context, userID uuid.UUID) 
 }
 
 const listComputersForMember = `-- name: ListComputersForMember :many
-SELECT c.id, c.account_id, c.room_id, c.display_name, c.machine_guid, c.hostname, c.os_name, c.os_build, c.arch, c.agent_version, c.hardware, c.runtime, c.token_hash, c.blocked, c.enrolled_at, c.last_seen_at FROM computers c
+SELECT c.id, c.account_id, c.room_id, c.display_name, c.machine_guid, c.hostname, c.os_name, c.os_build, c.arch, c.agent_version, c.hardware, c.runtime, c.token_hash, c.blocked, c.enrolled_at, c.last_seen_at, c.last_event_batch FROM computers c
 JOIN room_members rm ON rm.room_id = c.room_id
 WHERE rm.user_id = $1
 ORDER BY COALESCE(NULLIF(c.display_name, ''), c.hostname)
@@ -187,6 +188,7 @@ func (q *Queries) ListComputersForMember(ctx context.Context, userID uuid.UUID) 
 			&i.Blocked,
 			&i.EnrolledAt,
 			&i.LastSeenAt,
+			&i.LastEventBatch,
 		); err != nil {
 			return nil, err
 		}
