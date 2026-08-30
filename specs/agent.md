@@ -153,6 +153,46 @@ Two concurrent loops run after startup:
   Re-enrolling means reinstalling from the cabinet.
 - On any other failure: logs it and keeps the last policy.
 
+#### The blocking log rides along in the same body
+
+Every process the agent successfully kills is recorded in `blocklog.go` and
+shipped inside the next sync body, so reporting costs no extra request:
+
+```json
+{"runtime": {…}, "batch_id": "…", "blocked": [
+  {"process": "steam.exe", "reason": "blacklist", "count": 47,
+   "first_at": "2026-09-09T14:00:00Z", "last_at": "2026-09-09T14:00:46Z"}]}
+```
+
+- **Aggregated** by `(process, reason)`. The enforce loop runs once a second
+  and a respawning launcher is killed every time; one row per kill would be
+  3,600 rows an hour per process per machine.
+- **An entry covers at most an hour.** Only reachable while the agent is
+  offline, since a successful sync closes everything open. Without the cap, a
+  machine off the network for a week arrives with one row claiming 600,000
+  kills across seven days — true and useless.
+- **At most 500 entries are held**, and past that the oldest are dropped and
+  replaced by a single `guardian.log_overflow` marker carrying how many went.
+  A log that quietly loses rows is worse than one that admits it.
+- **At most 200 travel per sync**; the remainder goes with the next one. The
+  server drops anything past its own limit of 200, so sending more would lose
+  data silently.
+- **Only a successful kill is recorded.** The log answers "what was blocked",
+  and a process the agent could not touch was not blocked.
+- **The agent never sends `locked`.** It cannot tell a locked machine from a
+  whitelist that allows nothing — both arrive as `mode: "whitelist"` with an
+  empty list — so it sends `whitelist` and the server rewrites the reason,
+  because only the server knows.
+- **`batch_id` makes a retry safe.** The batch stays staged until a `200`, so a
+  sync whose response was lost is resent as the same batch under the same id
+  and the server, which has already committed it, ignores the repeat. Both
+  fields are omitted entirely when there is nothing to report, so the body is
+  what a pre-batch server always saw.
+
+Pending entries live in memory only and are lost if the agent restarts.
+Writing them to disk every second on every managed machine costs more than the
+last minute of a kill log is worth.
+
 ### 2. Process Monitor (main loop)
 - Checks every 1 second via `time.Ticker`
 - Skips when there is no policy, when `mode` is `free`, or when the list is

@@ -202,9 +202,18 @@ func (c *apiClient) enroll(bindingToken string, p passport) (string, error) {
 	}
 }
 
-// sync fetches the current policy, reporting the given telemetry alongside.
-func (c *apiClient) sync(agentToken string, runtime map[string]any) (*SyncResponse, error) {
-	status, raw, err := c.post("/agent/sync", agentToken, map[string]any{"runtime": runtime})
+// sync fetches the current policy, reporting the given telemetry and the
+// batch of processes this machine has killed since the last acknowledged sync.
+func (c *apiClient) sync(agentToken string, runtime map[string]any, batchID string, blocked []blockedEntry) (*SyncResponse, error) {
+	body := map[string]any{"runtime": runtime}
+	// Omitted rather than sent empty: the body stays what the pre-batch server
+	// parses when there is nothing to report, so an older server sees exactly
+	// the request it always saw.
+	if batchID != "" && len(blocked) > 0 {
+		body["batch_id"] = batchID
+		body["blocked"] = blocked
+	}
+	status, raw, err := c.post("/agent/sync", agentToken, body)
 	if err != nil {
 		return nil, err
 	}

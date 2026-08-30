@@ -283,3 +283,88 @@ func TestEnvironmentOverridesTheFile(t *testing.T) {
 		t.Fatalf("CheckInterval %s", cfg.CheckInterval)
 	}
 }
+
+// enrolledTestAgent returns an agent that has already enrolled against a fake
+// server, which is the starting point for everything about the batch.
+func enrolledTestAgent(t *testing.T) (*agent, *fakeServer) {
+	t.Helper()
+	t.Chdir(t.TempDir())
+	f := &fakeServer{enrollStatus: http.StatusCreated, syncStatus: http.StatusOK}
+	ts := httptest.NewServer(f.handler())
+	t.Cleanup(ts.Close)
+
+	writeEnv(t, "SERVER_ADDRESS="+ts.URL+"\nBINDING_TOKEN=bt-secret\n")
+	a, _ := newTestAgent(t, ts.URL)
+	a.loadCredentials()
+	if wait := a.step(); wait != 0 {
+		t.Fatalf("enrollment did not succeed: wait=%s", wait)
+	}
+	return a, f
+}
+
+// The whole point of the feature, end to end on the agent's side: a kill is
+// aggregated, shipped in the next sync body, and dropped once the server has
+// taken it.
+func TestKillsAreReportedOnTheNextSync(t *testing.T) {
+	a, f := enrolledTestAgent(t)
+
+	a.blocks.record("steam.exe", "blacklist")
+	a.blocks.record("steam.exe", "blacklist")
+	a.syncOnce()
+
+	blocked, ok := f.lastSync["blocked"].([]any)
+	if !ok || len(blocked) != 1 {
+		t.Fatalf("sync body carried %#v, want one blocked entry", f.lastSync["blocked"])
+	}
+	entry := blocked[0].(map[string]any)
+	if entry["process"] != "steam.exe" {
+		t.Fatalf("process %v", entry["process"])
+	}
+	if entry["count"].(float64) != 2 {
+		t.Fatalf("count %v, want 2", entry["count"])
+	}
+	if f.lastSync["batch_id"] == "" || f.lastSync["batch_id"] == nil {
+		t.Fatal("the batch carried no id, so the server cannot deduplicate a retry")
+	}
+
+	// Acknowledged: the next sync carries nothing.
+	a.syncOnce()
+	if b, present := f.lastSync["blocked"]; present && b != nil && len(b.([]any)) != 0 {
+		t.Fatalf("the acknowledged batch was sent again: %#v", b)
+	}
+}
+
+// A sync that fails must not lose the batch, and the retry must be the same
+// batch under the same id.
+func TestAFailedSyncResendsTheSameBatch(t *testing.T) {
+	a, f := enrolledTestAgent(t)
+
+	a.blocks.record("steam.exe", "blacklist")
+	f.syncStatus = http.StatusInternalServerError
+	a.syncOnce()
+	firstID := f.lastSync["batch_id"]
+
+	f.syncStatus = http.StatusOK
+	a.syncOnce()
+	if f.lastSync["batch_id"] != firstID {
+		t.Fatalf("retry used batch id %v, want the original %v", f.lastSync["batch_id"], firstID)
+	}
+	blocked := f.lastSync["blocked"].([]any)
+	if len(blocked) != 1 {
+		t.Fatalf("the retry carried %d entries, want 1", len(blocked))
+	}
+}
+
+// Nothing killed, nothing sent: the body must stay the shape the pre-batch
+// server understands.
+func TestASyncWithNoKillsCarriesNoBatch(t *testing.T) {
+	a, f := enrolledTestAgent(t)
+	a.syncOnce()
+
+	if _, present := f.lastSync["blocked"]; present {
+		t.Fatalf("an empty batch was sent: %#v", f.lastSync)
+	}
+	if _, present := f.lastSync["batch_id"]; present {
+		t.Fatal("an empty batch consumed a batch id")
+	}
+}

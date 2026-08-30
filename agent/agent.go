@@ -128,6 +128,10 @@ type agent struct {
 
 	started time.Time
 
+	// blocks aggregates what enforce killed, between syncs. Written by the
+	// enforce goroutine, drained by the sync goroutine; it takes its own lock.
+	blocks *blockLog
+
 	// Intervals live on the struct so tests can shorten them.
 	checkInterval time.Duration
 	enrollRetry   time.Duration
@@ -141,6 +145,7 @@ func newAgent(cfg config, lg logger) *agent {
 		lg:            lg,
 		client:        newAPIClient(cfg.ServerAddress),
 		started:       time.Now(),
+		blocks:        newBlockLog(),
 		checkInterval: cfg.CheckInterval,
 		enrollRetry:   enrollRetryInterval,
 	}
@@ -282,8 +287,12 @@ func (a *agent) tryEnroll() time.Duration {
 }
 
 func (a *agent) syncOnce() {
-	resp, err := a.client.sync(a.creds.AgentToken, a.runtimeTelemetry())
+	batchID, blocked := a.blocks.stage()
+	resp, err := a.client.sync(a.creds.AgentToken, a.runtimeTelemetry(), batchID, blocked)
 	if err != nil {
+		// The batch is deliberately NOT acknowledged here: it stays staged and
+		// the next sync resends it under the same id, which is what lets the
+		// server ignore a duplicate rather than count it twice.
 		if errors.Is(err, errUnauthorized) {
 			// Fail secure: a machine removed from the account, or re-enrolled
 			// elsewhere with this GUID, keeps enforcing what it last knew.
@@ -297,6 +306,9 @@ func (a *agent) syncOnce() {
 	}
 
 	a.state.set(resp)
+	// The server has it. Anything recorded while the batch was in flight is
+	// already accumulating for the next one.
+	a.blocks.ack(batchID)
 	if err := saveSyncToFile(resp); err != nil {
 		a.lg.Warnf("Failed to save sync.json: %v", err)
 	}
@@ -411,6 +423,7 @@ func (a *agent) enforce(state *SyncResponse) {
 		for _, app := range state.Applications {
 			if app.Name != "" && strings.Contains(processText, strings.ToLower(app.Name)) {
 				if err := killProcess(app.Name); err == nil {
+					a.blocks.record(app.Name, "blacklist")
 					a.lg.Infof("Killed process: %s", app.Name)
 				} else {
 					a.lg.Errorf("Failed to kill process %s: %v", app.Name, err)
@@ -429,6 +442,7 @@ func (a *agent) enforce(state *SyncResponse) {
 			}
 			if !allowedSet[strings.ToLower(procName)] && !isSystemProcess(procName) {
 				if err := killProcess(procName); err == nil {
+					a.blocks.record(procName, "whitelist")
 					a.lg.Infof("Killed non-whitelisted process: %s", procName)
 				}
 			}
