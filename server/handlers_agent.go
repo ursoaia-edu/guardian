@@ -215,15 +215,53 @@ func (s *Server) handleAgentSync(w http.ResponseWriter, r *http.Request) {
 		Client:       []ClientEntry{},
 	}
 
-	// Telemetry is recorded in its own transaction, deliberately outside the one
-	// that computes the policy. "Telemetry must never stop enforcement" is only
-	// true if a failed telemetry write cannot fail the request — and there are
-	// more ways for a jsonb write to fail than any input filter will enumerate.
-	// A lost last_seen_at is a degraded fleet view; a failed sync is a machine
-	// running with no policy at all.
+	body := readSyncBody(r)
+	items := validBlockedItems(body.Blocked, time.Now())
+
+	// Telemetry and the kill batch are recorded in their own transaction,
+	// deliberately outside the one that computes the policy. "Telemetry must
+	// never stop enforcement" is only true if a failed telemetry write cannot
+	// fail the request — and there are more ways for a jsonb write to fail than
+	// any input filter will enumerate. A lost last_seen_at or a lost batch is a
+	// degraded fleet view; a failed sync is a machine running with no policy at
+	// all.
 	if err := s.inAccount(r.Context(), computer.AccountID, func(tx pgx.Tx) error {
-		return db.New(tx).TouchComputer(r.Context(), db.TouchComputerParams{
-			ID: computer.ID, Runtime: readRuntime(r),
+		q := db.New(tx)
+		if err := q.TouchComputer(r.Context(), db.TouchComputerParams{
+			ID: computer.ID, Runtime: body.Runtime,
+		}); err != nil {
+			return err
+		}
+		// A batch already acknowledged is a retry of a sync whose response was
+		// lost. The server has it; counting it again would inflate the log.
+		if body.BatchID == "" || len(items) == 0 {
+			return nil
+		}
+		if computer.LastEventBatch != nil && *computer.LastEventBatch == body.BatchID {
+			return nil
+		}
+		for _, it := range items {
+			reason := it.Reason
+			// Only the server knows the machine is locked rather than merely
+			// running a whitelist that allows nothing.
+			if computer.Blocked && reason == "whitelist" {
+				reason = "locked"
+			}
+			if err := q.RecordProcessEvent(r.Context(), db.RecordProcessEventParams{
+				AccountID:  computer.AccountID,
+				ComputerID: computer.ID,
+				RoomID:     computer.RoomID,
+				Process:    it.Process,
+				Reason:     reason,
+				Count:      int32(it.Count),
+				FirstAt:    pgtype.Timestamptz{Time: it.FirstAt, Valid: true},
+				LastAt:     pgtype.Timestamptz{Time: it.LastAt, Valid: true},
+			}); err != nil {
+				return err
+			}
+		}
+		return q.SetLastEventBatch(r.Context(), db.SetLastEventBatchParams{
+			ID: computer.ID, LastEventBatch: &body.BatchID,
 		})
 	}); err != nil {
 		slog.Error("record agent telemetry", "computer_id", computer.ID, "error", err)
@@ -284,18 +322,101 @@ func (s *Server) handleAgentSync(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// readRuntime collects the volatile half of the passport the agent reports on
-// every sync, posted as {"runtime": {...}}. Anything it cannot vouch for — no
-// body, a body over the route's cap, not JSON, no runtime key — becomes an
-// empty object: telemetry never fails a sync.
-func readRuntime(r *http.Request) []byte {
-	var body struct {
-		Runtime json.RawMessage `json:"runtime"`
-	}
+// agentSyncBody is everything an agent posts on a sync. It is decoded once:
+// the body is a stream, and a second read would find it empty.
+type agentSyncBody struct {
+	Runtime json.RawMessage `json:"runtime"`
+	BatchID string          `json:"batch_id"`
+	Blocked []blockedItem   `json:"blocked"`
+}
+
+type blockedItem struct {
+	Process string    `json:"process"`
+	Reason  string    `json:"reason"`
+	Count   int       `json:"count"`
+	FirstAt time.Time `json:"first_at"`
+	LastAt  time.Time `json:"last_at"`
+}
+
+const (
+	// maxBatchItems bounds one sync's report. Past it the remainder is
+	// dropped and logged, never returned as an error.
+	maxBatchItems = 200
+	// maxBatchIDLen bounds the opaque token the agent stamps its batch with.
+	maxBatchIDLen = 64
+	// maxProcessNameLen is generous for a Windows process name.
+	maxProcessNameLen = 260
+	// maxKillCount clamps a count. A machine claiming a hundred thousand kills
+	// of one process between two syncs is broken; storing the claim verbatim
+	// only spreads the breakage into the UI.
+	maxKillCount = 100000
+)
+
+// readSyncBody collects everything the agent posted. Anything it cannot vouch
+// for is dropped rather than rejected: no body, a body over the route's cap,
+// not JSON, no runtime key, a malformed batch — every one of them yields a
+// usable result. Telemetry never fails a sync.
+func readSyncBody(r *http.Request) agentSyncBody {
+	var body agentSyncBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		return []byte(`{}`)
+		return agentSyncBody{Runtime: []byte(`{}`)}
 	}
-	return sanitizeJSONObject(body.Runtime)
+	body.Runtime = sanitizeJSONObject(body.Runtime)
+	if len(body.BatchID) > maxBatchIDLen {
+		// An id that long is not one this server issued a receipt for; without
+		// a usable id the batch cannot be deduplicated, so it is not stored.
+		return agentSyncBody{Runtime: body.Runtime}
+	}
+	if len(body.Blocked) > maxBatchItems {
+		slog.Warn("agent batch over the item cap", "items", len(body.Blocked))
+		body.Blocked = body.Blocked[:maxBatchItems]
+	}
+	return body
+}
+
+// validBlockedItems drops what cannot be stored and normalises the rest. The
+// agent may not claim 'locked': it cannot distinguish a lock from a whitelist
+// that allows nothing, because both reach it as "whitelist, empty list". The
+// caller rewrites the reason when the machine is actually blocked.
+func validBlockedItems(items []blockedItem, now time.Time) []blockedItem {
+	out := make([]blockedItem, 0, len(items))
+	for _, it := range items {
+		it.Process = sanitizeText(it.Process)
+		if it.Process == "" {
+			continue
+		}
+		if len(it.Process) > maxProcessNameLen {
+			it.Process = it.Process[:maxProcessNameLen]
+		}
+		switch it.Reason {
+		case "blacklist", "whitelist", "overflow":
+		default:
+			continue
+		}
+		if it.Count < 1 {
+			continue
+		}
+		if it.Count > maxKillCount {
+			it.Count = maxKillCount
+		}
+		it.FirstAt = clampAgentTime(it.FirstAt, now)
+		it.LastAt = clampAgentTime(it.LastAt, now)
+		if it.LastAt.Before(it.FirstAt) {
+			it.LastAt = it.FirstAt
+		}
+		out = append(out, it)
+	}
+	return out
+}
+
+// clampAgentTime pins an agent-supplied timestamp into a plausible window. The
+// feed is ordered by the server's own created_at precisely because this value
+// cannot be trusted; it is kept because it is what an operator wants to read.
+func clampAgentTime(t, now time.Time) time.Time {
+	if t.IsZero() || t.Before(now.Add(-24*time.Hour)) || t.After(now.Add(5*time.Minute)) {
+		return now
+	}
+	return t
 }
 
 // maxTelemetryObjectBytes bounds what one jsonb telemetry column may hold —
@@ -316,7 +437,7 @@ const maxTelemetryObjectBytes = 64 << 10
 //	a JSON string holding invalid UTF-8   ERROR: invalid byte sequence for encoding "UTF8"
 //
 // — and a Windows machine on a non-UTF-8 codepage is exactly how the second one
-// reaches us, in agent telemetry (readRuntime) as much as in the hardware
+// reaches us, in agent telemetry (readSyncBody) as much as in the hardware
 // inventory sent at enrollment. So the value is decoded and re-encoded:
 // decoding replaces invalid UTF-8 with U+FFFD, requiring an object rejects the
 // scalars the column is not meant to hold, and the NUL escape is checked for

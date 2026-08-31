@@ -126,7 +126,7 @@ func TestSyncOfBlockedComputerLocksIt(t *testing.T) {
 }
 
 // Telemetry must never be able to stop enforcement. Both of these values are
-// valid JSON that Postgres refuses in a jsonb column; before readRuntime parsed
+// valid JSON that Postgres refuses in a jsonb column; before the sync body was parsed
 // rather than merely validated, either one turned a sync into a permanent 500
 // and left the machine with no policy at all.
 func TestMalformedRuntimeDoesNotBreakSync(t *testing.T) {

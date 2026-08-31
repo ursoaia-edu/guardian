@@ -177,7 +177,7 @@ func TestRevocationDoesNotTouchAnotherAccount(t *testing.T) {
 }
 
 // A machine's own passport must never be able to make enrollment permanently
-// impossible. readRuntime already guards this on the sync path (see its
+// impossible. readSyncBody already guards this on the sync path (see its
 // comment in handlers_agent.go): a JSON string carrying a NUL escape is legal
 // JSON but jsonb refuses it, and a JSON string carrying invalid UTF-8 bytes is
 // legal JSON but a text column refuses that too. A Windows machine on a
