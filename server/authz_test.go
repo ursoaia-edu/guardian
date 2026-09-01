@@ -26,9 +26,11 @@ var guestReachableRoutes = map[string]bool{
 	"PATCH /api/v1/rooms/{roomID}/applications/{appID}":  true,
 	"DELETE /api/v1/rooms/{roomID}/applications/{appID}": true,
 	"GET /api/v1/rooms/{roomID}/members":                 true,
+	"GET /api/v1/rooms/{roomID}/process-events":          true,
 	"GET /api/v1/computers":                              true,
 	"GET /api/v1/computers/{computerID}":                 true,
 	"PATCH /api/v1/computers/{computerID}":               true,
+	"GET /api/v1/computers/{computerID}/process-events":  true,
 }
 
 // managerOnlyRoutes is the account-wide surface. It is a list of concrete

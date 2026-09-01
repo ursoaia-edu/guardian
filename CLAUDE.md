@@ -110,6 +110,7 @@ cd mobile && flutter pub run flutter_launcher_icons
 - `/api/v1/account/members`, `/api/v1/account/members/{userID}` — the account's own owner/admins (session auth, manager only)
 - `/api/v1/binding-tokens` — mint/revoke the installer's enrollment token (session auth)
 - `GET /api/v1/events` — account activity, paged by an opaque `cursor` (session auth, manager only)
+- `GET /api/v1/rooms/{roomID}/process-events`, `GET /api/v1/computers/{computerID}/process-events` — the blocking log: what a policy actually closed, filtered by `process`/`reason`/`computer_id`/`since`/`until`, paged by the same opaque `cursor` (session auth, guest-reachable; a malformed filter is ignored, a malformed cursor is a 400)
 - `GET /health` — health check (unauthenticated; `503` when Postgres is unreachable)
 - Session requests may set `X-Guardian-Account: <account-id>` to act as a different one of the caller's own proven memberships (e.g. a guest room grant) — see `specs/api.md`
 - Full request/response reference: `specs/api.md`

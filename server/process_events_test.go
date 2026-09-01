@@ -262,3 +262,191 @@ func TestKillsOnALockedMachineAreRecordedAsLocked(t *testing.T) {
 		t.Fatalf("reason %q, want \"locked\"", reason)
 	}
 }
+
+func TestRoomProcessEventsAreServed(t *testing.T) {
+	s := &Server{pool: testPool(t)}
+	h := s.setupRoutes()
+	c := registerAndLogin(t, s, "parent@example.com")
+	room := createRoom(t, s, c, "Класс 2")
+	_, agentToken := enroll(t, s, mintBindingToken(t, s, c), "guid-1", "PC-1")
+
+	var list struct {
+		Computers []struct {
+			ID string `json:"id"`
+		} `json:"computers"`
+	}
+	decodeInto(t, doJSON(t, h, "GET", "/api/v1/computers", nil, c), &list)
+	if rr := doJSON(t, h, "PATCH", "/api/v1/computers/"+list.Computers[0].ID,
+		map[string]any{"room_id": room}, c); rr.Code != 200 {
+		t.Fatalf("assign: %d %s", rr.Code, rr.Body.String())
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	syncWithBatch(t, s, agentToken, "batch-1", []map[string]any{
+		{"process": "steam.exe", "reason": "blacklist", "count": 47, "first_at": now, "last_at": now},
+		{"process": "discord.exe", "reason": "blacklist", "count": 2, "first_at": now, "last_at": now},
+	})
+
+	rr := doJSON(t, h, "GET", "/api/v1/rooms/"+room+"/process-events", nil, c)
+	if rr.Code != 200 {
+		t.Fatalf("status %d %s", rr.Code, rr.Body.String())
+	}
+	var out struct {
+		ProcessEvents []struct {
+			Process      string `json:"process"`
+			Reason       string `json:"reason"`
+			Count        int    `json:"count"`
+			ComputerName string `json:"computer_name"`
+		} `json:"process_events"`
+	}
+	decodeInto(t, rr, &out)
+	if len(out.ProcessEvents) != 2 {
+		t.Fatalf("got %d rows, want 2: %+v", len(out.ProcessEvents), out.ProcessEvents)
+	}
+	// Resolved server-side; the alternative is the cabinet issuing an N+1 of
+	// lookups to render a list.
+	if out.ProcessEvents[0].ComputerName != "PC-1" {
+		t.Fatalf("computer_name %q, want PC-1", out.ProcessEvents[0].ComputerName)
+	}
+}
+
+func TestProcessEventsFilterByProcessAndReason(t *testing.T) {
+	s := &Server{pool: testPool(t)}
+	h := s.setupRoutes()
+	c := registerAndLogin(t, s, "parent@example.com")
+	room := createRoom(t, s, c, "Класс 2")
+	_, agentToken := enroll(t, s, mintBindingToken(t, s, c), "guid-1", "PC-1")
+
+	var list struct {
+		Computers []struct {
+			ID string `json:"id"`
+		} `json:"computers"`
+	}
+	decodeInto(t, doJSON(t, h, "GET", "/api/v1/computers", nil, c), &list)
+	doJSON(t, h, "PATCH", "/api/v1/computers/"+list.Computers[0].ID, map[string]any{"room_id": room}, c)
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	syncWithBatch(t, s, agentToken, "batch-1", []map[string]any{
+		{"process": "steam.exe", "reason": "blacklist", "count": 1, "first_at": now, "last_at": now},
+		{"process": "notepad.exe", "reason": "whitelist", "count": 1, "first_at": now, "last_at": now},
+	})
+
+	var out struct {
+		ProcessEvents []struct {
+			Process string `json:"process"`
+		} `json:"process_events"`
+	}
+	decodeInto(t, doJSON(t, h, "GET",
+		"/api/v1/rooms/"+room+"/process-events?process=steam.exe", nil, c), &out)
+	if len(out.ProcessEvents) != 1 || out.ProcessEvents[0].Process != "steam.exe" {
+		t.Fatalf("process filter returned %+v", out.ProcessEvents)
+	}
+
+	out.ProcessEvents = nil
+	decodeInto(t, doJSON(t, h, "GET",
+		"/api/v1/rooms/"+room+"/process-events?reason=whitelist", nil, c), &out)
+	if len(out.ProcessEvents) != 1 || out.ProcessEvents[0].Process != "notepad.exe" {
+		t.Fatalf("reason filter returned %+v", out.ProcessEvents)
+	}
+}
+
+// Keyed on (created_at, id), not an offset: rows arrive while somebody pages.
+func TestProcessEventsPageWithoutRepeatingOrSkipping(t *testing.T) {
+	s := &Server{pool: testPool(t)}
+	h := s.setupRoutes()
+	c := registerAndLogin(t, s, "parent@example.com")
+	room := createRoom(t, s, c, "Класс 2")
+	_, agentToken := enroll(t, s, mintBindingToken(t, s, c), "guid-1", "PC-1")
+
+	var list struct {
+		Computers []struct {
+			ID string `json:"id"`
+		} `json:"computers"`
+	}
+	decodeInto(t, doJSON(t, h, "GET", "/api/v1/computers", nil, c), &list)
+	doJSON(t, h, "PATCH", "/api/v1/computers/"+list.Computers[0].ID, map[string]any{"room_id": room}, c)
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	const rows = 5
+	batch := make([]map[string]any, 0, rows)
+	for i := 0; i < rows; i++ {
+		batch = append(batch, map[string]any{
+			"process": "p" + strconv.Itoa(i) + ".exe", "reason": "blacklist",
+			"count": 1, "first_at": now, "last_at": now,
+		})
+	}
+	syncWithBatch(t, s, agentToken, "batch-1", batch)
+
+	type page struct {
+		ProcessEvents []struct {
+			ID string `json:"id"`
+		} `json:"process_events"`
+		NextCursor string `json:"next_cursor"`
+	}
+	seen := map[string]bool{}
+	cursor := ""
+	for requests := 0; ; requests++ {
+		if requests > 20 {
+			t.Fatal("paging did not terminate")
+		}
+		path := "/api/v1/rooms/" + room + "/process-events?limit=2"
+		if cursor != "" {
+			path += "&cursor=" + cursor
+		}
+		rr := doJSON(t, h, "GET", path, nil, c)
+		if rr.Code != 200 {
+			t.Fatalf("page %d: %d %s", requests, rr.Code, rr.Body.String())
+		}
+		var p page
+		decodeInto(t, rr, &p)
+		for _, e := range p.ProcessEvents {
+			if seen[e.ID] {
+				t.Fatalf("row %s came back twice", e.ID)
+			}
+			seen[e.ID] = true
+		}
+		if p.NextCursor == "" {
+			break
+		}
+		cursor = p.NextCursor
+	}
+	if len(seen) != rows {
+		t.Fatalf("paged %d rows, want %d", len(seen), rows)
+	}
+}
+
+// A machine in no room still has a history, and the computer screen is where
+// it is read. The room query can never match it.
+func TestComputerProcessEventsWorkWithoutARoom(t *testing.T) {
+	s := &Server{pool: testPool(t)}
+	h := s.setupRoutes()
+	c := registerAndLogin(t, s, "parent@example.com")
+	_, agentToken := enroll(t, s, mintBindingToken(t, s, c), "guid-1", "PC-1")
+
+	var list struct {
+		Computers []struct {
+			ID string `json:"id"`
+		} `json:"computers"`
+	}
+	decodeInto(t, doJSON(t, h, "GET", "/api/v1/computers", nil, c), &list)
+	computerID := list.Computers[0].ID
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	syncWithBatch(t, s, agentToken, "batch-1", []map[string]any{
+		{"process": "steam.exe", "reason": "blacklist", "count": 1, "first_at": now, "last_at": now},
+	})
+
+	var out struct {
+		ProcessEvents []struct {
+			Process string `json:"process"`
+		} `json:"process_events"`
+	}
+	rr := doJSON(t, h, "GET", "/api/v1/computers/"+computerID+"/process-events", nil, c)
+	if rr.Code != 200 {
+		t.Fatalf("status %d %s", rr.Code, rr.Body.String())
+	}
+	decodeInto(t, rr, &out)
+	if len(out.ProcessEvents) != 1 {
+		t.Fatalf("got %d rows, want 1", len(out.ProcessEvents))
+	}
+}
