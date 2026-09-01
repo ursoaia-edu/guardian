@@ -450,7 +450,14 @@ change, not a protocol change.
 
 **Request** (body capped at 64 KiB)
 ```json
-{"runtime": {"uptime_s": 1234, "mode": "service", "agent_version": "3.0.0"}}
+{
+  "runtime": {"uptime_s": 1234, "mode": "service", "agent_version": "3.0.0"},
+  "batch_id": "5f3c9a…",
+  "blocked": [
+    {"process": "steam.exe", "reason": "blacklist", "count": 47,
+     "first_at": "2026-09-09T14:00:00Z", "last_at": "2026-09-09T14:00:46Z"}
+  ]
+}
 ```
 `runtime` is live telemetry, recorded against the computer's `runtime`
 column regardless of the policy computed below. It travels in a body rather
@@ -458,6 +465,26 @@ than a query string so it is not written to proxy access logs and not
 subject to URL length limits. Telemetry never fails a sync: no body, a body
 over the cap, invalid JSON, a non-object, an object over 64 KiB, or anything
 containing a NUL is silently replaced with `{}`. `GET` on this path is `405`.
+
+`batch_id` and `blocked` are optional and travel together — the blocking log
+(`process_events`). Both are absent when the agent has killed nothing, so the
+body is exactly what a pre-batch server always saw.
+
+| Field | Rule |
+|---|---|
+| `batch_id` | Opaque, at most 64 characters. A batch whose id matches the computer's `last_event_batch` is **ignored**: a sync whose response was lost is retried under the same id, and the server has already committed it. An id over the cap means the batch cannot be deduplicated, so it is dropped rather than stored. |
+| `blocked[]` | At most 200 items per sync; the rest are dropped and logged. The agent holds the remainder and sends it next time. |
+| `process` | Required, trimmed, truncated at 260 characters. An empty one drops the item. |
+| `reason` | `blacklist`, `whitelist` or `overflow`. Anything else drops the item — including **`locked`, which an agent may never claim**: it cannot tell a locked machine from a whitelist that allows nothing, since both reach it as `mode: "whitelist"` with an empty list. The server rewrites `whitelist` to `locked` itself when the reporting computer is `blocked`, because only the server knows. |
+| `count` | Must be ≥ 1, clamped at 100,000. A machine claiming more between two syncs is broken, and storing the claim verbatim only spreads the breakage into the UI. |
+| `first_at`, `last_at` | Clamped into `[now − 24h, now + 5min]`; anything outside, or absent, becomes the server's `now`. They are stored and shown because they are what an operator wants to read, but they never order the feed — `created_at` does, because an agent's clock can be wrong by years. `last_at` earlier than `first_at` is pulled up to it. |
+
+The same rule covers all of it: **the batch never fails a sync.** Every
+malformation above drops data and still answers `200`, because a machine's
+policy must never depend on the log it is shipping.
+
+`overflow` carries the agent's own admission that its buffer dropped entries:
+`process` is `guardian.log_overflow` and `count` is how many went.
 
 **Response** `200`
 ```json
