@@ -649,16 +649,22 @@ knows it was noticed.
 
 `runMaintenance` (`maintenance.go`) runs hourly alongside the HTTP server and
 stops with it. It deletes sessions a day past expiry — already unusable, so
-this is housekeeping rather than security — and events older than 180 days.
+this is housekeeping rather than security — events older than 180 days, and
+rows of the blocking log older than 30.
 
-Event retention cannot be a plain `DELETE` from the application role:
-`events` carries an account-scoped RLS policy, so an unscoped delete matches
-nothing, and scoping it per account would need exactly the fleet-wide read
-that migration `00014` removed. `00016` therefore adds
-`purge_old_events(interval)`, a `SECURITY DEFINER` function with a pinned
-`search_path` whose only ability is to delete rows older than the interval it
-is given and return a count — it cannot read a row out. Same narrow-escape
-pattern as `account_for_agent_token`.
+**The two retentions differ on purpose.** `events` is a narrative somebody
+reads, rare enough to keep a season. `process_events` is machine output,
+orders of magnitude larger, and nobody asks what was killed six months ago;
+keeping it as long would grow the table for no one's benefit.
+
+Neither purge can be a plain `DELETE` from the application role: both tables
+carry an account-scoped RLS policy, so an unscoped delete matches nothing, and
+scoping it per account would need exactly the fleet-wide read that migration
+`00014` removed. `00016` therefore adds `purge_old_events(interval)` and
+`00018` adds `purge_old_process_events(interval)`, `SECURITY DEFINER`
+functions with a pinned `search_path` whose only ability is to delete rows
+older than the interval they are given and return a count — neither can read a
+row out. Same narrow-escape pattern as `account_for_agent_token`.
 
 It runs in-process rather than as a cron job or a database scheduler because
 both are another thing to deploy and another thing to forget; a second server

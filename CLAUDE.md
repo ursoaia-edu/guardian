@@ -52,7 +52,7 @@ cd mobile && flutter pub run flutter_launcher_icons
 - `auth.go` — argon2id password hashing, session/agent/binding token minting (SHA-256 digests)
 - `handlers_auth.go`, `handlers_rooms.go`, `handlers_members.go`, `handlers_computers.go`, `handlers_agent.go`, `events.go` — HTTP handlers grouped by resource; `handlers.go` keeps only `/health` (which pings Postgres)
 - `logging.go` — `clientIP` (proxy-aware, the only way an IP is read), slog request logger, panic recoverer
-- `maintenance.go` — hourly purge of expired sessions and events older than 180 days (the latter through a `SECURITY DEFINER` function, since RLS blocks an unscoped delete)
+- `maintenance.go` — hourly purge of expired sessions, events older than 180 days and `process_events` older than 30 (both purges go through `SECURITY DEFINER` functions, since RLS blocks an unscoped delete; the retentions differ because the audit feed is a narrative and the blocking log is machine output)
 - `responses.go` — the API's own response types; handlers never return a sqlc row, and no response carries `account_id`
 - `migrate.go` — embeds and runs `db/migrations/*.sql` (goose) against `MIGRATE_DATABASE_URL`
 - `db/migrations/` (goose SQL, schema owned by `guardian_owner`), `db/queries/` (sqlc sources), `internal/db/` (generated sqlc code, see `sqlc.yaml`)

@@ -10,7 +10,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"strings"
 	"time"
 )
 
@@ -88,9 +87,25 @@ func enroll(server, binding, guid, hostname string) (string, error) {
 	return out.AgentToken, nil
 }
 
+// killCycle grows on every sync so a human watching the cabinet sees the count
+// move, and batch is fresh each time so nothing is deduplicated away.
+var killCycle int
+
 func sync(server, token string) (string, error) {
-	body := strings.NewReader(`{"runtime":{"uptime_s":1234,"user":"fake"}}`)
-	req, _ := http.NewRequest("POST", server+"/agent/sync", body)
+	killCycle++
+	now := time.Now().UTC().Format(time.RFC3339)
+	payload, err := json.Marshal(map[string]any{
+		"runtime":  map[string]any{"uptime_s": 1234, "user": "fake"},
+		"batch_id": fmt.Sprintf("fake-batch-%d", killCycle),
+		"blocked": []map[string]any{{
+			"process": "steam.exe", "reason": "blacklist", "count": killCycle,
+			"first_at": now, "last_at": now,
+		}},
+	})
+	if err != nil {
+		return "", err
+	}
+	req, _ := http.NewRequest("POST", server+"/agent/sync", bytes.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := client.Do(req)

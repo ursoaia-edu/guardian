@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"server/internal/db"
@@ -170,5 +171,47 @@ func TestTelemetryWritesAreThrottled(t *testing.T) {
 	second := lastSeen()
 	if !second.Equal(*first) {
 		t.Fatalf("a sync %s after the last one wrote the row again", time.Since(*first))
+	}
+}
+
+// The kill log gets its own retention: 30 days, not the audit feed's 180. It
+// is machine output and there is far more of it, and "what was killed last
+// season?" is not a question anybody asks.
+func TestPurgeRemovesOldProcessEventsButKeepsRecentOnes(t *testing.T) {
+	s := &Server{pool: testPool(t)}
+	ctx := context.Background()
+
+	c := registerAndLogin(t, s, "parent@example.com")
+	enroll(t, s, mintBindingToken(t, s, c), "guid-1", "PC-1")
+	account := accountIDOf(t, s, "parent@example.com")
+
+	var computerID uuid.UUID
+	if err := s.inAccount(ctx, account, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT id FROM computers LIMIT 1`).Scan(&computerID)
+	}); err != nil {
+		t.Fatalf("read computer: %v", err)
+	}
+
+	// Written on the owner pool: created_at is backdated, which the app role's
+	// own insert path never does.
+	obs := observe(t)
+	for _, age := range []string{"200 days", "1 day"} {
+		if _, err := obs.Exec(ctx, `
+			INSERT INTO process_events
+			  (account_id, computer_id, process, reason, count, first_at, last_at, created_at)
+			VALUES ($1, $2, 'steam.exe', 'blacklist', 1, now(), now(), now() - $3::interval)`,
+			account, computerID, age); err != nil {
+			t.Fatalf("seed %s: %v", age, err)
+		}
+	}
+
+	s.purgeOnce(ctx)
+
+	var left int
+	if err := obs.QueryRow(ctx, `SELECT count(*) FROM process_events`).Scan(&left); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if left != 1 {
+		t.Fatalf("%d rows left, want 1 (the recent one)", left)
 	}
 }

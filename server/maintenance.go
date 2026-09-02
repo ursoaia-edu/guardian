@@ -18,6 +18,12 @@ const (
 	// answer "what happened to this machine last season?", short enough that a
 	// busy account's feed does not grow without bound forever.
 	eventRetention = 180 * 24 * time.Hour
+
+	// processEventRetention is shorter than eventRetention on purpose. The
+	// audit feed is a narrative worth keeping a season; the blocking log is
+	// machine output, orders of magnitude larger, and nobody asks what was
+	// killed six months ago.
+	processEventRetention = 30 * 24 * time.Hour
 )
 
 // runMaintenance purges expired sessions and aged-out events until ctx is
@@ -59,5 +65,16 @@ func (s *Server) purgeOnce(ctx context.Context) {
 		slog.Error("purge old events", "error", err)
 	} else if purged > 0 {
 		slog.Info("purged old events", "count", purged, "retention", eventRetention.String())
+	}
+
+	// Same RLS reasoning as the events purge above; migration 00018 provides
+	// the function.
+	var purgedKills int64
+	if err := s.pool.QueryRow(ctx,
+		`SELECT purge_old_process_events($1::interval)`, processEventRetention).Scan(&purgedKills); err != nil {
+		slog.Error("purge old process events", "error", err)
+	} else if purgedKills > 0 {
+		slog.Info("purged old process events", "count", purgedKills,
+			"retention", processEventRetention.String())
 	}
 }
