@@ -194,3 +194,19 @@ func accountMemberResponses(rows []db.ListAccountMembersRow) []AccountMemberResp
 	}
 	return out
 }
+
+// ProcessEventResponse is one row of the blocking log. Like every response
+// type here it is the API's own shape, not a generated row, and it carries no
+// account_id.
+type ProcessEventResponse struct {
+	ID           string    `json:"id"`
+	ComputerID   string    `json:"computer_id"`
+	ComputerName string    `json:"computer_name"`
+	RoomID       *string   `json:"room_id"`
+	Process      string    `json:"process"`
+	Reason       string    `json:"reason"`
+	Count        int       `json:"count"`
+	FirstAt      time.Time `json:"first_at"`
+	LastAt       time.Time `json:"last_at"`
+	CreatedAt    time.Time `json:"created_at"`
+}

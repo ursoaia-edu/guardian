@@ -410,6 +410,66 @@ the feed cannot disagree with the data.
 
 ---
 
+### `GET /api/v1/rooms/{roomID}/process-events`
+### `GET /api/v1/computers/{computerID}/process-events`
+
+Session auth, **guest-reachable**: the blocking log for a room somebody was
+deliberately given is exactly what they were given it for. The room endpoint
+is gated by the same room-visibility check as the rest of `/rooms/{roomID}/…`;
+the computer endpoint reads the machine first, so a guest cannot read the
+history of an unassigned machine or one in a room they were not granted.
+Either way "not yours" and "not there" are both `404`.
+
+This is the blocking log — what a policy actually closed — and it is a
+different feed from `/events` above, which records what administrators did.
+Rows are purged after 30 days rather than 180 (`specs/server.md`,
+**Maintenance**).
+
+The two endpoints exist separately because a machine in no room has `room_id`
+NULL on every row, and the room query can never match it. Its history is read
+on the computer screen.
+
+**Query params** (all optional, and they compose):
+
+| Param | Meaning |
+|---|---|
+| `process` | Exact process name. |
+| `reason` | `blacklist`, `whitelist`, `locked` or `overflow`. Anything else is ignored. |
+| `computer_id` | Room endpoint only — narrows to one machine in that room. |
+| `since`, `until` | RFC3339, compared against `created_at`. |
+| `limit` | Page size, default 50, capped at 200. |
+| `cursor` | From a previous response's `next_cursor`. |
+
+A malformed filter is **ignored**, not rejected: this is a log viewer, and a
+mistyped filter that returns the unfiltered feed is friendlier than a `400`
+with no rows. The cursor is the exception — it is the server's own opaque
+token, so a broken one is `400 Invalid cursor`, because it means the client is
+out of step.
+
+**Response** `200`
+```json
+{
+  "process_events": [{
+    "id": "…", "computer_id": "…", "computer_name": "LAB-A-01", "room_id": "…",
+    "process": "steam.exe", "reason": "blacklist", "count": 47,
+    "first_at": "2026-09-09T14:00:00Z", "last_at": "2026-09-09T14:00:46Z",
+    "created_at": "2026-09-09T14:01:03Z"
+  }],
+  "next_cursor": "1757366400000000000_0d9a…"
+}
+```
+
+`computer_name` is resolved server-side (the machine's display name, or its
+hostname when it has none); the alternative is the cabinet issuing an N+1 of
+lookups to render one page.
+
+Ordered by `created_at DESC`, never by the agent's own `first_at`/`last_at` —
+an agent's clock can be wrong by years, and those two are shown, not trusted.
+`next_cursor` is present only when the page was full; its absence means the end
+of the feed.
+
+---
+
 ## Agent
 
 ### `POST /agent/enroll`

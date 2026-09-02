@@ -147,9 +147,11 @@ func (s *Server) setupRoutes() *chi.Mux {
 			r.Patch("/rooms/{roomID}/applications/{appID}", s.handlePatchRoomApplication)
 			r.Delete("/rooms/{roomID}/applications/{appID}", s.handleDeleteRoomApplication)
 			r.Get("/rooms/{roomID}/members", s.handleListRoomMembers)
+			r.Get("/rooms/{roomID}/process-events", s.handleListRoomProcessEvents)
 
 			r.Get("/computers", s.handleListComputers)
 			r.Get("/computers/{computerID}", s.handleGetComputer)
+			r.Get("/computers/{computerID}/process-events", s.handleListComputerProcessEvents)
 			r.Patch("/computers/{computerID}", s.handlePatchComputer)
 		})
 
