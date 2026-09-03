@@ -20,7 +20,7 @@ export const ROUTES = [
 ]
 
 // The tabs of the room screen, which is the one screen with any.
-export const ROOM_TABS = ['computers', 'rules', 'power', 'members']
+export const ROOM_TABS = ['computers', 'rules', 'log', 'power', 'members']
 
 export function parseRoute(hash) {
   const raw = String(hash || '').replace(/^#/, '')

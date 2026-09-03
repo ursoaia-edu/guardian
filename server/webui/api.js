@@ -200,6 +200,14 @@ export function createApi(options = {}) {
     revokeBindingTokens: () => request('DELETE', '/api/v1/binding-tokens'),
     downloadInstaller,
 
+    // The blocking log: what a policy actually closed. Two endpoints rather
+    // than one with a filter, because a machine in no room has room_id NULL on
+    // every row and the room query can never match it.
+    roomProcessEvents: (roomID, params = {}, opts) =>
+      request('GET', `/api/v1/rooms/${encodeURIComponent(roomID)}/process-events${processEventQuery(params)}`, opts),
+    computerProcessEvents: (computerID, params = {}, opts) =>
+      request('GET', `/api/v1/computers/${encodeURIComponent(computerID)}/process-events${processEventQuery(params)}`, opts),
+
     // Activity
     events: (params = {}, opts) => {
       const query = new URLSearchParams()
@@ -209,6 +217,19 @@ export function createApi(options = {}) {
       return request('GET', '/api/v1/events' + (qs ? `?${qs}` : ''), opts)
     },
   }
+}
+
+// processEventQuery builds the blocking log's query string. An empty filter is
+// left out entirely rather than sent blank: the server ignores a malformed one,
+// but a request that says nothing is easier to read in a log.
+export function processEventQuery(params = {}) {
+  const query = new URLSearchParams()
+  for (const key of ['process', 'reason', 'computer_id', 'since', 'until', 'cursor']) {
+    if (params[key]) query.set(key, String(params[key]))
+  }
+  if (params.limit) query.set('limit', String(params.limit))
+  const qs = query.toString()
+  return qs ? `?${qs}` : ''
 }
 
 // filenameFromDisposition pulls Guardian-<account>.zip out of the header the

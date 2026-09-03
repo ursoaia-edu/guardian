@@ -8,7 +8,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { createApi, ApiError, filenameFromDisposition } from '../webui/api.js'
+import { createApi, ApiError, filenameFromDisposition, processEventQuery } from '../webui/api.js'
 
 // A fake fetch that records what it was asked and answers with what the test
 // hands it. The responder is called per request, because a Response body can
@@ -217,6 +217,36 @@ test('a server with no installer archive says so through the same error type', a
     status: 503,
     message: 'No installer archive on this server',
   })
+})
+
+test('the blocking log sends only the filters that were set', () => {
+  assert.equal(processEventQuery(), '')
+  assert.equal(processEventQuery({}), '')
+  // An empty filter is left out entirely rather than sent blank: the server
+  // ignores a malformed one either way, but a request that says nothing is
+  // easier to read in a log.
+  assert.equal(processEventQuery({ process: '', reason: '', cursor: '' }), '')
+  assert.equal(processEventQuery({ limit: 50 }), '?limit=50')
+  assert.equal(
+    processEventQuery({ process: 'steam.exe', reason: 'blacklist' }),
+    '?process=steam.exe&reason=blacklist',
+  )
+  assert.equal(processEventQuery({ cursor: 'a/b' }), '?cursor=a%2Fb')
+  assert.equal(
+    processEventQuery({ since: '2026-09-09T14:00:00Z' }),
+    '?since=2026-09-09T14%3A00%3A00Z',
+  )
+})
+
+test('the two blocking-log endpoints put their ids in the path', async () => {
+  const { calls, fetchImpl } = fakeFetch(() => ok({ process_events: [] }))
+  const api = createApi({ fetch: fetchImpl })
+
+  await api.roomProcessEvents('room/1', { limit: 10 })
+  await api.computerProcessEvents('pc 2', { reason: 'locked' })
+
+  assert.equal(calls[0].url, '/api/v1/rooms/room%2F1/process-events?limit=10')
+  assert.equal(calls[1].url, '/api/v1/computers/pc%202/process-events?reason=locked')
 })
 
 test('filenameFromDisposition reads the header, or picks a name that is at least correct', () => {

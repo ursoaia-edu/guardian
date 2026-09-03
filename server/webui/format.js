@@ -101,6 +101,20 @@ export function computerState(computer, now = new Date()) {
   return isOnline(computer.last_seen_at, now) ? 'online' : 'offline'
 }
 
+// REASON_LABELS says why a process was closed, in the words somebody who did
+// not design the schema would use. "whitelist" as a reason reads like the
+// opposite of what happened: the program was killed for being absent from it.
+const REASON_LABELS = {
+  blacklist: 'Blocked by the list',
+  whitelist: 'Not on the list',
+  locked: 'Computer locked',
+  overflow: 'Dropped by the agent',
+}
+
+export function reasonLabel(reason) {
+  return REASON_LABELS[reason] || reason
+}
+
 // EVENT_LABELS turns the API's event types into something a person reads.
 // A type with no entry falls back to the raw string rather than being hidden:
 // an unlabelled event in the feed is a missing line here, not a missing fact.
