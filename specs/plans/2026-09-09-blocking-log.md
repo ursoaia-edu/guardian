@@ -1,6 +1,16 @@
 # Blocking Log Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Status: complete.** All six tasks landed on `dev`, commits `8e7353d`,
+> `1a061e9`, `6220a73`, `f044cf7`, `254fcd1`, `0212985`. One departure from the
+> plan, recorded in `1a061e9`: Task 2's `stage()` closed its open entries by
+> ranging over a map, so the overflow path dropped whichever entries Go's
+> randomised iteration handed over first rather than the oldest — the plan's
+> own test for "the oldest are dropped" failed on every run. `closeAllOpen`
+> sorts by `FirstAt` before closing. Two small gaps also filled in passing:
+> Task 6's test needed a `pgx` import the plan did not list, and three comments
+> naming `readRuntime` were updated when Task 4 renamed it.
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Make the cabinet able to answer "what did this policy actually kill, on which machine, when" — the agent reports every process it kills, the server stores it, and two paged endpoints serve it to the room and computer screens.
 
@@ -75,7 +85,7 @@ Also settled here, and consistent with the spec rather than a change to it: **th
 - Consumes: `current_account_id()` (migration `00003_rls.sql`), `testPool(t)`, `observe(t)`, `registerAndLogin`, `mintBindingToken`, `enroll` (all in `server/*_test.go`).
 - Produces: table `process_events`; column `computers.last_event_batch TEXT`; generated `db.RecordProcessEvent`, `db.SetLastEventBatch`, `db.ListRoomProcessEvents`, `db.ListComputerProcessEvents`, and the regenerated `db.Computer` with a `LastEventBatch *string` field.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `server/process_events_test.go`:
 
@@ -172,13 +182,13 @@ func TestOverflowIsAPermittedReason(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `cd server && go test ./... -run 'TestProcessEventsAreScopedToTheirAccount|TestOverflowIsAPermittedReason' -v`
 
 Expected: FAIL — `ERROR: relation "process_events" does not exist (SQLSTATE 42P01)`.
 
-- [ ] **Step 3: Write the migration**
+- [x] **Step 3: Write the migration**
 
 Create `server/db/migrations/00017_process_events.sql`:
 
@@ -232,7 +242,7 @@ ALTER TABLE computers DROP COLUMN last_event_batch;
 DROP TABLE process_events;
 ```
 
-- [ ] **Step 4: Write the sqlc queries**
+- [x] **Step 4: Write the sqlc queries**
 
 Create `server/db/queries/process_events.sql`:
 
@@ -289,31 +299,31 @@ ORDER BY pe.created_at DESC, pe.id DESC
 LIMIT sqlc.arg(row_limit);
 ```
 
-- [ ] **Step 5: Regenerate the sqlc code**
+- [x] **Step 5: Regenerate the sqlc code**
 
 Run: `cd server && sqlc generate`
 
 Expected: `internal/db/` is rewritten; `git status` shows `internal/db/models.go` (a `LastEventBatch *string` field on `Computer`) and a new `internal/db/process_events.sql.go`. CI runs `sqlc diff` and fails if the committed output does not match the queries, so this step is not optional.
 
-- [ ] **Step 6: Run the tests to verify they pass**
+- [x] **Step 6: Run the tests to verify they pass**
 
 Run: `cd server && go test ./... -run 'TestProcessEventsAreScopedToTheirAccount|TestOverflowIsAPermittedReason' -v`
 
 Expected: PASS, both.
 
-- [ ] **Step 7: Run the whole suite**
+- [x] **Step 7: Run the whole suite**
 
 Run: `cd server && gofmt -l . && go vet ./... && go test ./...`
 
 Expected: `gofmt -l` prints nothing, vet is silent, all tests pass. A new nullable column on `computers` changes the generated struct, so this catches anything that constructs a `db.Computer` positionally.
 
-- [ ] **Step 8: Update the docs**
+- [x] **Step 8: Update the docs**
 
 In `specs/2026-09-09-cabinet-v1-design.md` §1, apply the two corrections from this plan's header: the `reason` CHECK gains `'overflow'`, and `computers.last_event_batch` is `TEXT` rather than `UUID`. Add one sentence after the `reason` paragraph: *"An agent never sends `locked`: it cannot tell a lock from an empty whitelist, since both arrive as `mode: whitelist` with no applications. The server rewrites `whitelist` to `locked` when the reporting machine is blocked."*
 
 In `specs/server.md`, add `process_events` to the table list and to the RLS section, following the shape of the existing `events` entry.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add server/db/migrations/00017_process_events.sql \
@@ -343,7 +353,7 @@ Pure Go, no I/O, no server, no Windows. It is the piece with the most behaviour 
   - `func (b *blockLog) ack(batchID string)`
   - `b.now func() time.Time` — a clock seam the tests replace.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `agent/blocklog_test.go`:
 
@@ -543,13 +553,13 @@ func processName(i int) string {
 }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cd agent && go test ./... -run 'TestRepeatedKills|TestEntriesAreKeyed|TestAnEntrySpan|TestOverflow|TestStageIs|TestAckOfAStale|TestStageOfAnEmpty' -v`
 
 Expected: FAIL to compile — `undefined: newBlockLog`, `undefined: maxPendingEntries`, `undefined: itoa`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Create `agent/blocklog.go`:
 
@@ -709,13 +719,13 @@ func (b *blockLog) ack(batchID string) {
 func itoa(i int) string { return strconv.Itoa(i) }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `cd agent && go test ./... -v`
 
 Expected: PASS, including the pre-existing agent tests.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add agent/blocklog.go agent/blocklog_test.go
@@ -736,7 +746,7 @@ git commit -m "feat(agent): aggregate killed processes into a bounded, resendabl
 - Consumes: `newBlockLog`, `(*blockLog).record/stage/ack`, `blockedEntry` (Task 2).
 - Produces: `(*apiClient).sync(agentToken string, runtime map[string]any, batchID string, blocked []blockedEntry) (*SyncResponse, error)` — the batch fields are omitted from the body when `batchID` is empty; `agent.blocks *blockLog`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `agent/agent_test.go`. The helper follows the same setup the existing
 first-run test uses (`agent/agent_test.go:106`): a temporary working directory,
@@ -829,13 +839,13 @@ func TestASyncWithNoKillsCarriesNoBatch(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `cd agent && go test ./... -run 'TestKillsAreReported|TestAFailedSyncResends|TestASyncWithNoKills' -v`
 
 Expected: FAIL — `a.blocks undefined (type *agent has no field or method blocks)`.
 
-- [ ] **Step 3: Add the field and construct it**
+- [x] **Step 3: Add the field and construct it**
 
 In `agent/agent.go`, add to the `agent` struct (after `state policyState`, around line 118):
 
@@ -851,7 +861,7 @@ and in `newAgent`, alongside the other field initialisations:
 		blocks: newBlockLog(),
 ```
 
-- [ ] **Step 4: Record every kill**
+- [x] **Step 4: Record every kill**
 
 In `agent/agent.go`, `enforce` — the blacklist branch (around line 413):
 
@@ -877,7 +887,7 @@ Only a successful kill is recorded. A failed one is a different event — the lo
 
 The agent never records `"locked"`: it cannot tell a locked machine from a whitelist that allows nothing, since both arrive as `mode: "whitelist"` with an empty list. The server rewrites the reason, because only the server knows.
 
-- [ ] **Step 5: Carry the batch in the client**
+- [x] **Step 5: Carry the batch in the client**
 
 In `agent/client.go`, replace `sync` (line 206):
 
@@ -909,7 +919,7 @@ func (c *apiClient) sync(agentToken string, runtime map[string]any, batchID stri
 }
 ```
 
-- [ ] **Step 6: Stage and acknowledge in the sync loop**
+- [x] **Step 6: Stage and acknowledge in the sync loop**
 
 In `agent/agent.go`, `syncOnce` (line 284), replace the first line and add the acknowledgement:
 
@@ -935,7 +945,7 @@ and immediately after `a.state.set(resp)`:
 	a.blocks.ack(batchID)
 ```
 
-- [ ] **Step 7: Teach the fake server to record the batch**
+- [x] **Step 7: Teach the fake server to record the batch**
 
 `fakeServer.lastSync` is already a `map[string]any` decoded from the body, so `blocked` and `batch_id` arrive without any change. The one change needed is that a non-200 status must still decode the body, so `TestAFailedSyncResendsTheSameBatch` can read the id off the failed attempt. In `agent/agent_test.go`, the sync handler already decodes before branching on status — confirm the order is:
 
@@ -951,17 +961,17 @@ and immediately after `a.state.set(resp)`:
 
 It is. No change to the harness is required; this step is a verification, not an edit.
 
-- [ ] **Step 8: Run the tests to verify they pass**
+- [x] **Step 8: Run the tests to verify they pass**
 
 Run: `cd agent && gofmt -l . && go vet ./... && go test ./... -v`
 
 Expected: `gofmt -l` prints nothing, all tests pass including the pre-existing enrollment and revocation tests.
 
-- [ ] **Step 9: Update the docs**
+- [x] **Step 9: Update the docs**
 
 In `specs/agent.md`, add a paragraph to the sync section: the agent aggregates successful kills by `(process, reason)`, holds at most 500 entries and drops the oldest with a `guardian.log_overflow` marker, ships at most 200 per sync inside the body as `blocked` with a `batch_id`, and keeps the batch staged until a `200` so a retry is the same batch under the same id. Note that pending entries live in memory only and are lost on restart — writing them to disk every second on every managed machine costs more than the last minute of a kill log is worth.
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 git add agent/agent.go agent/client.go agent/agent_test.go specs/agent.md
@@ -980,7 +990,7 @@ git commit -m "feat(agent): report killed processes in the sync body"
 - Consumes: `db.RecordProcessEvent`, `db.SetLastEventBatch`, `db.Computer.LastEventBatch` (Task 1); `sanitizeText`, `sanitizeJSONObject`, `s.inAccount`, `computerFrom` (existing).
 - Produces: nothing other tasks consume; `GET` handlers in Task 5 read the rows this writes.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `server/process_events_test.go`:
 
@@ -1157,13 +1167,13 @@ func TestKillsOnALockedMachineAreRecordedAsLocked(t *testing.T) {
 
 Add to that file's imports: `bytes`, `encoding/json`, `net/http/httptest`, `strconv`, `time`.
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cd server && go test ./... -run 'TestSyncRecordsTheBlockedBatch|TestARepeatedBatch|TestAMalformedBatch|TestAbsurdAgentTimestamps|TestKillsOnALockedMachine' -v`
 
 Expected: FAIL — `TestSyncRecordsTheBlockedBatch` reports 0 rows recorded; the malformed-batch test passes vacuously, which is why the others exist.
 
-- [ ] **Step 3: Replace `readRuntime` with a single body read**
+- [x] **Step 3: Replace `readRuntime` with a single body read**
 
 In `server/handlers_agent.go`, replace `readRuntime` (line 283) with:
 
@@ -1268,7 +1278,7 @@ func clampAgentTime(t, now time.Time) time.Time {
 
 Add `"time"` to the file's imports.
 
-- [ ] **Step 4: Write the batch in the sync handler**
+- [x] **Step 4: Write the batch in the sync handler**
 
 In `server/handlers_agent.go`, `handleAgentSync`, replace the telemetry block (line 223-229) with:
 
@@ -1326,23 +1336,23 @@ In `server/handlers_agent.go`, `handleAgentSync`, replace the telemetry block (l
 
 Add `"github.com/jackc/pgx/v5/pgtype"` to the imports if it is not already there.
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [x] **Step 5: Run the tests to verify they pass**
 
 Run: `cd server && go test ./... -run 'TestSyncRecords|TestARepeatedBatch|TestAMalformedBatch|TestAbsurdAgentTimestamps|TestKillsOnALockedMachine|TestSync' -v`
 
 Expected: PASS, including the pre-existing `TestSyncOfUnassignedComputerEnforcesNothing` and `TestSyncRejectsUnknownToken`.
 
-- [ ] **Step 6: Run the whole suite**
+- [x] **Step 6: Run the whole suite**
 
 Run: `cd server && gofmt -l . && go vet ./... && go test ./...`
 
 Expected: all green. `readRuntime` no longer exists, so any other caller would have failed to compile here.
 
-- [ ] **Step 7: Update the docs**
+- [x] **Step 7: Update the docs**
 
 In `specs/api.md`, `POST /agent/sync`: document the request body's new optional `batch_id` and `blocked` array with the field list and the clamping rules, and state that a repeated `batch_id` is ignored. Keep the existing sentence that telemetry never fails a sync and extend it to the batch.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add server/handlers_agent.go server/process_events_test.go specs/api.md
@@ -1362,7 +1372,7 @@ git commit -m "feat(server): record the agent's blocked-process batch on sync"
 - Consumes: `db.ListRoomProcessEvents`, `db.ListComputerProcessEvents` (Task 1); `s.assertRoomVisible`, `tenantFrom`, `writeJSON`, `writeLookupError`, `encodeCursor`/`decodeCursor` (existing, `server/events.go:50-70`).
 - Produces: `GET /api/v1/rooms/{roomID}/process-events`, `GET /api/v1/computers/{computerID}/process-events`, and the `ProcessEventResponse` type in `responses.go`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `server/process_events_test.go`:
 
@@ -1556,13 +1566,13 @@ func TestComputerProcessEventsWorkWithoutARoom(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cd server && go test ./... -run 'TestRoomProcessEventsAreServed|TestProcessEventsFilter|TestProcessEventsPage|TestComputerProcessEventsWork' -v`
 
 Expected: FAIL with status `404` — the routes do not exist.
 
-- [ ] **Step 3: Add the response type**
+- [x] **Step 3: Add the response type**
 
 In `server/responses.go`, alongside the existing types:
 
@@ -1586,7 +1596,7 @@ type ProcessEventResponse struct {
 }
 ```
 
-- [ ] **Step 4: Write the handlers**
+- [x] **Step 4: Write the handlers**
 
 Create `server/handlers_process_events.go`:
 
@@ -1816,7 +1826,7 @@ func uuidPtrString(id *uuid.UUID) *string {
 }
 ```
 
-- [ ] **Step 5: Register the routes**
+- [x] **Step 5: Register the routes**
 
 In `server/routes.go`, inside the guest-reachable group (after `r.Get("/rooms/{roomID}/members", …)` and after `r.Get("/computers/{computerID}", …)` respectively):
 
@@ -1830,7 +1840,7 @@ In `server/routes.go`, inside the guest-reachable group (after `r.Get("/rooms/{r
 
 Both are reads, both are gated by the room-visibility check inside the handler, so both belong on the guest-reachable side — the blocking log for a room somebody was deliberately given is exactly what they were given it for.
 
-- [ ] **Step 6: Classify the routes in the authz table**
+- [x] **Step 6: Classify the routes in the authz table**
 
 In `server/authz_test.go`, add to `guestReachableRoutes`:
 
@@ -1839,7 +1849,7 @@ In `server/authz_test.go`, add to `guestReachableRoutes`:
 	"GET /api/v1/computers/{computerID}/process-events":  true,
 ```
 
-- [ ] **Step 7: Add the isolation rows**
+- [x] **Step 7: Add the isolation rows**
 
 In `server/isolation_test.go`, add to the `cases` table:
 
@@ -1848,23 +1858,23 @@ In `server/isolation_test.go`, add to the `cases` table:
 		{"GET", "/api/v1/computers/" + computerA + "/process-events", nil},
 ```
 
-- [ ] **Step 8: Run the tests to verify they pass**
+- [x] **Step 8: Run the tests to verify they pass**
 
 Run: `cd server && go test ./... -run 'TestRoomProcessEvents|TestProcessEvents|TestComputerProcessEvents|TestCrossAccountAccessIsAlways404|TestEveryAPIRouteIsClassified|TestGuestIsRefusedEveryManagerRoute' -v`
 
 Expected: PASS, all of them. `TestEveryAPIRouteIsClassified` is the one that would have failed had step 6 been skipped.
 
-- [ ] **Step 9: Run the whole suite**
+- [x] **Step 9: Run the whole suite**
 
 Run: `cd server && gofmt -l . && go vet ./... && go test ./...`
 
 Expected: all green.
 
-- [ ] **Step 10: Update the docs**
+- [x] **Step 10: Update the docs**
 
 In `specs/api.md`, add both endpoints under the cabinet section: auth class (session, guest-reachable), the filter query parameters, the cursor semantics, and the response shape. In `CLAUDE.md`, add both to the **API Endpoints** list.
 
-- [ ] **Step 11: Commit**
+- [x] **Step 11: Commit**
 
 ```bash
 git add server/handlers_process_events.go server/responses.go server/routes.go \
@@ -1886,7 +1896,7 @@ git commit -m "feat(server): serve the blocking log for a room and for a compute
 - Consumes: `s.purgeOnce` (existing, `server/maintenance.go:39`).
 - Produces: `purge_old_process_events(INTERVAL) RETURNS BIGINT`; `processEventRetention = 30 * 24 * time.Hour`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `server/maintenance_test.go`:
 
@@ -1934,13 +1944,13 @@ func TestPurgeRemovesOldProcessEventsButKeepsRecentOnes(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `cd server && go test ./... -run TestPurgeRemovesOldProcessEvents -v`
 
 Expected: FAIL — 2 rows left; nothing purges the table yet.
 
-- [ ] **Step 3: Write the migration**
+- [x] **Step 3: Write the migration**
 
 Create `server/db/migrations/00018_process_event_retention.sql`:
 
@@ -1977,7 +1987,7 @@ GRANT EXECUTE ON FUNCTION purge_old_process_events(INTERVAL) TO guardian_app;
 DROP FUNCTION purge_old_process_events(INTERVAL);
 ```
 
-- [ ] **Step 4: Wire it into the hourly loop**
+- [x] **Step 4: Wire it into the hourly loop**
 
 In `server/maintenance.go`, add to the constant block:
 
@@ -2004,13 +2014,13 @@ and at the end of `purgeOnce`:
 	}
 ```
 
-- [ ] **Step 5: Run the test to verify it passes**
+- [x] **Step 5: Run the test to verify it passes**
 
 Run: `cd server && go test ./... -run TestPurgeRemoves -v`
 
 Expected: PASS, together with the pre-existing events-purge test.
 
-- [ ] **Step 6: Teach the fake agent to report kills**
+- [x] **Step 6: Teach the fake agent to report kills**
 
 `server/fakeagent` exists so the API can be exercised without a Windows machine, and the blocking log is now part of what there is to exercise.
 
@@ -2053,7 +2063,7 @@ func sync(server, token string) (string, error) {
 
 Add `bytes` to the imports; drop `strings` if nothing else in the file uses it (`go vet` will say).
 
-- [ ] **Step 7: Verify the fake agent end to end**
+- [x] **Step 7: Verify the fake agent end to end**
 
 Run, with the dev database up and the server running:
 
@@ -2063,17 +2073,17 @@ cd server && go run ./fakeagent
 
 Expected: the agent enrolls and syncs, and `GET /api/v1/computers/{id}/process-events` returns the rows it reported. This is the manual check that the whole path works outside the test harness.
 
-- [ ] **Step 8: Run the whole suite**
+- [x] **Step 8: Run the whole suite**
 
 Run: `cd server && gofmt -l . && go vet ./... && go test ./...`
 
 Expected: all green.
 
-- [ ] **Step 9: Update the docs**
+- [x] **Step 9: Update the docs**
 
 In `specs/server.md`, add `purge_old_process_events` to the **Maintenance** section next to `purge_old_events`, with the 30-day retention and the reason it differs. In `CLAUDE.md`, extend the `maintenance.go` bullet to mention both purges.
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 git add server/db/migrations/00018_process_event_retention.sql \
