@@ -1,4 +1,4 @@
-const { useState } = window.React
+const { useState, useCallback } = window.React
 
 import {
   html,
@@ -16,6 +16,15 @@ import {
 import { usePoll, useAction } from '../hooks.js'
 import { computerName, computerState, relativeTime, formatDateTime } from '../format.js'
 import { navigate } from '../router.js'
+import { BlockLog } from './blocklog.js'
+
+// The same table as the room's Log tab, pre-filtered to this machine — which
+// is also the only way to read the history of a machine in no room, since
+// every one of its rows has room_id NULL.
+function ComputerLog({ api, computer, onAuthError }) {
+  const load = useCallback((params) => api.computerProcessEvents(computer.id, params), [api, computer.id])
+  return html`<${BlockLog} load=${load} onAuthError=${onAuthError} title="What this computer has closed" />`
+}
 
 // The machine's passport: what it is, where it is, what it has been doing, and
 // the three things that can be done to it — rename, move, lock — plus the one
@@ -116,6 +125,8 @@ export function ComputerScreen({ api, role, computerID, onAuthError }) {
           )}
         </dl>
       <//>
+
+      <${ComputerLog} api=${api} computer=${data} onAuthError=${onAuthError} />
 
       ${manager &&
       html`<${Card} title="Unenrol">

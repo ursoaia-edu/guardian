@@ -1,4 +1,4 @@
-const { useState } = window.React
+const { useState, useCallback } = window.React
 
 import {
   html,
@@ -18,6 +18,7 @@ import {
 import { usePoll, useAction } from '../hooks.js'
 import { computerName, computerState, relativeTime, roomPolicy } from '../format.js'
 import { href, navigate, ROOM_TABS } from '../router.js'
+import { BlockLog } from './blocklog.js'
 
 export function RoomScreen({ api, role, roomID, tab, onAuthError }) {
   const manager = role === 'owner' || role === 'admin'
@@ -55,6 +56,7 @@ export function RoomScreen({ api, role, roomID, tab, onAuthError }) {
 
       ${tab === 'computers' && html`<${RoomComputers} api=${api} room=${data} onAuthError=${onAuthError} />`}
       ${tab === 'rules' && html`<${RoomRules} api=${api} room=${data} onAuthError=${onAuthError} />`}
+      ${tab === 'log' && html`<${RoomLog} api=${api} room=${data} onAuthError=${onAuthError} />`}
       ${tab === 'power' && html`<${RoomPower} api=${api} room=${data} onChanged=${room.reload} />`}
       ${tab === 'members' &&
       html`<${RoomMembers} api=${api} room=${data} manager=${manager} onAuthError=${onAuthError} />`}
@@ -304,6 +306,22 @@ function RuleTable({ rows, api, room, act, showList }) {
       </table>
     </div>
   `
+}
+
+// The room's blocking log. The machine filter is populated from the room's own
+// computers, so it offers the machines somebody might actually be asking about
+// rather than the whole account's pool.
+function RoomLog({ api, room, onAuthError }) {
+  const computers = usePoll(() => api.computers(), { interval: 60000, onAuthError })
+  const inRoom = ((computers.data && computers.data.computers) || []).filter((c) => c.room_id === room.id)
+  const load = useCallback((params) => api.roomProcessEvents(room.id, params), [api, room.id])
+
+  return html`<${BlockLog}
+    load=${load}
+    computers=${inRoom}
+    onAuthError=${onAuthError}
+    title=${`What ${room.name} has closed`}
+  />`
 }
 
 function RoomPower({ api, room, onChanged }) {

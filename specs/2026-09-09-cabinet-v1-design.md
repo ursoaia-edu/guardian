@@ -216,9 +216,16 @@ the alternative is the cabinet issuing an N+1 of lookups to render a list.
 
 ### The tab
 
-**Room → Журнал.** A table: time, machine, process, reason, count. Filters across the top:
+**Room → Log.** A table: time, machine, process, reason, count. Filters across the top:
 machine, process, reason, date range. Default view is the last 24 hours, newest first.
-The same table, pre-filtered to one machine, is the *Журнал* section of the Computer screen.
+The same table, pre-filtered to one machine, is the log section of the Computer screen.
+
+*Built* (`server/webui/screens/blocklog.js`). The tab is named **Log** rather than Журнал
+because the cabinet has no i18n yet and the rest of it is in English; it moves with the
+rest when translation lands. The machine filter appears only in the room, where there is
+more than one machine to pick between, and the reasons are relabelled for a reader —
+`whitelist` shows as *Not on the list*, since "whitelist" as a reason reads like the
+opposite of what happened.
 
 ---
 

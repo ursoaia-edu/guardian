@@ -66,7 +66,7 @@ reach. Here it needs neither.
 | `api.js` | the whole HTTP surface; `fetch` is injectable so it is testable without a browser |
 | `hooks.js` | `usePoll` (refresh, backoff, hidden-tab pause), `useAction`, `useFreshness` |
 | `ui.js` | the shared components: `Card`, `Button`, `Field`, `Toggle`, `StateBadge`, `Banner`, `Confirm`, `Tally`, `PageHeader`, `Live`, `BrandMark`, `ErrorBoundary` |
-| `format.js` | the presentation rules worth testing: `isOnline`, `computerName`, `computerState`, `roomPolicy`, `roomMode`, `relativeTime`, `lastSeenMillis`, event labels |
+| `format.js` | the presentation rules worth testing: `isOnline`, `computerName`, `computerState`, `roomPolicy`, `roomMode`, `relativeTime`, `lastSeenMillis`, event and kill-reason labels |
 | `router.js` | `parseRoute`, `href`, `navigate`, `ROUTES`, `ROOM_TABS` — pure, no DOM |
 | `app.css` | the entire stylesheet, tokens included |
 | `favicon.svg` | the brand mark as a path, sharp at 16px |
@@ -76,8 +76,19 @@ reach. Here it needs neither.
 ### Screens
 
 `signin` (doubles as registration) · `welcome` (the first-computer wizard) · `overview` ·
-`rooms` · `room` with four tabs (computers, rules, power, members) · `computers` (the
-pool) · `computer` (one machine's passport) · `install` · `activity` · `settings`.
+`rooms` · `room` with five tabs (computers, rules, log, power, members) · `computers` (the
+pool) · `computer` (one machine's passport, with the same log) · `install` · `activity` ·
+`settings`.
+
+`blocklog.js` is not a screen but the table both the room's **Log** tab and the computer's
+passport render. The caller passes the loader, because the two endpoints are separate: a
+machine in no room has `room_id` NULL on every row, so the room query can never match it,
+and its history is readable only on its own screen. The machine filter appears only in the
+room, where there is more than one machine to choose between.
+
+The reasons are relabelled for the person reading them: `whitelist` shows as *Not on the
+list*, because "whitelist" as a reason reads like the opposite of what happened — the
+program was closed for being absent from it.
 
 ### When a screen throws
 
@@ -219,7 +230,7 @@ What is covered:
 - `router.js` — every route parses and every route survives a round trip through its own
   `href`, ids with spaces and slashes included; an unknown tab lands on the room's default
   tab rather than a dead end; anything unrecognised is `notfound` rather than a guess.
-- `api.js` — the account header appears only once an account is chosen, every request
+- `api.js` — `processEventQuery` sends only the filters that were set, the account header appears only once an account is chosen, every request
   carries `same-origin` credentials, a `204` and an empty body are both `null`, the
   server's own error message survives to the screen, a non-JSON reply falls back to its
   status, a dropped connection is status `0` rather than a server error, and an abort
