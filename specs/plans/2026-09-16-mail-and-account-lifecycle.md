@@ -503,3 +503,890 @@ git commit -m "feat(server): add the mail package, SMTP and a log transport"
 
 ---
 
+## Task 2: Configuration, and refusing to start without it
+
+**Files:**
+- Create: `server/mailer.go`, `server/mailtemplates.go`, `server/mailer_test.go`
+- Modify: `server/main.go` (the `Server` struct and startup)
+
+**Interfaces:**
+- Consumes: `mail.Sender`, `mail.ParseSMTPURL`, `mail.NewSMTPSender`, `mail.NewLogSender` (Task 1).
+- Produces:
+  - `func mailerFromEnv() (mail.Sender, error)`
+  - `Server.mail mail.Sender` and `Server.cabinetOrigin string`
+  - `func (s *Server) sendMail(m mail.Message)` — fire-and-forget, after commit
+  - `func verifyEmail(cabinetOrigin, name, token string) mail.Message`
+  - `func resetEmail(cabinetOrigin, name, token string) mail.Message`
+  - `type recordingSender struct` in `mailer_test.go`, used by Tasks 3 and 4
+
+- [ ] **Step 1: Write the failing tests**
+
+Create `server/mailer_test.go`:
+
+```go
+package main
+
+import (
+	"context"
+	"strings"
+	"sync"
+	"testing"
+
+	"server/internal/mail"
+)
+
+// recordingSender stands in for a mail server in every handler test. It is in
+// this file rather than each test's own because Tasks 3 and 4 both need it.
+type recordingSender struct {
+	mu   sync.Mutex
+	sent []mail.Message
+	err  error
+}
+
+func (s *recordingSender) Send(_ context.Context, m mail.Message) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.err != nil {
+		return s.err
+	}
+	s.sent = append(s.sent, m)
+	return nil
+}
+
+func (s *recordingSender) messages() []mail.Message {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]mail.Message(nil), s.sent...)
+}
+
+// lastTo returns the most recent message to an address, waiting for the
+// send goroutine to run. Handlers send after committing and off the request's
+// goroutine, so a test that reads immediately races them.
+func (s *recordingSender) lastTo(t *testing.T, email string) mail.Message {
+	t.Helper()
+	for i := 0; i < 200; i++ {
+		for _, m := range s.messages() {
+			if m.To == email {
+				return m
+			}
+		}
+		waitABit()
+	}
+	t.Fatalf("no message to %s; got %+v", email, s.messages())
+	return mail.Message{}
+}
+
+// A server that boots with mail silently disabled produces customers who
+// cannot reset their password and an operator who finds out from a support
+// ticket. Same shape as CABINET_ORIGIN, and for the same reason.
+func TestMailerRefusesToStartWithNoConfiguration(t *testing.T) {
+	t.Setenv("SMTP_URL", "")
+	t.Setenv("MAIL_TRANSPORT", "")
+	t.Setenv("MAIL_FROM", "Guardian <noreply@guardian.example>")
+	if _, err := mailerFromEnv(); err == nil {
+		t.Fatal("started with no SMTP_URL and no MAIL_TRANSPORT=log")
+	}
+}
+
+func TestMailerAcceptsTheExplicitDevelopmentOptOut(t *testing.T) {
+	t.Setenv("SMTP_URL", "")
+	t.Setenv("MAIL_TRANSPORT", "log")
+	t.Setenv("MAIL_FROM", "Guardian <noreply@guardian.example>")
+	s, err := mailerFromEnv()
+	if err != nil {
+		t.Fatalf("log transport refused: %v", err)
+	}
+	if s == nil {
+		t.Fatal("no sender")
+	}
+}
+
+func TestMailerNeedsAFromAddressItCanParse(t *testing.T) {
+	t.Setenv("SMTP_URL", "smtp://apikey:k@smtp.sendgrid.net:587")
+	for _, from := range []string{"", "not an address"} {
+		t.Setenv("MAIL_FROM", from)
+		if _, err := mailerFromEnv(); err == nil {
+			t.Errorf("accepted MAIL_FROM %q", from)
+		}
+	}
+}
+
+func TestMailerBuildsAnSMTPSenderFromTheURL(t *testing.T) {
+	t.Setenv("MAIL_TRANSPORT", "")
+	t.Setenv("SMTP_URL", "smtp://apikey:SG.k@smtp.sendgrid.net:587")
+	t.Setenv("MAIL_FROM", "Guardian <noreply@guardian.example>")
+	if _, err := mailerFromEnv(); err != nil {
+		t.Fatalf("refused a valid configuration: %v", err)
+	}
+}
+
+// The templates carry the one thing the email exists to deliver.
+func TestTemplatesCarryTheLinkAndTheProductName(t *testing.T) {
+	v := verifyEmail("https://guardian.example", "Мария", "tok-1")
+	if !strings.Contains(v.Body, "https://guardian.example/#/verify/tok-1") {
+		t.Fatalf("verification body has no usable link:\n%s", v.Body)
+	}
+	r := resetEmail("https://guardian.example", "", "tok-2")
+	if !strings.Contains(r.Body, "https://guardian.example/#/reset/tok-2") {
+		t.Fatalf("reset body has no usable link:\n%s", r.Body)
+	}
+	for _, m := range []mail.Message{v, r} {
+		if m.Subject == "" {
+			t.Error("a message has no subject")
+		}
+		if strings.Contains(m.Body, "%!") {
+			t.Errorf("a format verb went unfilled:\n%s", m.Body)
+		}
+	}
+}
+```
+
+Add to `server/testsupport_test.go`:
+
+```go
+// waitABit is the smallest sleep worth having: handlers send mail on their own
+// goroutine after committing, so a test that asserts on it has to yield.
+func waitABit() { time.Sleep(5 * time.Millisecond) }
+```
+
+(`testsupport_test.go` already imports `time`; if it does not, add it.)
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+Run: `cd server && go test . -run 'TestMailer|TestTemplates'`
+
+Expected: FAIL to compile — `undefined: mailerFromEnv`, `undefined: verifyEmail`, `undefined: resetEmail`.
+
+- [ ] **Step 3: Write the mailer**
+
+Create `server/mailer.go`:
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	netmail "net/mail"
+	"os"
+	"strings"
+	"time"
+
+	"server/internal/mail"
+)
+
+// mailSendTimeout bounds one message's round trip. It is longer than the
+// request timeout on purpose: the send happens on its own goroutine, after the
+// request's transaction has committed, so it is not holding anything up.
+const mailSendTimeout = 20 * time.Second
+
+// mailerFromEnv builds the sender from the environment, and refuses to build
+// one at all when nothing is configured.
+//
+// There is deliberately no silent default. A service that boots happily with
+// mail disabled produces customers who cannot reset their password and an
+// operator who finds out from a support ticket; making the development path an
+// explicit opt-in costs one line in a .env and removes that failure entirely.
+// Same shape as CABINET_ORIGIN, for the same reason.
+func mailerFromEnv() (mail.Sender, error) {
+	rawFrom := strings.TrimSpace(os.Getenv("MAIL_FROM"))
+	if rawFrom == "" {
+		return nil, fmt.Errorf("MAIL_FROM is required, e.g. \"Guardian <noreply@example.com>\" " +
+			"(the address must be verified in SendGrid)")
+	}
+	from, err := netmail.ParseAddress(rawFrom)
+	if err != nil {
+		return nil, fmt.Errorf("MAIL_FROM is not an address: %w", err)
+	}
+
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("MAIL_TRANSPORT")), "log") {
+		slog.Warn("MAIL_TRANSPORT=log: mail is printed, not sent")
+		return mail.NewLogSender(os.Stdout, from), nil
+	}
+
+	raw := strings.TrimSpace(os.Getenv("SMTP_URL"))
+	if raw == "" {
+		return nil, fmt.Errorf("SMTP_URL is required: the provider to send through, e.g. " +
+			"smtp://apikey:<API-KEY>@smtp.sendgrid.net:587 — or set MAIL_TRANSPORT=log to print mail instead")
+	}
+	cfg, err := mail.ParseSMTPURL(raw)
+	if err != nil {
+		return nil, err
+	}
+	return mail.NewSMTPSender(cfg, from), nil
+}
+
+// sendMail hands one message to the sender on its own goroutine, with its own
+// deadline, and logs whatever happens.
+//
+// Two rules live here. It runs AFTER the caller's transaction has committed —
+// an SMTP round trip inside a transaction holds a Postgres connection hostage
+// for as long as the provider feels like taking. And it never reports failure
+// to the caller: the row is already written, and telling somebody their
+// registration failed because SendGrid was slow would be a lie.
+//
+// The request's own context is deliberately not used: it is cancelled the
+// moment the response is written, which is before this has dialled anything.
+func (s *Server) sendMail(m mail.Message) {
+	if s.mail == nil {
+		slog.Error("no mailer configured; dropping a message", "to", m.To, "subject", m.Subject)
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), mailSendTimeout)
+		defer cancel()
+		if err := s.mail.Send(ctx, m); err != nil {
+			// Deliberately not surfaced to the user. SendGrid also accepts and
+			// then silently drops mail to a suppressed address, so "sent" is
+			// never a delivery guarantee anyway — see specs/server.md.
+			slog.Error("send mail", "to", m.To, "subject", m.Subject, "error", err)
+			return
+		}
+		slog.Info("sent mail", "to", m.To, "subject", m.Subject)
+	}()
+}
+```
+
+Create `server/mailtemplates.go`:
+
+```go
+package main
+
+import (
+	"fmt"
+	"strings"
+
+	"server/internal/mail"
+)
+
+// Every word Guardian sends, in one file.
+//
+// Russian, plain text, no HTML — per specs/2026-09-09-cabinet-v1-design.md §2.
+// The cabinet's own interface is English because it has no i18n yet; when that
+// lands, this file is the one place the language lives.
+//
+// No tracking pixels, no link wrapping: a password reset that is tracked is a
+// password reset with a third party's pixel in it.
+
+func greeting(name string) string {
+	if strings.TrimSpace(name) == "" {
+		return "Здравствуйте!"
+	}
+	return fmt.Sprintf("Здравствуйте, %s!", strings.TrimSpace(name))
+}
+
+func verifyEmail(cabinetOrigin, name, token string) mail.Message {
+	link := cabinetOrigin + "/#/verify/" + token
+	return mail.Message{
+		Subject: "Guardian: подтвердите адрес почты",
+		Body: fmt.Sprintf(`%s
+
+Вы зарегистрировались в Guardian. Чтобы подтвердить адрес, откройте ссылку:
+
+%s
+
+Ссылка действительна 48 часов.
+
+Пока адрес не подтверждён, вы можете пользоваться кабинетом, но не сможете
+скачать установщик для нового компьютера.
+
+Если вы не регистрировались в Guardian, просто удалите это письмо —
+без перехода по ссылке ничего не произойдёт.
+`, greeting(name), link),
+	}
+}
+
+func resetEmail(cabinetOrigin, name, token string) mail.Message {
+	link := cabinetOrigin + "/#/reset/" + token
+	return mail.Message{
+		Subject: "Guardian: восстановление пароля",
+		Body: fmt.Sprintf(`%s
+
+Кто-то запросил восстановление пароля для этого адреса. Чтобы задать новый
+пароль, откройте ссылку:
+
+%s
+
+Ссылка действительна один час и сработает один раз.
+
+После смены пароля все сеансы будут завершены — на всех устройствах
+понадобится войти заново.
+
+Если вы не запрашивали восстановление, ничего делать не нужно: пароль
+останется прежним.
+`, greeting(name), link),
+	}
+}
+```
+
+- [ ] **Step 4: Wire it into the server**
+
+In `server/main.go`, add to the `Server` struct:
+
+```go
+	// mail sends the handful of messages this product needs. Never nil in a
+	// running server: startup fails when it cannot be built. A Server built
+	// directly by a test may leave it nil, and sendMail says so loudly.
+	mail mail.Sender
+
+	// cabinetOrigin is the first CABINET_ORIGIN entry, used to build the links
+	// in outgoing mail. A link is only useful if it points at the cabinet the
+	// customer actually opens.
+	cabinetOrigin string
+```
+
+Add `"server/internal/mail"` to the file's imports.
+
+In `NewServer` (`server/main.go`), which is where every other piece of configuration is
+read. It currently discards the origins it validates; capture them, because the links in
+outgoing mail need one:
+
+```go
+	origins, err := cabinetOriginsFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	mailer, err := mailerFromEnv()
+	if err != nil {
+		return nil, err
+	}
+```
+
+(replacing the existing `if _, err := cabinetOriginsFromEnv(); err != nil { return nil, err }`),
+and in the returned struct literal:
+
+```go
+	return &Server{
+		pool:             pool,
+		trustedProxies:   proxies,
+		installerArchive: archive,
+		cabinet:          cabinet,
+		mail:             mailer,
+		cabinetOrigin:    strings.TrimRight(origins[0], "/"),
+	}, nil
+```
+
+Add `"strings"` to the imports if it is not already there. A configuration error returns
+from `NewServer` like every other one, so `main()` already reports it and exits.
+
+- [ ] **Step 5: Run the tests to verify they pass**
+
+Run: `cd server && gofmt -l . | grep -v webui; go vet ./... && go test . -run 'TestMailer|TestTemplates' -v`
+
+Expected: PASS.
+
+- [ ] **Step 6: Run the whole suite**
+
+Run: `cd server && go test ./...`
+
+Expected: green. Existing tests construct `&Server{pool: …}` directly and never call `sendMail`, so a nil mailer bothers nothing yet.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add server/mailer.go server/mailtemplates.go server/mailer_test.go server/main.go
+git commit -m "feat(server): configure the mailer, and refuse to start without one"
+```
+
+---
+
+## Task 3: Email verification, and the one thing it gates
+
+**Files:**
+- Create: `server/db/migrations/00019_email_tokens.sql`, `server/db/queries/email_tokens.sql`, `server/handlers_verify.go`, `server/verify_test.go`
+- Modify: `server/handlers_auth.go` (register sends the mail), `server/handlers_agent.go` (`handleCreateBindingToken` gains the gate), `server/routes.go`, `server/authz_test.go`
+
+**Interfaces:**
+- Consumes: `newToken`, `hashToken` (`server/auth.go`); `s.sendMail`, `verifyEmail`, `s.cabinetOrigin` (Task 2); `recordingSender` (Task 2).
+- Produces: `db.CreateEmailToken`, `db.ConsumeEmailToken`, `db.MarkEmailVerified`, `db.DeleteEmailTokensFor`, `db.GetUserByID`, `db.PurgeExpiredEmailTokens`; routes `POST /api/v1/auth/verify` and `POST /api/v1/account/verify/resend`.
+
+- [ ] **Step 1: Write the failing tests**
+
+Create `server/verify_test.go`:
+
+```go
+package main
+
+import (
+	"context"
+	"net/http"
+	"strings"
+	"testing"
+)
+
+// tokenFromLink pulls the opaque token out of the one link in an email.
+func tokenFromLink(t *testing.T, body, prefix string) string {
+	t.Helper()
+	i := strings.Index(body, prefix)
+	if i < 0 {
+		t.Fatalf("no %q in:\n%s", prefix, body)
+	}
+	rest := body[i+len(prefix):]
+	if j := strings.IndexAny(rest, " \r\n"); j >= 0 {
+		rest = rest[:j]
+	}
+	if rest == "" {
+		t.Fatalf("empty token in:\n%s", body)
+	}
+	return rest
+}
+
+func TestRegistrationSendsAVerificationLinkThatWorks(t *testing.T) {
+	sender := &recordingSender{}
+	s := &Server{pool: testPool(t), mail: sender, cabinetOrigin: "https://guardian.example"}
+	h := s.setupRoutes()
+
+	registerAndLogin(t, s, "parent@example.com")
+
+	msg := sender.lastTo(t, "parent@example.com")
+	token := tokenFromLink(t, msg.Body, "https://guardian.example/#/verify/")
+
+	if rr := doJSON(t, h, "POST", "/api/v1/auth/verify", map[string]string{"token": token}, nil); rr.Code != 204 {
+		t.Fatalf("verify: %d %s", rr.Code, rr.Body.String())
+	}
+
+	var verified bool
+	ctx := context.Background()
+	if err := s.pool.QueryRow(ctx,
+		`SELECT email_verified_at IS NOT NULL FROM users WHERE email = 'parent@example.com'`).Scan(&verified); err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if !verified {
+		t.Fatal("the column that has never been written still has not been written")
+	}
+}
+
+// Single use. A verification link in a mailbox somebody else later reads must
+// not still work.
+func TestAVerificationTokenWorksOnlyOnce(t *testing.T) {
+	sender := &recordingSender{}
+	s := &Server{pool: testPool(t), mail: sender, cabinetOrigin: "https://guardian.example"}
+	h := s.setupRoutes()
+	registerAndLogin(t, s, "parent@example.com")
+	token := tokenFromLink(t, sender.lastTo(t, "parent@example.com").Body, "https://guardian.example/#/verify/")
+
+	doJSON(t, h, "POST", "/api/v1/auth/verify", map[string]string{"token": token}, nil)
+	rr := doJSON(t, h, "POST", "/api/v1/auth/verify", map[string]string{"token": token}, nil)
+	if rr.Code != 400 {
+		t.Fatalf("a spent token was accepted again: %d", rr.Code)
+	}
+}
+
+func TestAnUnknownVerificationTokenIsRefused(t *testing.T) {
+	s := &Server{pool: testPool(t), mail: &recordingSender{}, cabinetOrigin: "https://guardian.example"}
+	h := s.setupRoutes()
+	for _, token := range []string{"", "not-a-token", strings.Repeat("a", 64)} {
+		if rr := doJSON(t, h, "POST", "/api/v1/auth/verify", map[string]string{"token": token}, nil); rr.Code != 400 {
+			t.Errorf("token %q answered %d, want 400", token, rr.Code)
+		}
+	}
+}
+
+// The gate. An unverified account can do everything except the two things that
+// reach outside it; installers are the one that exists today.
+func TestAnUnverifiedAccountCannotMintABindingToken(t *testing.T) {
+	sender := &recordingSender{}
+	s := &Server{pool: testPool(t), mail: sender, cabinetOrigin: "https://guardian.example"}
+	h := s.setupRoutes()
+	c := registerAndLogin(t, s, "parent@example.com")
+
+	if rr := doJSON(t, h, "POST", "/api/v1/binding-tokens", nil, c); rr.Code != 403 {
+		t.Fatalf("an unverified account minted an installer token: %d %s", rr.Code, rr.Body.String())
+	}
+
+	// Everything else still works: blocking the whole cabinet would mean a
+	// customer who mistypes their address cannot see what they bought.
+	if rr := doJSON(t, h, "GET", "/api/v1/rooms", nil, c); rr.Code != 200 {
+		t.Fatalf("an unverified account could not read its rooms: %d", rr.Code)
+	}
+	if rr := doJSON(t, h, "POST", "/api/v1/rooms", map[string]string{"name": "Kids"}, c); rr.Code != 201 {
+		t.Fatalf("an unverified account could not create a room: %d", rr.Code)
+	}
+
+	token := tokenFromLink(t, sender.lastTo(t, "parent@example.com").Body, "https://guardian.example/#/verify/")
+	doJSON(t, h, "POST", "/api/v1/auth/verify", map[string]string{"token": token}, nil)
+
+	if rr := doJSON(t, h, "POST", "/api/v1/binding-tokens", nil, c); rr.Code != 201 {
+		t.Fatalf("a verified account still could not mint: %d %s", rr.Code, rr.Body.String())
+	}
+}
+
+// A link eaten by a spam filter must not be the end of the story, because
+// verification gates handing out installers.
+func TestVerificationCanBeResent(t *testing.T) {
+	sender := &recordingSender{}
+	s := &Server{pool: testPool(t), mail: sender, cabinetOrigin: "https://guardian.example"}
+	h := s.setupRoutes()
+	c := registerAndLogin(t, s, "parent@example.com")
+
+	before := len(sender.messages())
+	if rr := doJSON(t, h, "POST", "/api/v1/account/verify/resend", nil, c); rr.Code != 204 {
+		t.Fatalf("resend: %d %s", rr.Code, rr.Body.String())
+	}
+	for i := 0; i < 200 && len(sender.messages()) == before; i++ {
+		waitABit()
+	}
+	if len(sender.messages()) <= before {
+		t.Fatal("resend sent nothing")
+	}
+
+	// The newest link works, which also proves the old one was replaced rather
+	// than accumulating.
+	msgs := sender.messages()
+	token := tokenFromLink(t, msgs[len(msgs)-1].Body, "https://guardian.example/#/verify/")
+	if rr := doJSON(t, h, "POST", "/api/v1/auth/verify", map[string]string{"token": token}, nil); rr.Code != 204 {
+		t.Fatalf("the resent link did not work: %d", rr.Code)
+	}
+}
+
+// Nobody else's address. The token is bearer proof of one mailbox; a session
+// is irrelevant to it.
+func TestVerifyingIsNotDoneWithASession(t *testing.T) {
+	sender := &recordingSender{}
+	s := &Server{pool: testPool(t), mail: sender, cabinetOrigin: "https://guardian.example"}
+	h := s.setupRoutes()
+	registerAndLogin(t, s, "a@example.com")
+	other := registerAndLogin(t, s, "b@example.com")
+	token := tokenFromLink(t, sender.lastTo(t, "a@example.com").Body, "https://guardian.example/#/verify/")
+
+	// B's session, A's token: A gets verified, because the token is what
+	// proves the mailbox.
+	if rr := doJSON(t, h, "POST", "/api/v1/auth/verify", map[string]string{"token": token}, other); rr.Code != 204 {
+		t.Fatalf("verify with another session: %d", rr.Code)
+	}
+	ctx := context.Background()
+	var aVerified, bVerified bool
+	if err := s.pool.QueryRow(ctx,
+		`SELECT
+		   (SELECT email_verified_at IS NOT NULL FROM users WHERE email='a@example.com'),
+		   (SELECT email_verified_at IS NOT NULL FROM users WHERE email='b@example.com')`).
+		Scan(&aVerified, &bVerified); err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if !aVerified || bVerified {
+		t.Fatalf("verified the wrong user: a=%v b=%v", aVerified, bVerified)
+	}
+}
+
+// Mail is best-effort by design, and registration is not.
+func TestRegistrationSucceedsWhenMailFails(t *testing.T) {
+	sender := &recordingSender{err: http.ErrServerClosed}
+	s := &Server{pool: testPool(t), mail: sender, cabinetOrigin: "https://guardian.example"}
+	h := s.setupRoutes()
+
+	rr := doJSON(t, h, "POST", "/api/v1/auth/register",
+		map[string]string{"email": "parent@example.com", "password": "correct-horse-battery"}, nil)
+	if rr.Code != 201 {
+		t.Fatalf("registration failed because mail did: %d %s", rr.Code, rr.Body.String())
+	}
+}
+```
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+Run: `cd server && go test . -run 'TestRegistrationSends|TestAVerificationToken|TestAnUnknownVerification|TestAnUnverifiedAccount|TestVerificationCanBeResent|TestVerifyingIsNot|TestRegistrationSucceedsWhenMailFails'`
+
+Expected: FAIL — `unknown field mail in struct literal`, then once that compiles, `404` from the routes that do not exist.
+
+- [ ] **Step 3: Write the migration**
+
+Create `server/db/migrations/00019_email_tokens.sql`:
+
+```sql
+-- +goose Up
+-- One digest table for both the "confirm your address" and the "reset your
+-- password" links. They have the same shape — a single-use bearer token with
+-- an expiry, tied to one user and one address — and splitting them would mean
+-- two tables, two purges and two sets of the same mistakes.
+--
+-- No RLS, for the same reason sessions has none: the row carries no
+-- account_id and is reached before any account scope exists. A reset link is
+-- followed by somebody who is, by definition, not signed in.
+CREATE TABLE email_tokens (
+    token_hash TEXT PRIMARY KEY,
+    user_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    purpose    TEXT NOT NULL CHECK (purpose IN ('verify', 'reset')),
+    -- The address the link was sent to, which is not necessarily the user's
+    -- current one: somebody who changes their address must not have an old
+    -- link confirm the new one.
+    email      TEXT NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    used_at    TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Every read is "this user's tokens of this purpose", when superseding them.
+CREATE INDEX idx_email_tokens_user ON email_tokens(user_id, purpose);
+
+-- +goose Down
+DROP TABLE email_tokens;
+```
+
+- [ ] **Step 4: Write the queries**
+
+Create `server/db/queries/email_tokens.sql`:
+
+```sql
+-- name: CreateEmailToken :exec
+INSERT INTO email_tokens (token_hash, user_id, purpose, email, expires_at)
+VALUES ($1, $2, $3, $4, $5);
+
+-- name: DeleteEmailTokensFor :exec
+-- Minting supersedes: a fresh link invalidates the previous one, so a mailbox
+-- never holds two working links to the same door.
+DELETE FROM email_tokens WHERE user_id = $1 AND purpose = $2;
+
+-- name: ConsumeEmailToken :one
+-- Marks the token used and returns it, in one statement. Two statements would
+-- be a race: two clicks on the same link, milliseconds apart, would both find
+-- it unused. The WHERE clause carries every condition, so a spent, expired or
+-- unknown token all return no rows and are answered identically.
+UPDATE email_tokens SET used_at = now()
+WHERE token_hash = $1 AND purpose = $2 AND used_at IS NULL AND expires_at > now()
+RETURNING user_id, email;
+
+-- name: MarkEmailVerified :execrows
+-- Only when the address still matches the one the link was sent to, and only
+-- when it is not already verified.
+UPDATE users SET email_verified_at = now()
+WHERE id = $1 AND email = $2 AND email_verified_at IS NULL;
+
+-- name: GetUserByID :one
+SELECT * FROM users WHERE id = $1;
+
+-- name: SetPassword :exec
+UPDATE users SET password_hash = $2 WHERE id = $1;
+
+-- name: DeleteSessionsForUser :execrows
+-- Every session, for a completed reset.
+DELETE FROM sessions WHERE user_id = $1;
+
+-- name: DeleteOtherSessionsForUser :execrows
+-- Every session except the one asking, for a password change from inside the
+-- cabinet: the person doing it should not be signed out by their own action.
+DELETE FROM sessions WHERE user_id = $1 AND token_hash <> $2;
+
+-- name: PurgeExpiredEmailTokens :execrows
+-- Spent or expired, plus a day of grace so a "my link says it is invalid"
+-- question can still be answered by looking.
+DELETE FROM email_tokens WHERE expires_at < now() - interval '1 day';
+```
+
+- [ ] **Step 5: Regenerate the sqlc code**
+
+Run: `cd server && go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.27.0 generate`
+
+Expected: a new `internal/db/email_tokens.sql.go` and an `EmailToken` model. CI runs `sqlc diff` and fails when the committed output does not match, so this step is not optional.
+
+- [ ] **Step 6: Write the handlers**
+
+Create `server/handlers_verify.go`:
+
+```go
+package main
+
+import (
+	"errors"
+	"log/slog"
+	"net/http"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+
+	"server/internal/db"
+)
+
+// verifyTokenTTL is how long a confirmation link lives. Longer than a reset
+// link because it is far less dangerous — it proves a mailbox, it does not
+// open an account — and because a registration email is often read the next
+// day.
+const verifyTokenTTL = 48 * time.Hour
+
+// sendVerification mints a link and mails it, superseding any previous one.
+// It is called after the caller's transaction has committed.
+func (s *Server) sendVerification(ctx context.Context, userID uuid.UUID, email, name string) {
+	plain, hash := newToken()
+	q := db.New(s.pool)
+	if err := q.DeleteEmailTokensFor(ctx, db.DeleteEmailTokensForParams{
+		UserID: userID, Purpose: "verify",
+	}); err != nil {
+		slog.Error("supersede verification tokens", "error", err)
+		return
+	}
+	if err := q.CreateEmailToken(ctx, db.CreateEmailTokenParams{
+		TokenHash: hash, UserID: userID, Purpose: "verify", Email: email,
+		ExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(verifyTokenTTL), Valid: true},
+	}); err != nil {
+		slog.Error("create verification token", "error", err)
+		return
+	}
+	s.sendMail(verifyEmail(s.cabinetOrigin, name, plain))
+}
+
+type tokenRequest struct {
+	Token string `json:"token"`
+}
+
+// handleVerifyEmail consumes a confirmation link. Unauthenticated on purpose:
+// the token is what proves the mailbox, and the link is often opened in a
+// browser that has never signed in.
+func (s *Server) handleVerifyEmail(w http.ResponseWriter, r *http.Request) {
+	var req tokenRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Token == "" {
+		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "This confirmation link is not valid"})
+		return
+	}
+
+	ctx := r.Context()
+	row, err := db.New(s.pool).ConsumeEmailToken(ctx, db.ConsumeEmailTokenParams{
+		TokenHash: hashToken(req.Token), Purpose: "verify",
+	})
+	if err != nil {
+		// Unknown, spent and expired are one answer. Distinguishing them tells
+		// somebody holding a stolen link which kind of wrong it is.
+		if !errors.Is(err, pgx.ErrNoRows) {
+			slog.Error("consume verification token", "error", err)
+		}
+		writeJSON(w, http.StatusBadRequest,
+			ErrorResponse{Error: "This confirmation link is not valid or has already been used"})
+		return
+	}
+
+	if _, err := db.New(s.pool).MarkEmailVerified(ctx, db.MarkEmailVerifiedParams{
+		ID: row.UserID, Email: row.Email,
+	}); err != nil {
+		slog.Error("mark email verified", "error", err)
+		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "Internal error"})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleResendVerification sends the link again to the signed-in user's own
+// address. Rate-limited at the route, and a no-op for an address that is
+// already confirmed.
+func (s *Server) handleResendVerification(w http.ResponseWriter, r *http.Request) {
+	t, ok := mustTenant(w, r)
+	if !ok {
+		return
+	}
+	user, err := db.New(s.pool).GetUserByID(r.Context(), t.UserID)
+	if err != nil {
+		slog.Error("read user for resend", "error", err)
+		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "Internal error"})
+		return
+	}
+	if user.EmailVerifiedAt.Valid {
+		// Already done. Answering 204 keeps the cabinet's code path simple and
+		// tells a re-clicker nothing they did not know.
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	s.sendVerification(r.Context(), user.ID, user.Email, user.Name)
+	w.WriteHeader(http.StatusNoContent)
+}
+```
+
+Add the imports this file needs: `context`, `encoding/json`, `github.com/google/uuid`, `github.com/jackc/pgx/v5/pgtype`.
+
+- [ ] **Step 7: Send on registration, and gate the installer**
+
+In `server/handlers_auth.go`, at the end of `handleRegister` — **after** `tx.Commit(ctx)` succeeds and before writing the response:
+
+```go
+	// After the commit, never inside it: an SMTP round trip inside a
+	// transaction holds a Postgres connection for as long as the provider
+	// takes, and a registration that already succeeded must not be undone by
+	// a mail failure.
+	s.sendVerification(context.WithoutCancel(ctx), user.ID, user.Email, user.Name)
+```
+
+Add `"context"` to that file's imports if it is not already there.
+
+In `server/handlers_agent.go`, at the top of `handleCreateBindingToken`, immediately after `mustTenant`:
+
+```go
+	// An unverified address may not hand out installers. This and inviting
+	// somebody are the two actions that reach outside the account — one adds
+	// machines, the other adds people — and gating exactly these two is what
+	// stops a typo'd or someone else's address from becoming a working fleet.
+	// Everything else in the cabinet stays open: blocking it all would mean a
+	// customer who mistypes their address cannot see what they bought.
+	user, err := db.New(s.pool).GetUserByID(r.Context(), t.UserID)
+	if err != nil {
+		slog.Error("read user for the installer gate", "error", err)
+		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "Internal error"})
+		return
+	}
+	if !user.EmailVerifiedAt.Valid {
+		writeJSON(w, http.StatusForbidden, ErrorResponse{
+			Error: "Confirm your email address before installing the agent on a computer"})
+		return
+	}
+```
+
+The same gate belongs on `GET /api/v1/installer` (`server/installer.go`), which mints a binding token of its own — add the identical block after its `mustTenant`.
+
+- [ ] **Step 8: Register and classify the routes**
+
+In `server/routes.go`, in the unauthenticated auth group next to register and login:
+
+```go
+			r.With(perIP(loginRateLimit)).Post("/auth/verify", s.handleVerifyEmail)
+```
+
+and in the session-authenticated guest-reachable group:
+
+```go
+			r.With(perIP(registerRateLimit)).Post("/account/verify/resend", s.handleResendVerification)
+```
+
+In `server/authz_test.go`, add to `guestReachableRoutes`:
+
+```go
+	"POST /api/v1/account/verify/resend":                 true,
+```
+
+**Why the resend lives under `/account/` and not next to `/auth/verify`.**
+`TestEveryAPIRouteIsClassified` skips every route under `/api/v1/auth/` — "no
+session yet, so no role to check", which is true of the routes that are there
+now. A session-authenticated route under that prefix would be invisible to the
+one test whose whole job is to make sure nobody forgets to classify a route.
+`POST /api/v1/auth/verify` itself stays unauthenticated and therefore needs no
+entry; the resend is a signed-in action and belongs with the other thing a
+signed-in person does to their own identity, `POST /api/v1/account/password`.
+
+- [ ] **Step 9: Run the tests to verify they pass**
+
+Run:
+```sh
+cd server && go run . migrate
+go test . -run 'TestRegistrationSends|TestAVerificationToken|TestAnUnknownVerification|TestAnUnverifiedAccount|TestVerificationCanBeResent|TestVerifyingIsNot|TestRegistrationSucceedsWhenMailFails' -v
+```
+
+Expected: PASS, all of them.
+
+- [ ] **Step 10: Run the whole suite**
+
+Run: `cd server && gofmt -l . | grep -v webui; go vet ./... && go test ./...`
+
+Expected: green. **Watch for enrollment tests that mint a binding token as a freshly registered user** — they now need a verified address. Fix them by verifying in the test helper rather than by loosening the gate: in `server/enroll_test.go`'s `mintBindingToken`, mark the user verified first with a direct `UPDATE users SET email_verified_at = now()` on the pool, and say in a comment why.
+
+- [ ] **Step 11: Update the docs**
+
+In `specs/api.md`: document `POST /api/v1/auth/verify` and `POST /api/v1/account/verify/resend`, and add to `POST /api/v1/binding-tokens` and `GET /api/v1/installer` that both answer `403` until the caller's address is confirmed. In `specs/server.md`: an `### email_tokens` section next to `### sessions`, saying it carries no RLS and why. In `CLAUDE.md`: the two routes in the endpoint list, and `email_tokens` in the table list.
+
+- [ ] **Step 12: Commit**
+
+```bash
+git add server/db/migrations/00019_email_tokens.sql server/db/queries/email_tokens.sql \
+        server/internal/db server/handlers_verify.go server/verify_test.go \
+        server/handlers_auth.go server/handlers_agent.go server/installer.go \
+        server/routes.go server/authz_test.go server/enroll_test.go \
+        specs/api.md specs/server.md CLAUDE.md
+git commit -m "feat(server): confirm email addresses, and gate installers on it"
+```
+
+---
+
