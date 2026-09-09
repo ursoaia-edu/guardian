@@ -1996,3 +1996,381 @@ git commit -m "feat(server): purge spent email tokens, and document the mail set
 
 ---
 
+## Task 6: The cabinet screens
+
+Without these the emailed links land on the overview and nothing happens, which makes every task above invisible.
+
+**Files:**
+- Create: `server/webui/screens/verify.js`, `server/webui/screens/password.js`
+- Modify: `server/webui/api.js`, `server/webui/router.js`, `server/webui/app.js`, `server/webui/screens/signin.js`, `server/webui/screens/settings.js`
+- Test: `server/webui-tests/router.test.mjs`, `server/webui-tests/api.test.mjs`
+
+**Interfaces:**
+- Consumes: the five routes from Tasks 3 and 4.
+- Produces: routes `verify` (`#/verify/<token>`), `reset` (`#/reset/<token>`), `forgot` (`#/forgot`); `api.verifyEmail`, `api.resendVerification`, `api.forgotPassword`, `api.resetPassword`, `api.changePassword`.
+
+- [ ] **Step 1: Write the failing router tests**
+
+Append to `server/webui-tests/router.test.mjs`:
+
+```js
+test('the links in an email are routes', () => {
+  assert.deepEqual(parseRoute('#/verify/abc123'), { name: 'verify', params: { token: 'abc123' } })
+  assert.deepEqual(parseRoute('#/reset/abc123'), { name: 'reset', params: { token: 'abc123' } })
+  assert.deepEqual(parseRoute('#/forgot'), { name: 'forgot', params: {} })
+})
+
+test('a token with url-unsafe characters survives the round trip', () => {
+  // The token is hex today, but a route that breaks on one is a trap set for
+  // whoever changes the minting.
+  for (const token of ['a b', 'a/b', 'a+b']) {
+    const route = parseRoute(href('verify', { token }))
+    assert.equal(route.name, 'verify')
+    assert.equal(route.params.token, token)
+  }
+})
+```
+
+Append to `server/webui-tests/api.test.mjs`:
+
+```js
+test('the account-lifecycle calls post what the server expects', async () => {
+  const { calls, fetchImpl } = fakeFetch(() => new Response(null, { status: 204 }))
+  const api = createApi({ fetch: fetchImpl })
+
+  await api.verifyEmail('tok')
+  await api.forgotPassword('a@b.example')
+  await api.resetPassword('tok', 'a-new-password')
+  await api.changePassword('old', 'a-new-password')
+  await api.resendVerification()
+
+  assert.equal(calls[0].url, '/api/v1/auth/verify')
+  assert.deepEqual(JSON.parse(calls[0].init.body), { token: 'tok' })
+  assert.equal(calls[1].url, '/api/v1/auth/password/forgot')
+  assert.deepEqual(JSON.parse(calls[1].init.body), { email: 'a@b.example' })
+  assert.equal(calls[2].url, '/api/v1/auth/password/reset')
+  assert.deepEqual(JSON.parse(calls[2].init.body), { token: 'tok', password: 'a-new-password' })
+  assert.equal(calls[3].url, '/api/v1/account/password')
+  assert.deepEqual(JSON.parse(calls[3].init.body), { current: 'old', new: 'a-new-password' })
+  assert.equal(calls[4].url, '/api/v1/account/verify/resend')
+})
+```
+
+- [ ] **Step 2: Run them to verify they fail**
+
+Run: `cd server/webui-tests && node --test`
+
+Expected: FAIL — `notfound` for the three routes, `api.verifyEmail is not a function`.
+
+- [ ] **Step 3: Add the routes and the API calls**
+
+In `server/webui/router.js`, add to `ROUTES`:
+
+```js
+  { name: 'forgot', pattern: ['forgot'] },
+  { name: 'verify', pattern: ['verify', ':token'] },
+  { name: 'reset', pattern: ['reset', ':token'] },
+```
+
+and to `href`:
+
+```js
+    case 'verify':
+      return `#/verify/${encodeURIComponent(params.token)}`
+    case 'reset':
+      return `#/reset/${encodeURIComponent(params.token)}`
+```
+
+In `server/webui/api.js`, alongside the other auth calls:
+
+```js
+    verifyEmail: (token) => request('POST', '/api/v1/auth/verify', { body: { token } }),
+    resendVerification: () => request('POST', '/api/v1/account/verify/resend'),
+    forgotPassword: (email) => request('POST', '/api/v1/auth/password/forgot', { body: { email } }),
+    resetPassword: (token, password) =>
+      request('POST', '/api/v1/auth/password/reset', { body: { token, password } }),
+    changePassword: (current, next) =>
+      request('POST', '/api/v1/account/password', { body: { current, new: next } }),
+```
+
+- [ ] **Step 4: Write the screens**
+
+Create `server/webui/screens/verify.js`:
+
+```js
+const { useState, useEffect } = window.React
+
+import { html, Card, Button, Banner, Loading, BrandMark } from '../ui.js'
+import { href, navigate } from '../router.js'
+
+// The landing for a confirmation link. It runs before anybody signs in,
+// because the link is usually opened in whatever browser the mail client
+// hands it to.
+export function VerifyScreen({ api, token, signedIn }) {
+  const [state, setState] = useState('working') // working | done | failed
+  const [error, setError] = useState(null)
+
+  useEffect(() => {
+    let alive = true
+    api
+      .verifyEmail(token)
+      .then(() => alive && setState('done'))
+      .catch((err) => {
+        if (!alive) return
+        setError(err)
+        setState('failed')
+      })
+    return () => {
+      alive = false
+    }
+  }, [api, token])
+
+  return html`
+    <div class="signin">
+      <div class="signin-card">
+        <div class="brand"><${BrandMark} /><span>Guardian</span></div>
+        ${state === 'working' && html`<${Card}><${Loading} what="Confirming your address" /><//>`}
+        ${state === 'done' &&
+        html`<${Card} title="Address confirmed">
+          <p>You can install the agent on a computer now.</p>
+          <${Button} kind="primary" onClick=${() => navigate(signedIn ? 'install' : 'overview')}>
+            ${signedIn ? 'Install the agent' : 'Sign in'}
+          <//>
+        <//>`}
+        ${state === 'failed' &&
+        html`<${Card} title="This link did not work">
+          <${Banner} kind="warn">
+            ${(error && error.message) || 'The link is not valid or has already been used.'}
+          <//>
+          <p class="hint">
+            A confirmation link works once and lasts 48 hours. Sign in and ask for a new one from
+            Settings.
+          </p>
+          <a href=${href('overview')}>Go to the cabinet</a>
+        <//>`}
+      </div>
+    </div>
+  `
+}
+```
+
+Create `server/webui/screens/password.js`:
+
+```js
+const { useState } = window.React
+
+import { html, Card, Button, Field, TextInput, Banner, ErrorBanner, BrandMark } from '../ui.js'
+import { href, navigate } from '../router.js'
+
+// "I forgot it". Signed out, so it draws its own page rather than living in
+// the shell.
+export function ForgotScreen({ api }) {
+  const [email, setEmail] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [sent, setSent] = useState(false)
+  const [error, setError] = useState(null)
+
+  async function submit(event) {
+    event.preventDefault()
+    setBusy(true)
+    setError(null)
+    try {
+      await api.forgotPassword(email.trim())
+      setSent(true)
+    } catch (err) {
+      setError(err)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return html`
+    <div class="signin">
+      <div class="signin-card">
+        <div class="brand"><${BrandMark} /><span>Guardian</span></div>
+        <h1>Reset your password</h1>
+        ${sent
+          ? html`<${Card} title="Check your email">
+              <p>
+                If that address has an account, a link is on its way. It works once and lasts an
+                hour.
+              </p>
+              <p class="hint">
+                Nothing arrived? Look in spam, then try again — the answer here is the same whether
+                or not the address is registered, on purpose.
+              </p>
+              <a href=${href('overview')}>Back to sign in</a>
+            <//>`
+          : html`
+              <p class="signin-lede">We will email you a link to set a new one.</p>
+              <${ErrorBanner} error=${error} onDismiss=${() => setError(null)} />
+              <form onSubmit=${submit}>
+                <${Field} label="Email">
+                  <${TextInput}
+                    type="email"
+                    value=${email}
+                    onChange=${setEmail}
+                    autoComplete="email"
+                    required=${true}
+                  />
+                <//>
+                <${Button} type="submit" kind="primary" busy=${busy}>Email me a link<//>
+              </form>
+              <p class="signin-switch"><a href=${href('overview')}>Back to sign in</a></p>
+            `}
+      </div>
+    </div>
+  `
+}
+
+// The landing for a reset link.
+export function ResetScreen({ api, token }) {
+  const [password, setPassword] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [done, setDone] = useState(false)
+  const [error, setError] = useState(null)
+
+  async function submit(event) {
+    event.preventDefault()
+    setBusy(true)
+    setError(null)
+    try {
+      await api.resetPassword(token, password)
+      setDone(true)
+    } catch (err) {
+      setError(err)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return html`
+    <div class="signin">
+      <div class="signin-card">
+        <div class="brand"><${BrandMark} /><span>Guardian</span></div>
+        <h1>Set a new password</h1>
+        ${done
+          ? html`<${Card} title="Password changed">
+              <${Banner} kind="info">
+                Every device has been signed out. Sign in again with the new password.
+              <//>
+              <${Button} kind="primary" onClick=${() => navigate('overview')}>Sign in<//>
+            <//>`
+          : html`
+              <${ErrorBanner} error=${error} onDismiss=${() => setError(null)} />
+              <form onSubmit=${submit}>
+                <${Field} label="New password" hint="At least 8 characters.">
+                  <${TextInput}
+                    type="password"
+                    value=${password}
+                    onChange=${setPassword}
+                    autoComplete="new-password"
+                    required=${true}
+                  />
+                <//>
+                <${Button} type="submit" kind="primary" busy=${busy}>Set the password<//>
+              </form>
+              <p class="signin-switch">
+                Link expired? <a href=${href('forgot')}>Ask for a new one</a>
+              </p>
+            `}
+      </div>
+    </div>
+  `
+}
+
+// The change form, for somebody already signed in. Lives in Settings.
+export function ChangePasswordCard({ api }) {
+  const [current, setCurrent] = useState('')
+  const [next, setNext] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [done, setDone] = useState(false)
+  const [error, setError] = useState(null)
+
+  async function submit(event) {
+    event.preventDefault()
+    setBusy(true)
+    setError(null)
+    setDone(false)
+    try {
+      await api.changePassword(current, next)
+      setCurrent('')
+      setNext('')
+      setDone(true)
+    } catch (err) {
+      setError(err)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return html`
+    <${Card} title="Password">
+      <${ErrorBanner} error=${error} onDismiss=${() => setError(null)} />
+      ${done && html`<${Banner} kind="info">Changed. Every other device has been signed out.<//>`}
+      <form class="inline-form" onSubmit=${submit}>
+        <${Field} label="Current password">
+          <${TextInput} type="password" value=${current} onChange=${setCurrent} autoComplete="current-password" />
+        <//>
+        <${Field} label="New password" hint="At least 8 characters.">
+          <${TextInput} type="password" value=${next} onChange=${setNext} autoComplete="new-password" />
+        <//>
+        <${Button} type="submit" kind="primary" busy=${busy}>Change it<//>
+      </form>
+    <//>
+  `
+}
+```
+
+- [ ] **Step 5: Mount them**
+
+In `server/webui/app.js`:
+
+- import `VerifyScreen` from `./screens/verify.js` and `ForgotScreen`, `ResetScreen` from `./screens/password.js`;
+- **before** the `status === 'signedout'` branch, handle the three routes that must work without a session:
+
+```js
+  // These three are reached from a link in an email, by somebody who is very
+  // often not signed in. They are checked before the sign-in gate, not after.
+  if (route.name === 'verify') {
+    return html`<${VerifyScreen} api=${api} token=${route.params.token} signedIn=${status === 'ready'} />`
+  }
+  if (route.name === 'reset') {
+    return html`<${ResetScreen} api=${api} token=${route.params.token} />`
+  }
+  if (status !== 'ready' && route.name === 'forgot') {
+    return html`<${ForgotScreen} api=${api} />`
+  }
+```
+
+In `server/webui/screens/signin.js`, under the form:
+
+```js
+        <p class="signin-switch"><a href=${href('forgot')}>Forgot your password?</a></p>
+```
+
+(and import `href` from `../router.js`).
+
+In `server/webui/screens/settings.js`, import `ChangePasswordCard` from `./password.js`, render `<${ChangePasswordCard} api=${api} />` under the "You" card, and delete the sentence that says changing a password is not built yet.
+
+- [ ] **Step 6: Run the tests to verify they pass**
+
+Run: `cd server/webui-tests && node --test`
+
+Expected: PASS, everything including the new cases.
+
+- [ ] **Step 7: Look at it**
+
+With the fixture harness serving `server/webui/`, open `#/forgot`, `#/reset/anything` and `#/verify/anything` and confirm each draws its own page rather than the shell, and that Settings shows the change form.
+
+- [ ] **Step 8: Update the docs and commit**
+
+In `specs/cabinet.md`, add the three screens to the screen list and a line on why they are handled before the sign-in gate. In `CLAUDE.md`, update the cabinet's screen count and mention the three.
+
+```bash
+git add server/webui server/webui-tests specs/cabinet.md CLAUDE.md
+git commit -m "feat(cabinet): confirm an address and recover a password"
+```
+
+---
+
