@@ -1390,3 +1390,609 @@ git commit -m "feat(server): confirm email addresses, and gate installers on it"
 
 ---
 
+## Task 4: Password reset and change
+
+**Files:**
+- Create: `server/handlers_password.go`, `server/password_test.go`
+- Modify: `server/routes.go`, `server/authz_test.go`
+
+**Interfaces:**
+- Consumes: everything Task 3 produced, plus `hashPassword`, `verifyPassword` (`server/auth.go`) and `resetEmail` (Task 2).
+- Produces: routes `POST /api/v1/auth/password/forgot`, `POST /api/v1/auth/password/reset`, `POST /api/v1/account/password`.
+
+- [ ] **Step 1: Write the failing tests**
+
+Create `server/password_test.go`:
+
+```go
+package main
+
+import (
+	"context"
+	"testing"
+)
+
+const newPassword = "a-much-better-password"
+
+func TestForgotSendsALinkThatResetsThePassword(t *testing.T) {
+	sender := &recordingSender{}
+	s := &Server{pool: testPool(t), mail: sender, cabinetOrigin: "https://guardian.example"}
+	h := s.setupRoutes()
+	registerAndLogin(t, s, "parent@example.com")
+
+	if rr := doJSON(t, h, "POST", "/api/v1/auth/password/forgot",
+		map[string]string{"email": "parent@example.com"}, nil); rr.Code != 204 {
+		t.Fatalf("forgot: %d %s", rr.Code, rr.Body.String())
+	}
+	token := tokenFromLink(t, sender.lastTo(t, "parent@example.com").Body, "https://guardian.example/#/reset/")
+
+	if rr := doJSON(t, h, "POST", "/api/v1/auth/password/reset",
+		map[string]string{"token": token, "password": newPassword}, nil); rr.Code != 204 {
+		t.Fatalf("reset: %d %s", rr.Code, rr.Body.String())
+	}
+
+	// The new one works and the old one does not.
+	if rr := doJSON(t, h, "POST", "/api/v1/auth/login",
+		map[string]string{"email": "parent@example.com", "password": newPassword}, nil); rr.Code != 200 {
+		t.Fatalf("login with the new password: %d", rr.Code)
+	}
+	if rr := doJSON(t, h, "POST", "/api/v1/auth/login",
+		map[string]string{"email": "parent@example.com", "password": "correct-horse-battery"}, nil); rr.Code == 200 {
+		t.Fatal("the old password still works")
+	}
+}
+
+// Account enumeration: the registration endpoint already treats it as a bug to
+// avoid, and a reset endpoint that leaks it undoes that.
+func TestForgotAnswersTheSameForAnUnknownAddress(t *testing.T) {
+	sender := &recordingSender{}
+	s := &Server{pool: testPool(t), mail: sender, cabinetOrigin: "https://guardian.example"}
+	h := s.setupRoutes()
+	registerAndLogin(t, s, "known@example.com")
+
+	known := doJSON(t, h, "POST", "/api/v1/auth/password/forgot", map[string]string{"email": "known@example.com"}, nil)
+	unknown := doJSON(t, h, "POST", "/api/v1/auth/password/forgot", map[string]string{"email": "nobody@example.com"}, nil)
+
+	if known.Code != 204 || unknown.Code != 204 {
+		t.Fatalf("statuses differ: known %d, unknown %d", known.Code, unknown.Code)
+	}
+	if known.Body.String() != unknown.Body.String() {
+		t.Fatalf("bodies differ: %q vs %q", known.Body.String(), unknown.Body.String())
+	}
+	// And nothing was sent to the address that does not exist.
+	for _, m := range sender.messages() {
+		if m.To == "nobody@example.com" {
+			t.Fatal("mailed an address with no account")
+		}
+	}
+}
+
+// A reset is the one moment somebody might be taking an account back from
+// whoever has been in it.
+func TestACompletedResetEndsEverySession(t *testing.T) {
+	sender := &recordingSender{}
+	s := &Server{pool: testPool(t), mail: sender, cabinetOrigin: "https://guardian.example"}
+	h := s.setupRoutes()
+	first := registerAndLogin(t, s, "parent@example.com")
+
+	doJSON(t, h, "POST", "/api/v1/auth/password/forgot", map[string]string{"email": "parent@example.com"}, nil)
+	token := tokenFromLink(t, sender.lastTo(t, "parent@example.com").Body, "https://guardian.example/#/reset/")
+	doJSON(t, h, "POST", "/api/v1/auth/password/reset",
+		map[string]string{"token": token, "password": newPassword}, nil)
+
+	if rr := doJSON(t, h, "GET", "/api/v1/me", nil, first); rr.Code != 401 {
+		t.Fatalf("a session survived the reset: %d", rr.Code)
+	}
+}
+
+func TestAResetTokenWorksOnlyOnceAndExpires(t *testing.T) {
+	sender := &recordingSender{}
+	s := &Server{pool: testPool(t), mail: sender, cabinetOrigin: "https://guardian.example"}
+	h := s.setupRoutes()
+	registerAndLogin(t, s, "parent@example.com")
+	doJSON(t, h, "POST", "/api/v1/auth/password/forgot", map[string]string{"email": "parent@example.com"}, nil)
+	token := tokenFromLink(t, sender.lastTo(t, "parent@example.com").Body, "https://guardian.example/#/reset/")
+
+	doJSON(t, h, "POST", "/api/v1/auth/password/reset", map[string]string{"token": token, "password": newPassword}, nil)
+	rr := doJSON(t, h, "POST", "/api/v1/auth/password/reset",
+		map[string]string{"token": token, "password": "another-password-entirely"}, nil)
+	if rr.Code != 400 {
+		t.Fatalf("a spent reset token was accepted: %d", rr.Code)
+	}
+
+	// And an expired one is refused. Backdating is done on the pool, which the
+	// handler path never does.
+	doJSON(t, h, "POST", "/api/v1/auth/password/forgot", map[string]string{"email": "parent@example.com"}, nil)
+	fresh := tokenFromLink(t, sender.lastTo(t, "parent@example.com").Body, "https://guardian.example/#/reset/")
+	if _, err := s.pool.Exec(context.Background(),
+		`UPDATE email_tokens SET expires_at = now() - interval '1 minute' WHERE purpose = 'reset'`); err != nil {
+		t.Fatalf("backdate: %v", err)
+	}
+	if rr := doJSON(t, h, "POST", "/api/v1/auth/password/reset",
+		map[string]string{"token": fresh, "password": newPassword}, nil); rr.Code != 400 {
+		t.Fatalf("an expired reset token was accepted: %d", rr.Code)
+	}
+}
+
+func TestChangingThePasswordKeepsTheCallersOwnSession(t *testing.T) {
+	s := &Server{pool: testPool(t), mail: &recordingSender{}, cabinetOrigin: "https://guardian.example"}
+	h := s.setupRoutes()
+	mine := registerAndLogin(t, s, "parent@example.com")
+	// A second sign-in for the same person: a phone, say.
+	other := loginAs(t, s, "parent@example.com", "correct-horse-battery")
+
+	if rr := doJSON(t, h, "POST", "/api/v1/account/password",
+		map[string]string{"current": "correct-horse-battery", "new": newPassword}, mine); rr.Code != 204 {
+		t.Fatalf("change: %d %s", rr.Code, rr.Body.String())
+	}
+
+	if rr := doJSON(t, h, "GET", "/api/v1/me", nil, mine); rr.Code != 200 {
+		t.Fatalf("the caller was signed out by their own password change: %d", rr.Code)
+	}
+	if rr := doJSON(t, h, "GET", "/api/v1/me", nil, other); rr.Code != 401 {
+		t.Fatalf("the other device kept its session: %d", rr.Code)
+	}
+}
+
+func TestChangingThePasswordNeedsTheCurrentOne(t *testing.T) {
+	s := &Server{pool: testPool(t), mail: &recordingSender{}, cabinetOrigin: "https://guardian.example"}
+	h := s.setupRoutes()
+	c := registerAndLogin(t, s, "parent@example.com")
+
+	if rr := doJSON(t, h, "POST", "/api/v1/account/password",
+		map[string]string{"current": "not-the-password", "new": newPassword}, c); rr.Code != 403 {
+		t.Fatalf("changed the password without the current one: %d", rr.Code)
+	}
+	if rr := doJSON(t, h, "POST", "/api/v1/account/password",
+		map[string]string{"current": "correct-horse-battery", "new": "short"}, c); rr.Code != 400 {
+		t.Fatalf("accepted a password below the minimum: %d", rr.Code)
+	}
+}
+```
+
+Add to `server/session_test.go`, next to `registerAndLogin`:
+
+```go
+// loginAs signs an existing user in again, for tests about a second device.
+func loginAs(t *testing.T, s *Server, email, password string) *http.Cookie {
+	t.Helper()
+	rr := doJSON(t, s.setupRoutes(), "POST", "/api/v1/auth/login",
+		map[string]string{"email": email, "password": password}, nil)
+	if rr.Code != 200 {
+		t.Fatalf("login as %s: %d %s", email, rr.Code, rr.Body.String())
+	}
+	for _, c := range rr.Result().Cookies() {
+		if c.Name == sessionCookieName {
+			return c
+		}
+	}
+	t.Fatalf("login as %s set no session cookie", email)
+	return nil
+}
+```
+
+(`sessionCookieName` is the constant `handleLogin` sets, `handlers_auth.go:144`.)
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+Run: `cd server && go test . -run 'TestForgot|TestACompletedReset|TestAResetToken|TestChangingThePassword'`
+
+Expected: FAIL with `404` — none of the three routes exist.
+
+- [ ] **Step 3: Write the handlers**
+
+Create `server/handlers_password.go`:
+
+```go
+package main
+
+import (
+	"encoding/json"
+	"errors"
+	"log/slog"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+
+	"server/internal/db"
+)
+
+// resetTokenTTL is short on purpose: a reset link is a bearer credential for
+// an entire account, and an hour is long enough to walk to a laptop.
+const resetTokenTTL = time.Hour
+
+type forgotRequest struct {
+	Email string `json:"email"`
+}
+
+type resetRequest struct {
+	Token    string `json:"token"`
+	Password string `json:"password"`
+}
+
+type changePasswordRequest struct {
+	Current string `json:"current"`
+	New     string `json:"new"`
+}
+
+// handleForgotPassword mails a reset link, and answers 204 either way.
+//
+// The 204-always is not politeness: this endpoint would otherwise be an
+// account-enumeration oracle, undoing the same care the registration endpoint
+// takes. The dummy hash on the miss path is what keeps the timing from leaking
+// what the status code does not — argon2id is the expensive part of the real
+// path, so skipping it would make a miss measurably faster.
+func (s *Server) handleForgotPassword(w http.ResponseWriter, r *http.Request) {
+	var req forgotRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "Invalid JSON"})
+		return
+	}
+	email := strings.ToLower(strings.TrimSpace(req.Email))
+
+	ctx := r.Context()
+	user, err := db.New(s.pool).GetUserByEmail(ctx, email)
+	if err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			slog.Error("look up user for reset", "error", err)
+		}
+		// Spend the same work the found path spends.
+		_, _ = hashPassword("dummy-work-so-the-timing-matches")
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	plain, hash := newToken()
+	q := db.New(s.pool)
+	if err := q.DeleteEmailTokensFor(ctx, db.DeleteEmailTokensForParams{
+		UserID: user.ID, Purpose: "reset",
+	}); err != nil {
+		slog.Error("supersede reset tokens", "error", err)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if err := q.CreateEmailToken(ctx, db.CreateEmailTokenParams{
+		TokenHash: hash, UserID: user.ID, Purpose: "reset", Email: user.Email,
+		ExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(resetTokenTTL), Valid: true},
+	}); err != nil {
+		slog.Error("create reset token", "error", err)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	s.sendMail(resetEmail(s.cabinetOrigin, user.Name, plain))
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleResetPassword completes a reset and signs every device out.
+func (s *Server) handleResetPassword(w http.ResponseWriter, r *http.Request) {
+	var req resetRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Token == "" {
+		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "This link is not valid"})
+		return
+	}
+	if len(req.Password) < minPasswordLen {
+		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "Password must be at least 8 characters"})
+		return
+	}
+	if len(req.Password) > maxPasswordLen {
+		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "Password is too long"})
+		return
+	}
+
+	hash, err := hashPassword(req.Password)
+	if err != nil {
+		slog.Error("hash password", "error", err)
+		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "Internal error"})
+		return
+	}
+
+	ctx := r.Context()
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "Internal error"})
+		return
+	}
+	defer tx.Rollback(ctx)
+	q := db.New(tx)
+
+	row, err := q.ConsumeEmailToken(ctx, db.ConsumeEmailTokenParams{
+		TokenHash: hashToken(req.Token), Purpose: "reset",
+	})
+	if err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			slog.Error("consume reset token", "error", err)
+		}
+		writeJSON(w, http.StatusBadRequest,
+			ErrorResponse{Error: "This link is not valid, has already been used, or has expired"})
+		return
+	}
+	if err := q.SetPassword(ctx, db.SetPasswordParams{ID: row.UserID, PasswordHash: hash}); err != nil {
+		slog.Error("set password", "error", err)
+		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "Internal error"})
+		return
+	}
+	// Every session, including the one that may belong to whoever the account
+	// is being taken back from. This is the point of server-side sessions.
+	if _, err := q.DeleteSessionsForUser(ctx, row.UserID); err != nil {
+		slog.Error("delete sessions after reset", "error", err)
+		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "Internal error"})
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		slog.Error("commit reset", "error", err)
+		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "Internal error"})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleChangePassword changes it from inside the cabinet, keeping the caller
+// signed in and signing every other device out.
+func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
+	t, ok := mustTenant(w, r)
+	if !ok {
+		return
+	}
+	var req changePasswordRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "Invalid JSON"})
+		return
+	}
+	if len(req.New) < minPasswordLen {
+		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "Password must be at least 8 characters"})
+		return
+	}
+	if len(req.New) > maxPasswordLen {
+		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "Password is too long"})
+		return
+	}
+
+	ctx := r.Context()
+	user, err := db.New(s.pool).GetUserByID(ctx, t.UserID)
+	if err != nil {
+		slog.Error("read user for password change", "error", err)
+		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "Internal error"})
+		return
+	}
+	if !verifyPassword(user.PasswordHash, req.Current) {
+		// 403 rather than 401: the session is fine, the claim about the
+		// current password is not, and a 401 would send the cabinet to the
+		// sign-in screen for a mistyped field.
+		writeJSON(w, http.StatusForbidden, ErrorResponse{Error: "That is not your current password"})
+		return
+	}
+
+	hash, err := hashPassword(req.New)
+	if err != nil {
+		slog.Error("hash password", "error", err)
+		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "Internal error"})
+		return
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "Internal error"})
+		return
+	}
+	defer tx.Rollback(ctx)
+	q := db.New(tx)
+	if err := q.SetPassword(ctx, db.SetPasswordParams{ID: user.ID, PasswordHash: hash}); err != nil {
+		slog.Error("set password", "error", err)
+		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "Internal error"})
+		return
+	}
+	// Every device except this one. Signing the person out of the browser they
+	// are standing in front of, as a consequence of their own deliberate act,
+	// is a bug that reads as one.
+	if _, err := q.DeleteOtherSessionsForUser(ctx, db.DeleteOtherSessionsForUserParams{
+		UserID: user.ID, TokenHash: t.SessionTokenHash,
+	}); err != nil {
+		slog.Error("delete other sessions", "error", err)
+		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "Internal error"})
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		slog.Error("commit password change", "error", err)
+		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "Internal error"})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+```
+
+**`Tenant` needs the calling session's digest** for `DeleteOtherSessionsForUser`.
+
+In `server/tenant.go`, add a field to `Tenant`:
+
+```go
+	// SessionTokenHash is the digest of the session that authenticated this
+	// request, empty for agent requests. It exists so a password change can
+	// delete every OTHER session — signing somebody out of the browser they
+	// are standing in front of, as a consequence of their own deliberate act,
+	// is a bug that reads as one.
+	SessionTokenHash string
+```
+
+In `server/middleware.go`, `SessionAuth` currently computes the digest inline as
+`q.GetSession(ctx, hashToken(plain))`. Give it a name and carry it through:
+
+```go
+		digest := hashToken(plain)
+		session, err := q.GetSession(ctx, digest)
+```
+
+and set `SessionTokenHash: digest` wherever that function builds the `Tenant` it puts in
+the context.
+
+- [ ] **Step 4: Register and classify the routes**
+
+In `server/routes.go`, with the unauthenticated auth routes:
+
+```go
+			r.With(perIP(loginRateLimit)).Post("/auth/password/forgot", s.handleForgotPassword)
+			r.With(perIP(loginRateLimit)).Post("/auth/password/reset", s.handleResetPassword)
+```
+
+and in the session-authenticated guest-reachable group:
+
+```go
+			r.Post("/account/password", s.handleChangePassword)
+```
+
+In `server/authz_test.go`, add to `guestReachableRoutes`:
+
+```go
+	"POST /api/v1/account/password":                      true,
+```
+
+A guest changes their own password like anybody else — the route touches the caller's own user row and no account-wide state, which is why it is not manager-only despite the `/account/` prefix.
+
+- [ ] **Step 5: Run the tests to verify they pass**
+
+Run: `cd server && go test . -run 'TestForgot|TestACompletedReset|TestAResetToken|TestChangingThePassword' -v`
+
+Expected: PASS, all six.
+
+- [ ] **Step 6: Run the whole suite**
+
+Run: `cd server && gofmt -l . | grep -v webui; go vet ./... && go test ./...`
+
+Expected: green.
+
+- [ ] **Step 7: Update the docs**
+
+In `specs/api.md`, the three endpoints with their exact request bodies, the always-`204` rule for `forgot` and the session consequences of each. In `specs/server.md`, a paragraph under the session section on what a reset and a change do to `sessions`. In `CLAUDE.md`, the three routes.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add server/handlers_password.go server/password_test.go server/routes.go \
+        server/authz_test.go server/tenant.go server/middleware.go server/session_test.go \
+        specs/api.md specs/server.md CLAUDE.md
+git commit -m "feat(server): reset a forgotten password, and change a known one"
+```
+
+---
+
+## Task 5: Purge, and the deployment template
+
+**Files:**
+- Modify: `server/maintenance.go`, `server/maintenance_test.go`, `dist/server/server.env`, `specs/server.md`, `CLAUDE.md`
+
+**Interfaces:**
+- Consumes: `db.PurgeExpiredEmailTokens` (Task 3), `s.purgeOnce` (existing).
+- Produces: nothing other tasks consume.
+
+- [ ] **Step 1: Write the failing test**
+
+Append to `server/maintenance_test.go`:
+
+```go
+// Spent and expired link rows are unusable — ConsumeEmailToken filters on both
+// — so this is housekeeping, not security: without it the table only grows.
+func TestPurgeRemovesExpiredEmailTokens(t *testing.T) {
+	s := &Server{pool: testPool(t)}
+	ctx := context.Background()
+	c := registerAndLogin(t, s, "parent@example.com")
+	_ = c
+
+	var userID uuid.UUID
+	if err := s.pool.QueryRow(ctx, `SELECT id FROM users WHERE email = 'parent@example.com'`).Scan(&userID); err != nil {
+		t.Fatalf("read user: %v", err)
+	}
+	for _, age := range []string{"30 days", "1 minute"} {
+		if _, err := s.pool.Exec(ctx, `
+			INSERT INTO email_tokens (token_hash, user_id, purpose, email, expires_at)
+			VALUES ($1, $2, 'reset', 'parent@example.com', now() - $3::interval)`,
+			"hash-"+age, userID, age); err != nil {
+			t.Fatalf("seed %s: %v", age, err)
+		}
+	}
+
+	s.purgeOnce(ctx)
+
+	var left int
+	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM email_tokens`).Scan(&left); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	// The day of grace keeps the one that expired a minute ago.
+	if left != 1 {
+		t.Fatalf("%d rows left, want 1", left)
+	}
+}
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `cd server && go test . -run TestPurgeRemovesExpiredEmailTokens`
+
+Expected: FAIL — 2 rows left.
+
+- [ ] **Step 3: Wire the purge in**
+
+In `server/maintenance.go`, at the end of `purgeOnce`:
+
+```go
+	// email_tokens has no RLS (it has no account_id), so this needs no
+	// SECURITY DEFINER function — the application role can delete directly.
+	if n, err := db.New(s.pool).PurgeExpiredEmailTokens(ctx); err != nil {
+		slog.Error("purge expired email tokens", "error", err)
+	} else if n > 0 {
+		slog.Info("purged expired email tokens", "count", n)
+	}
+```
+
+- [ ] **Step 4: Run the test to verify it passes**
+
+Run: `cd server && go test . -run TestPurgeRemoves -v`
+
+Expected: PASS, together with the two purge tests that already exist.
+
+- [ ] **Step 5: Write the deployment template**
+
+In `dist/server/server.env`, add:
+
+```sh
+# --- Mail (SendGrid over SMTP) -------------------------------------------
+# The username is the LITERAL STRING "apikey" — not your email, not a name.
+# Getting this wrong costs an hour of "authentication failed".
+# Percent-encode any @ : or / inside the key itself.
+# The API key is scoped to "Mail Send" and nothing else.
+SMTP_URL=smtp://apikey:SG.replace-me@smtp.sendgrid.net:587
+
+# The From address, which MUST be verified in SendGrid or nothing is accepted.
+MAIL_FROM=Guardian <noreply@example.com>
+
+# Development only: print mail instead of sending it. Leave unset in
+# production. The server refuses to start when neither this nor SMTP_URL is
+# set, on purpose — a server that boots with mail silently disabled produces
+# customers who cannot reset their password.
+# MAIL_TRANSPORT=log
+
+# Two prerequisites that are not code and decide whether mail arrives at all:
+#
+#  1. Domain authentication — the CNAME records SendGrid issues for SPF and
+#     DKIM. Without them mail from a fresh domain lands in spam, and a reset
+#     link in a spam folder is indistinguishable from a broken product. Single
+#     Sender Verification is enough to SEND and not enough to be DELIVERED.
+#  2. A plan that covers the volume. The free tier is 100 messages a day.
+```
+
+- [ ] **Step 6: Update the docs**
+
+In `specs/server.md`, a **Mail** section: the package, the two transports, the startup refusal, the after-commit rule, and the accepted v1 limit — SendGrid suppresses bounced and complained-about addresses, returns success over SMTP, and silently drops the message, which this server cannot detect; the operator diagnoses it in SendGrid's Activity Feed, and closing it properly means the Event Webhook and a delivery-status column. Add `email_tokens` to the maintenance paragraph. In `CLAUDE.md`, add the three `.env` keys to the deployment paragraph and `server/internal/mail` to the file list.
+
+- [ ] **Step 7: Run the whole suite and commit**
+
+Run: `cd server && gofmt -l . | grep -v webui; go vet ./... && go test ./...`
+
+```bash
+git add server/maintenance.go server/maintenance_test.go dist/server/server.env specs/server.md CLAUDE.md
+git commit -m "feat(server): purge spent email tokens, and document the mail setup"
+```
+
+---
+
