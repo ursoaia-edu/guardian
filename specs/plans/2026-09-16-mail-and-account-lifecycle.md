@@ -2374,3 +2374,20 @@ git commit -m "feat(cabinet): confirm an address and recover a password"
 
 ---
 
+## Done when
+
+- A fresh registration produces a confirmation email whose link marks the address verified.
+- An unverified account can use the cabinet but gets `403` on `POST /api/v1/binding-tokens` and `GET /api/v1/installer`.
+- `forgot` answers `204` for a registered and an unregistered address alike, with identical bodies, and mails only the former.
+- A completed reset signs every device out; a password change from inside the cabinet signs out every device but the one doing it.
+- The server refuses to start with neither `SMTP_URL` nor `MAIL_TRANSPORT=log`.
+- `go test ./...` passes in `server/` and `agent/`; `gofmt -l .` prints nothing in both; `sqlc diff` is clean; `node --test` passes in `server/webui-tests/`.
+- `specs/api.md`, `specs/server.md`, `specs/cabinet.md` and `CLAUDE.md` describe what was built.
+
+## Not in this plan
+
+**Invitations** (spec §2's third part) — step 3 of the implementation order, and its own plan. It needs the `invitations` table, the `account_for_invitation_token` SECURITY DEFINER function, the unauthenticated preview endpoint, the accept path, and the three events; it builds directly on the mail package and the token patterns landing here.
+
+Also out, and each its own plan: room schedules · temporary suspension · application templates · the `viewer` role and the route-group split · the command queue · agent versioning and updates · fleet management · the Security screen's server side.
+
+Delivery-status tracking is out for v1 by the spec's own decision: SendGrid accepts mail to a suppressed address and silently drops it, and nothing here detects that. Closing it means the Event Webhook and a delivery-status column, which is not worth it before the first customer complains.
