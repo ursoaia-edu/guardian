@@ -215,11 +215,11 @@ func TestParseSMTPURLReadsSendGridsShape(t *testing.T) {
 func TestParseSMTPURLRejectsWhatCannotBeDialled(t *testing.T) {
 	for _, raw := range []string{
 		"",
-		"smtp.sendgrid.net:587",                  // no scheme
-		"https://smtp.sendgrid.net:587",          // not smtp
-		"smtp://apikey:k@smtp.sendgrid.net",      // no port
-		"smtp://smtp.sendgrid.net:587",           // no credentials
-		"smtp://apikey@smtp.sendgrid.net:587",    // no password
+		"smtp.sendgrid.net:587",               // no scheme
+		"https://smtp.sendgrid.net:587",       // not smtp
+		"smtp://apikey:k@smtp.sendgrid.net",   // no port
+		"smtp://smtp.sendgrid.net:587",        // no credentials
+		"smtp://apikey@smtp.sendgrid.net:587", // no password
 	} {
 		if _, err := ParseSMTPURL(raw); err == nil {
 			t.Errorf("accepted %q", raw)
