@@ -10,6 +10,7 @@ import (
 	"os"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -175,3 +176,7 @@ func observe(t *testing.T) *pgxpool.Pool {
 	t.Cleanup(pool.Close)
 	return pool
 }
+
+// waitABit is the smallest sleep worth having: handlers send mail on their own
+// goroutine after committing, so a test that asserts on it has to yield.
+func waitABit() { time.Sleep(5 * time.Millisecond) }

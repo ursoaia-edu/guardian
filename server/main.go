@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"server/internal/mail"
 )
 
 // Server holds the state of the guardian server
@@ -24,6 +26,16 @@ type Server struct {
 	// cabinet simply means no SPA is mounted, which is what a test that
 	// constructs a Server directly gets.
 	cabinet *cabinetHandler
+
+	// mail sends the handful of messages this product needs. Never nil in a
+	// running server: startup fails when it cannot be built. A Server built
+	// directly by a test may leave it nil, and sendMail says so loudly.
+	mail mail.Sender
+
+	// cabinetOrigin is the first CABINET_ORIGIN entry, used to build the links
+	// in outgoing mail. A link is only useful if it points at the cabinet the
+	// customer actually opens.
+	cabinetOrigin string
 
 	// installerArchive is the path to the pre-built reference ZIP handed out
 	// by GET /api/v1/installer. Empty, or missing on disk, is not a startup
@@ -50,7 +62,12 @@ func NewServer(ctx context.Context) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := cabinetOriginsFromEnv(); err != nil {
+	origins, err := cabinetOriginsFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	mailer, err := mailerFromEnv()
+	if err != nil {
 		return nil, err
 	}
 	pool, err := pgxpool.New(ctx, dsn)
@@ -80,6 +97,8 @@ func NewServer(ctx context.Context) (*Server, error) {
 		trustedProxies:   proxies,
 		installerArchive: archive,
 		cabinet:          cabinet,
+		mail:             mailer,
+		cabinetOrigin:    strings.TrimRight(origins[0], "/"),
 	}, nil
 }
 
