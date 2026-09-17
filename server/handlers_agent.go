@@ -22,6 +22,16 @@ func (s *Server) handleCreateBindingToken(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
+	// An unverified address may not hand out installers. This and inviting
+	// somebody are the two actions that reach outside the account — one adds
+	// machines, the other adds people — and gating exactly these two is what
+	// stops a typo'd or someone else's address from becoming a working fleet.
+	// Everything else in the cabinet stays open: blocking it all would mean a
+	// customer who mistypes their address cannot see what they bought.
+	if !s.emailVerified(w, r, t) {
+		return
+	}
+
 	plain, hash := newToken()
 	err := s.inAccount(r.Context(), t.AccountID, func(tx pgx.Tx) error {
 		if _, err := db.New(tx).CreateBindingToken(r.Context(), db.CreateBindingTokenParams{

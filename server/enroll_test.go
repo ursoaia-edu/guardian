@@ -15,6 +15,11 @@ import (
 
 func mintBindingToken(t *testing.T, s *Server, c *http.Cookie) string {
 	t.Helper()
+	// Minting is gated on a confirmed address (handlers_verify.go), and these
+	// tests are about enrolment, not about the gate — which has its own tests
+	// in verify_test.go. Confirm the address directly rather than walking the
+	// mail flow in every one of them.
+	verifyEveryone(t, s)
 	rr := doJSON(t, s.setupRoutes(), "POST", "/api/v1/binding-tokens", nil, c)
 	if rr.Code != 201 {
 		t.Fatalf("mint: %d %s", rr.Code, rr.Body.String())
@@ -26,6 +31,17 @@ func mintBindingToken(t *testing.T, s *Server, c *http.Cookie) string {
 		t.Fatalf("decode: %v", err)
 	}
 	return out.Token
+}
+
+// verifyEveryone marks every user in the test database confirmed. Written on
+// the pool, which the handler path never does: nothing in the API sets this
+// column except following a link from an email.
+func verifyEveryone(t *testing.T, s *Server) {
+	t.Helper()
+	if _, err := s.pool.Exec(context.Background(),
+		`UPDATE users SET email_verified_at = now() WHERE email_verified_at IS NULL`); err != nil {
+		t.Fatalf("mark users verified: %v", err)
+	}
 }
 
 func enroll(t *testing.T, s *Server, binding, guid, hostname string) (int, string) {

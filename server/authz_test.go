@@ -18,6 +18,7 @@ import (
 // route now breaks a test until somebody decides which side it belongs on.
 var guestReachableRoutes = map[string]bool{
 	"GET /api/v1/me":                                     true,
+	"POST /api/v1/account/verify/resend":                 true,
 	"GET /api/v1/rooms":                                  true,
 	"GET /api/v1/rooms/{roomID}":                         true,
 	"PATCH /api/v1/rooms/{roomID}":                       true,

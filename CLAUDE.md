@@ -61,7 +61,7 @@ cd mobile && flutter pub run flutter_launcher_icons
 - Two scoping GUCs, both set only in `tenant.go`: a query that sets neither reads nothing, on every table. `app.user_id` (migration `00014`) narrows the pre-account policies on `accounts`/`account_members`/`room_members` to the calling user — `users` and the binding-token lookup remain deliberately un-narrowed, see `specs/server.md`
 - `/api/v1` is two route groups: a small guest-reachable one and everything else behind the `ManagerOnly` middleware. `server/authz_test.go` walks the router and fails on any route in neither list — add a route, classify it there
 - Two auth paths, no shared secret token anywhere: a session (cookie or Bearer) for the cabinet, a per-agent Bearer token (minted at `/agent/enroll`) for agents; both resolve to a `Tenant{AccountID, ...}` server-side
-- Postgres tables: `users`, `accounts`, `account_members`, `sessions`, `rooms`, `room_members`, `applications`, `computers`, `binding_tokens`, `events`, `process_events` (the blocking log — machine output, its own retention, deliberately not in `events`)
+- Postgres tables: `users`, `accounts`, `account_members`, `sessions`, `rooms`, `room_members`, `applications`, `computers`, `binding_tokens`, `email_tokens` (verification and reset links; no RLS, like `sessions`), `events`, `process_events` (the blocking log — machine output, its own retention, deliberately not in `events`)
 - See `specs/server.md` for the full architecture (RLS policies, roles, the `account_for_agent_token` function, migrations)
 
 ### Web cabinet (`server/webui/` — React with no build step)
@@ -101,6 +101,7 @@ cd mobile && flutter pub run flutter_launcher_icons
 ### API Endpoints
 - `POST /agent/enroll` — agent enrolls with a binding token, gets its own per-machine agent token (unauthenticated; the token in the body is the gate)
 - `POST /agent/sync` — agent posts `{"runtime": {...}}` telemetry (64 KiB cap), optionally `batch_id` + `blocked[]` (the kill log: ≤200 items, a repeated `batch_id` is ignored, a malformed item is dropped and the sync still answers 200), and fetches its room's applications, mode, and client entries (agent token auth)
+- `POST /api/v1/auth/verify` — confirm an address from an emailed link (unauthenticated; the token in the body is the gate, 48h, single use). `POST /api/v1/account/verify/resend` sends it again (session)
 - `POST /api/v1/auth/register`, `/login`, `/logout` — cabinet account creation and session auth. Login always sets the `HttpOnly` cookie and returns the token in the body only for `"client": "mobile"`
 - `GET /api/v1/me` — caller's identity and every account they can act in (session auth)
 - `/api/v1/rooms`, `/api/v1/rooms/{roomID}` — room CRUD (session auth)
@@ -108,7 +109,7 @@ cd mobile && flutter pub run flutter_launcher_icons
 - `/api/v1/rooms/{roomID}/members` — room guest grants (session auth)
 - `/api/v1/computers`, `/api/v1/computers/{computerID}` — computer listing, reading, reassignment/blocking, and DELETE to unenrol (revokes that machine's agent token) (session auth)
 - `/api/v1/account/members`, `/api/v1/account/members/{userID}` — the account's own owner/admins (session auth, manager only)
-- `/api/v1/binding-tokens` — mint/revoke the installer's enrollment token (session auth)
+- `/api/v1/binding-tokens` — mint/revoke the installer's enrollment token (session auth). This and `GET /api/v1/installer` answer **403 until the caller's address is confirmed** — the two actions that reach outside the account
 - `GET /api/v1/events` — account activity, paged by an opaque `cursor` (session auth, manager only)
 - `GET /api/v1/rooms/{roomID}/process-events`, `GET /api/v1/computers/{computerID}/process-events` — the blocking log: what a policy actually closed, filtered by `process`/`reason`/`computer_id`/`since`/`until`, paged by the same opaque `cursor` (session auth, guest-reachable; a malformed filter is ignored, a malformed cursor is a 400)
 - `GET /health` — health check (unauthenticated; `503` when Postgres is unreachable)

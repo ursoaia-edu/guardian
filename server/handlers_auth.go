@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -132,6 +133,12 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "Could not create the account"})
 		return
 	}
+
+	// After the commit, never inside it: an SMTP round trip inside a
+	// transaction holds a Postgres connection for as long as the provider
+	// takes, and a registration that already succeeded must not be undone by a
+	// mail failure.
+	s.sendVerification(context.WithoutCancel(ctx), user.ID, user.Email, user.Name)
 
 	slog.Info("account registered", "account_id", account.ID)
 	writeJSON(w, http.StatusCreated, map[string]string{
