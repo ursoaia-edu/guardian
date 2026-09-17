@@ -515,8 +515,8 @@ git commit -m "feat(server): add the mail package, SMTP and a log transport"
   - `func mailerFromEnv() (mail.Sender, error)`
   - `Server.mail mail.Sender` and `Server.cabinetOrigin string`
   - `func (s *Server) sendMail(m mail.Message)` — fire-and-forget, after commit
-  - `func verifyEmail(cabinetOrigin, name, token string) mail.Message`
-  - `func resetEmail(cabinetOrigin, name, token string) mail.Message`
+  - `func verifyEmail(cabinetOrigin, to, name, token string) mail.Message`
+  - `func resetEmail(cabinetOrigin, to, name, token string) mail.Message`
   - `type recordingSender struct` in `mailer_test.go`, used by Tasks 3 and 4
 
 - [ ] **Step 1: Write the failing tests**
@@ -622,15 +622,20 @@ func TestMailerBuildsAnSMTPSenderFromTheURL(t *testing.T) {
 
 // The templates carry the one thing the email exists to deliver.
 func TestTemplatesCarryTheLinkAndTheProductName(t *testing.T) {
-	v := verifyEmail("https://guardian.example", "Мария", "tok-1")
+	v := verifyEmail("https://guardian.example", "maria@example.com", "Мария", "tok-1")
 	if !strings.Contains(v.Body, "https://guardian.example/#/verify/tok-1") {
 		t.Fatalf("verification body has no usable link:\n%s", v.Body)
 	}
-	r := resetEmail("https://guardian.example", "", "tok-2")
+	r := resetEmail("https://guardian.example", "ivan@example.com", "", "tok-2")
 	if !strings.Contains(r.Body, "https://guardian.example/#/reset/tok-2") {
 		t.Fatalf("reset body has no usable link:\n%s", r.Body)
 	}
 	for _, m := range []mail.Message{v, r} {
+		// A message with no recipient is not a message. The transport would
+		// refuse it, but only after the handler had already answered 204.
+		if m.To == "" {
+			t.Error("a template built a message with no recipient")
+		}
 		if m.Subject == "" {
 			t.Error("a message has no subject")
 		}
@@ -776,9 +781,10 @@ func greeting(name string) string {
 	return fmt.Sprintf("Здравствуйте, %s!", strings.TrimSpace(name))
 }
 
-func verifyEmail(cabinetOrigin, name, token string) mail.Message {
+func verifyEmail(cabinetOrigin, to, name, token string) mail.Message {
 	link := cabinetOrigin + "/#/verify/" + token
 	return mail.Message{
+		To:      to,
 		Subject: "Guardian: подтвердите адрес почты",
 		Body: fmt.Sprintf(`%s
 
@@ -797,9 +803,10 @@ func verifyEmail(cabinetOrigin, name, token string) mail.Message {
 	}
 }
 
-func resetEmail(cabinetOrigin, name, token string) mail.Message {
+func resetEmail(cabinetOrigin, to, name, token string) mail.Message {
 	link := cabinetOrigin + "/#/reset/" + token
 	return mail.Message{
+		To:      to,
 		Subject: "Guardian: восстановление пароля",
 		Body: fmt.Sprintf(`%s
 
@@ -899,7 +906,7 @@ git commit -m "feat(server): configure the mailer, and refuse to start without o
 
 **Interfaces:**
 - Consumes: `newToken`, `hashToken` (`server/auth.go`); `s.sendMail`, `verifyEmail`, `s.cabinetOrigin` (Task 2); `recordingSender` (Task 2).
-- Produces: `db.CreateEmailToken`, `db.ConsumeEmailToken`, `db.MarkEmailVerified`, `db.DeleteEmailTokensFor`, `db.GetUserByID`, `db.PurgeExpiredEmailTokens`; routes `POST /api/v1/auth/verify` and `POST /api/v1/account/verify/resend`.
+- Produces: `db.CreateEmailToken`, `db.ConsumeEmailToken`, `db.MarkEmailVerified`, `db.DeleteEmailTokensFor`, `db.GetUserByID`, `db.SetPassword`, `db.DeleteSessionsForUser`, `db.DeleteOtherSessionsForUser`, `db.PurgeExpiredEmailTokens`; routes `POST /api/v1/auth/verify` and `POST /api/v1/account/verify/resend`; and, in `verify_test.go`, the helpers `tokenFromLink` and the constant `existingPassword`, both of which Task 4's tests use.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -914,6 +921,11 @@ import (
 	"strings"
 	"testing"
 )
+
+// existingPassword is what registerAndLogin (session_test.go) registers with.
+// The reset and change tests in password_test.go need to know the password
+// they are replacing, so it is declared here, in the earlier task's file.
+const existingPassword = "a-long-enough-password"
 
 // tokenFromLink pulls the opaque token out of the one link in an email.
 func tokenFromLink(t *testing.T, body, prefix string) string {
@@ -1076,7 +1088,7 @@ func TestRegistrationSucceedsWhenMailFails(t *testing.T) {
 	h := s.setupRoutes()
 
 	rr := doJSON(t, h, "POST", "/api/v1/auth/register",
-		map[string]string{"email": "parent@example.com", "password": "correct-horse-battery"}, nil)
+		map[string]string{"email": "parent@example.com", "password": existingPassword}, nil)
 	if rr.Code != 201 {
 		t.Fatalf("registration failed because mail did: %d %s", rr.Code, rr.Body.String())
 	}
@@ -1221,7 +1233,7 @@ func (s *Server) sendVerification(ctx context.Context, userID uuid.UUID, email, 
 		slog.Error("create verification token", "error", err)
 		return
 	}
-	s.sendMail(verifyEmail(s.cabinetOrigin, name, plain))
+	s.sendMail(verifyEmail(s.cabinetOrigin, email, name, plain))
 }
 
 type tokenRequest struct {
@@ -1397,7 +1409,7 @@ git commit -m "feat(server): confirm email addresses, and gate installers on it"
 - Modify: `server/routes.go`, `server/authz_test.go`
 
 **Interfaces:**
-- Consumes: everything Task 3 produced, plus `hashPassword`, `verifyPassword` (`server/auth.go`) and `resetEmail` (Task 2).
+- Consumes: everything Task 3 produced — including its `tokenFromLink` helper and `existingPassword` constant — plus `hashPassword`, `verifyPassword` (`server/auth.go`) and `resetEmail` (Task 2).
 - Produces: routes `POST /api/v1/auth/password/forgot`, `POST /api/v1/auth/password/reset`, `POST /api/v1/account/password`.
 
 - [ ] **Step 1: Write the failing tests**
@@ -1437,7 +1449,7 @@ func TestForgotSendsALinkThatResetsThePassword(t *testing.T) {
 		t.Fatalf("login with the new password: %d", rr.Code)
 	}
 	if rr := doJSON(t, h, "POST", "/api/v1/auth/login",
-		map[string]string{"email": "parent@example.com", "password": "correct-horse-battery"}, nil); rr.Code == 200 {
+		map[string]string{"email": "parent@example.com", "password": existingPassword}, nil); rr.Code == 200 {
 		t.Fatal("the old password still works")
 	}
 }
@@ -1519,10 +1531,10 @@ func TestChangingThePasswordKeepsTheCallersOwnSession(t *testing.T) {
 	h := s.setupRoutes()
 	mine := registerAndLogin(t, s, "parent@example.com")
 	// A second sign-in for the same person: a phone, say.
-	other := loginAs(t, s, "parent@example.com", "correct-horse-battery")
+	other := loginAs(t, s, "parent@example.com", existingPassword)
 
 	if rr := doJSON(t, h, "POST", "/api/v1/account/password",
-		map[string]string{"current": "correct-horse-battery", "new": newPassword}, mine); rr.Code != 204 {
+		map[string]string{"current": existingPassword, "new": newPassword}, mine); rr.Code != 204 {
 		t.Fatalf("change: %d %s", rr.Code, rr.Body.String())
 	}
 
@@ -1544,7 +1556,7 @@ func TestChangingThePasswordNeedsTheCurrentOne(t *testing.T) {
 		t.Fatalf("changed the password without the current one: %d", rr.Code)
 	}
 	if rr := doJSON(t, h, "POST", "/api/v1/account/password",
-		map[string]string{"current": "correct-horse-battery", "new": "short"}, c); rr.Code != 400 {
+		map[string]string{"current": existingPassword, "new": "short"}, c); rr.Code != 400 {
 		t.Fatalf("accepted a password below the minimum: %d", rr.Code)
 	}
 }
@@ -1662,7 +1674,7 @@ func (s *Server) handleForgotPassword(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	s.sendMail(resetEmail(s.cabinetOrigin, user.Name, plain))
+	s.sendMail(resetEmail(s.cabinetOrigin, user.Email, user.Name, plain))
 	w.WriteHeader(http.StatusNoContent)
 }
 

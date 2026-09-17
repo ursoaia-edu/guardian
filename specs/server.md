@@ -368,6 +368,34 @@ migration of stored passwords).
 `token_hash` (SHA-256 of the plaintext) primary key, `user_id`, `expires_at`,
 `last_used_at` (advanced on every authenticated request), `ip`, `user_agent`.
 
+### `email_tokens`
+
+One digest table behind both "confirm your address" and "reset your password".
+`token_hash` (primary key), `user_id` (`ON DELETE CASCADE`), `purpose`
+(`verify` | `reset`), `email`, `expires_at`, `used_at`, `created_at`. Indexed
+`(user_id, purpose)`, which is the only read: superseding a user's previous
+tokens of one purpose. Migration `00019`.
+
+**No RLS**, like `sessions` and for the same reason: the row carries no
+`account_id` and is reached before any account scope exists — a reset link is
+followed by somebody who is, by definition, not signed in.
+
+The plaintext token exists in the email and nowhere else; the table stores the
+SHA-256 digest, exactly as sessions, agent tokens and binding tokens do.
+
+`email` is the address the link was sent to, which is not necessarily the
+user's current one: somebody who changes their address must not have an old
+link confirm the new one, and `MarkEmailVerified` checks the two still match.
+
+Minting supersedes — a fresh link deletes the previous ones of that purpose, so
+a mailbox never holds two working links to the same door. `ConsumeEmailToken`
+marks the row used and returns it in **one statement**; two would be a race,
+and two clicks on the same link milliseconds apart would both find it unused.
+
+Purged by the hourly maintenance loop a day after expiry. No `SECURITY DEFINER`
+function is needed, unlike `events` and `process_events`: with no RLS, the
+application role can delete directly.
+
 ### `rooms`
 `id`, `account_id`, `name`, `mode CHECK (mode IN ('blacklist','whitelist'))`,
 `protection_enabled` (default `false` — a room enforces nothing until this is

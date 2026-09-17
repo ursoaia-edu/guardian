@@ -355,6 +355,12 @@ attempt is a `404` like any other member that is not there.
 
 ### `POST /api/v1/binding-tokens`
 
+**`403` until the caller's email address is confirmed** — see
+`POST /api/v1/auth/verify`. This and inviting somebody are the two actions that
+reach outside the account: one adds machines, the other adds people. Everything
+else in the cabinet works unconfirmed, because blocking it all would mean a
+customer who mistypes their address cannot see what they bought.
+
 `owner`/`admin` only. Mints a new installer token for this account, valid
 1 year.
 
@@ -501,6 +507,35 @@ over 64 KiB is stored as `{}`.
 **Response** `401` — binding token unknown, expired, or revoked.
 **Response** `402` — account is at its `computer_limit` and this is a new
 machine.
+
+### `POST /api/v1/auth/verify`
+
+Unauthenticated, rate-limited per IP at the login endpoint's rate. The token in
+the body is the gate, exactly as the binding token is for enrolment: the link
+is opened by somebody who is very often not signed in, and often in a different
+browser from the one they registered in.
+
+**Request** `{"token": "…"}` → `204`
+
+A link lives **48 hours** and works **once**. Unknown, spent and expired are one
+answer — `400 {"error": "This confirmation link is not valid or has already
+been used"}` — because distinguishing them tells somebody holding a stolen link
+which kind of wrong it is.
+
+The address is confirmed only if it still matches the one the link was sent to,
+so a link sent to an old address cannot confirm a new one.
+
+### `POST /api/v1/account/verify/resend`
+
+Session auth, guest-reachable, rate-limited. Sends the link again to the
+caller's own address; `204` whether or not it was needed, so a re-clicker
+learns nothing and the cabinet needs no second code path. An address that is
+already confirmed is a no-op.
+
+It lives under `/account/` rather than beside `/auth/verify` on purpose:
+`TestEveryAPIRouteIsClassified` skips everything under `/api/v1/auth/` ("no
+session yet, so no role to check"), and a session-authenticated route there
+would be invisible to the one test whose job is to catch an unclassified route.
 
 ### `POST /agent/sync`
 
