@@ -96,15 +96,20 @@ func TestMailerBuildsAnSMTPSenderFromTheURL(t *testing.T) {
 
 // The templates carry the one thing the email exists to deliver.
 func TestTemplatesCarryTheLinkAndTheProductName(t *testing.T) {
-	v := verifyEmail("https://guardian.example", "Мария", "tok-1")
+	v := verifyEmail("https://guardian.example", "maria@example.com", "Мария", "tok-1")
 	if !strings.Contains(v.Body, "https://guardian.example/#/verify/tok-1") {
 		t.Fatalf("verification body has no usable link:\n%s", v.Body)
 	}
-	r := resetEmail("https://guardian.example", "", "tok-2")
+	r := resetEmail("https://guardian.example", "ivan@example.com", "", "tok-2")
 	if !strings.Contains(r.Body, "https://guardian.example/#/reset/tok-2") {
 		t.Fatalf("reset body has no usable link:\n%s", r.Body)
 	}
 	for _, m := range []mail.Message{v, r} {
+		// A message with no recipient is not a message. The transport would
+		// refuse it, but only after the handler had already answered 204.
+		if m.To == "" {
+			t.Error("a template built a message with no recipient")
+		}
 		if m.Subject == "" {
 			t.Error("a message has no subject")
 		}

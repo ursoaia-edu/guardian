@@ -23,9 +23,10 @@ func greeting(name string) string {
 	return fmt.Sprintf("Здравствуйте, %s!", strings.TrimSpace(name))
 }
 
-func verifyEmail(cabinetOrigin, name, token string) mail.Message {
+func verifyEmail(cabinetOrigin, to, name, token string) mail.Message {
 	link := cabinetOrigin + "/#/verify/" + token
 	return mail.Message{
+		To:      to,
 		Subject: "Guardian: подтвердите адрес почты",
 		Body: fmt.Sprintf(`%s
 
@@ -44,9 +45,10 @@ func verifyEmail(cabinetOrigin, name, token string) mail.Message {
 	}
 }
 
-func resetEmail(cabinetOrigin, name, token string) mail.Message {
+func resetEmail(cabinetOrigin, to, name, token string) mail.Message {
 	link := cabinetOrigin + "/#/reset/" + token
 	return mail.Message{
+		To:      to,
 		Subject: "Guardian: восстановление пароля",
 		Body: fmt.Sprintf(`%s
 

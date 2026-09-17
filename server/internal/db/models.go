@@ -69,6 +69,16 @@ type Computer struct {
 	LastEventBatch *string            `json:"last_event_batch"`
 }
 
+type EmailToken struct {
+	TokenHash string             `json:"token_hash"`
+	UserID    uuid.UUID          `json:"user_id"`
+	Purpose   string             `json:"purpose"`
+	Email     string             `json:"email"`
+	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
+	UsedAt    pgtype.Timestamptz `json:"used_at"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
 type Event struct {
 	ID         uuid.UUID          `json:"id"`
 	AccountID  uuid.UUID          `json:"account_id"`

@@ -125,6 +125,10 @@ func (s *Server) setupRoutes() *chi.Mux {
 		r.With(perIP(registerRateLimit)).Post("/register", s.handleRegister)
 		r.With(perIP(loginRateLimit)).Post("/login", s.handleLogin)
 		r.Post("/logout", s.handleLogout)
+		// The token in the body is this route's gate, exactly as the binding
+		// token is for enrolment: the link is opened by somebody who is, very
+		// often, not signed in.
+		r.With(perIP(loginRateLimit)).Post("/verify", s.handleVerifyEmail)
 	})
 
 	r.Route("/api/v1", func(r chi.Router) {
@@ -138,6 +142,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 		// decision to let somebody else's guest reach it.
 		r.Group(func(r chi.Router) {
 			r.Get("/me", s.handleMe)
+			r.With(perIP(registerRateLimit)).Post("/account/verify/resend", s.handleResendVerification)
 
 			r.Get("/rooms", s.handleListRooms)
 			r.Get("/rooms/{roomID}", s.handleGetRoom)
