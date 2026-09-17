@@ -73,6 +73,9 @@ func TestInstallerDownloadCarriesAWorkingBindingToken(t *testing.T) {
 	t.Setenv("CABINET_ORIGIN", "https://guardian.example.com")
 	s := &Server{pool: testPool(t), installerArchive: referenceArchive(t, true)}
 	c := registerAndLogin(t, s, "parent@example.com")
+	// Downloading an installer is gated on a confirmed address; these tests
+	// are about the archive, and the gate has its own tests.
+	verifyEveryone(t, s)
 
 	rr := doJSON(t, s.setupRoutes(), "GET", "/api/v1/installer", nil, c)
 	if rr.Code != 200 {
@@ -130,6 +133,9 @@ func TestInstallerTokenEnrolsIntoTheDownloadersAccount(t *testing.T) {
 	h := s.setupRoutes()
 	ca := registerAndLogin(t, s, "a@example.com")
 	cb := registerAndLogin(t, s, "b@example.com")
+	// Downloading an installer is gated on a confirmed address; these tests
+	// are about the archive, and the gate has its own tests.
+	verifyEveryone(t, s)
 
 	rr := doJSON(t, h, "GET", "/api/v1/installer", nil, cb)
 	if rr.Code != 200 {
@@ -163,6 +169,9 @@ func TestInstallerDownloadIsRecordedInTheEventFeed(t *testing.T) {
 	s := &Server{pool: testPool(t), installerArchive: referenceArchive(t, false)}
 	h := s.setupRoutes()
 	c := registerAndLogin(t, s, "parent@example.com")
+	// Downloading an installer is gated on a confirmed address; these tests
+	// are about the archive, and the gate has its own tests.
+	verifyEveryone(t, s)
 
 	if rr := doJSON(t, h, "GET", "/api/v1/installer", nil, c); rr.Code != 200 {
 		t.Fatalf("download: %d %s", rr.Code, rr.Body.String())
@@ -190,6 +199,9 @@ func TestInstallerWithoutAnArchiveIs503AndMintsNothing(t *testing.T) {
 	t.Setenv("CABINET_ORIGIN", "https://guardian.example.com")
 	s := &Server{pool: testPool(t)}
 	c := registerAndLogin(t, s, "parent@example.com")
+	// Downloading an installer is gated on a confirmed address; these tests
+	// are about the archive, and the gate has its own tests.
+	verifyEveryone(t, s)
 
 	rr := doJSON(t, s.setupRoutes(), "GET", "/api/v1/installer", nil, c)
 	if rr.Code != 503 {
@@ -222,6 +234,9 @@ func TestInstallerRefusesAnArchiveWithNoAgent(t *testing.T) {
 
 	s := &Server{pool: testPool(t), installerArchive: path}
 	c := registerAndLogin(t, s, "parent@example.com")
+	// Downloading an installer is gated on a confirmed address; these tests
+	// are about the archive, and the gate has its own tests.
+	verifyEveryone(t, s)
 	if rr := doJSON(t, s.setupRoutes(), "GET", "/api/v1/installer", nil, c); rr.Code != 503 {
 		t.Fatalf("expected 503 for an agentless archive, got %d %s", rr.Code, rr.Body.String())
 	}

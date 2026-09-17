@@ -89,6 +89,16 @@ func (s *Server) handleDownloadInstaller(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// An unverified address may not hand out installers. This and inviting
+	// somebody are the two actions that reach outside the account — one adds
+	// machines, the other adds people — and gating exactly these two is what
+	// stops a typo'd or someone else's address from becoming a working fleet.
+	// Everything else in the cabinet stays open: blocking it all would mean a
+	// customer who mistypes their address cannot see what they bought.
+	if !s.emailVerified(w, r, t) {
+		return
+	}
+
 	// The archive is opened and validated BEFORE a token is minted: a server
 	// with no archive should not leave a trail of unused credentials behind
 	// every attempt to download one.
