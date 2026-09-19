@@ -17,8 +17,12 @@ import (
 // after the guest role existed, without the guard. Being a table, adding a
 // route now breaks a test until somebody decides which side it belongs on.
 var guestReachableRoutes = map[string]bool{
-	"GET /api/v1/me":                                     true,
-	"POST /api/v1/account/verify/resend":                 true,
+	"GET /api/v1/me":                     true,
+	"POST /api/v1/account/verify/resend": true,
+	// A guest changes their own password like anybody else: the route touches
+	// the caller's own user row and no account-wide state, which is why it is
+	// not manager-only despite the /account/ prefix.
+	"POST /api/v1/account/password":                      true,
 	"GET /api/v1/rooms":                                  true,
 	"GET /api/v1/rooms/{roomID}":                         true,
 	"PATCH /api/v1/rooms/{roomID}":                       true,

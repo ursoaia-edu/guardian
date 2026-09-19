@@ -101,6 +101,7 @@ cd mobile && flutter pub run flutter_launcher_icons
 ### API Endpoints
 - `POST /agent/enroll` — agent enrolls with a binding token, gets its own per-machine agent token (unauthenticated; the token in the body is the gate)
 - `POST /agent/sync` — agent posts `{"runtime": {...}}` telemetry (64 KiB cap), optionally `batch_id` + `blocked[]` (the kill log: ≤200 items, a repeated `batch_id` is ignored, a malformed item is dropped and the sync still answers 200), and fetches its room's applications, mode, and client entries (agent token auth)
+- `POST /api/v1/auth/password/forgot` (always `204`, no enumeration and no timing difference), `/password/reset` (one hour, single use, **deletes every session**), `POST /api/v1/account/password` (needs the current one, **deletes every session but the caller's**)
 - `POST /api/v1/auth/verify` — confirm an address from an emailed link (unauthenticated; the token in the body is the gate, 48h, single use). `POST /api/v1/account/verify/resend` sends it again (session)
 - `POST /api/v1/auth/register`, `/login`, `/logout` — cabinet account creation and session auth. Login always sets the `HttpOnly` cookie and returns the token in the body only for `"client": "mobile"`
 - `GET /api/v1/me` — caller's identity and every account they can act in (session auth)
