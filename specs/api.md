@@ -525,6 +525,49 @@ which kind of wrong it is.
 The address is confirmed only if it still matches the one the link was sent to,
 so a link sent to an old address cannot confirm a new one.
 
+### `POST /api/v1/auth/password/forgot`
+
+Unauthenticated, rate-limited per IP at the login endpoint's rate.
+
+**Request** `{"email": "…"}` → **`204`, always**
+
+The same status and the same empty body whether or not the address has an
+account, and the miss path spends the same argon2id work the hit path does.
+This endpoint would otherwise be an account-enumeration oracle — by status, or
+by timing — undoing the care the registration endpoint already takes. Mail is
+sent only when there is somebody to send it to.
+
+A reset link lives **one hour** and works **once**. Minting supersedes: asking
+twice invalidates the first link, so a mailbox never holds two working ones.
+
+### `POST /api/v1/auth/password/reset`
+
+Unauthenticated, rate-limited at the same rate.
+
+**Request** `{"token": "…", "password": "…"}` → `204`
+
+`400` for a token that is unknown, spent or expired — one answer for all three
+— and `400` for a password under 8 or over the maximum.
+
+**Completing a reset deletes every session that user has**, on every device.
+This is the point of having server-side sessions at all: a reset is the one
+moment somebody might be taking an account back from whoever has been in it.
+
+### `POST /api/v1/account/password`
+
+Session auth, guest-reachable — a guest changes their own password like anybody
+else; the route touches the caller's own user row and no account-wide state.
+
+**Request** `{"current": "…", "new": "…"}` → `204`
+
+`403` when `current` is wrong: the session is fine, the claim about the current
+password is not, and a `401` would bounce the cabinet to the sign-in screen
+over a mistyped field.
+
+**It deletes every session except the calling one.** Signing somebody out of
+the browser they are standing in front of, as a consequence of their own
+deliberate act, is a bug that reads as one.
+
 ### `POST /api/v1/account/verify/resend`
 
 Session auth, guest-reachable, rate-limited. Sends the link again to the

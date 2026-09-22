@@ -35,6 +35,13 @@ type Tenant struct {
 	AccountID uuid.UUID
 	UserID    uuid.UUID // zero for agent requests
 	Role      string    // owner | admin | member; empty for agent requests
+
+	// SessionTokenHash is the digest of the session that authenticated this
+	// request, empty for agent requests. It exists so a password change can
+	// delete every OTHER session — signing somebody out of the browser they
+	// are standing in front of, as a consequence of their own deliberate act,
+	// is a bug that reads as one.
+	SessionTokenHash string
 }
 
 func withTenant(ctx context.Context, t Tenant) context.Context {

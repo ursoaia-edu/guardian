@@ -559,21 +559,38 @@ func (s *recordingSender) messages() []mail.Message {
 	return append([]mail.Message(nil), s.sent...)
 }
 
-// lastTo returns the most recent message to an address, waiting for the
-// send goroutine to run. Handlers send after committing and off the request's
-// goroutine, so a test that reads immediately races them.
-func (s *recordingSender) lastTo(t *testing.T, email string) mail.Message {
+// waitForLink returns the token out of the first link with the given prefix in
+// a message to that address, waiting for the send goroutine to run. Handlers
+// send after committing and off the request's goroutine, so a test that reads
+// immediately races them.
+//
+// It waits for the LINK and not merely for the address, which matters more than
+// it looks: one person gets a verification link when they register and a reset
+// link later, both to the same mailbox. Waiting for "a message to this address"
+// would sometimes find the older one and sometimes the newer, depending on
+// which goroutine won — a test that passes alone and fails in a suite.
+func (s *recordingSender) waitForLink(t *testing.T, email, prefix string) string {
 	t.Helper()
-	for i := 0; i < 200; i++ {
-		for _, m := range s.messages() {
-			if m.To == email {
-				return m
+	for i := 0; i < 400; i++ {
+		msgs := s.messages()
+		for j := len(msgs) - 1; j >= 0; j-- {
+			if msgs[j].To != email {
+				continue
+			}
+			if k := strings.Index(msgs[j].Body, prefix); k >= 0 {
+				token := msgs[j].Body[k+len(prefix):]
+				if end := strings.IndexAny(token, " \r\n"); end >= 0 {
+					token = token[:end]
+				}
+				if token != "" {
+					return token
+				}
 			}
 		}
 		waitABit()
 	}
-	t.Fatalf("no message to %s; got %+v", email, s.messages())
-	return mail.Message{}
+	t.Fatalf("no message to %s containing %q; got %+v", email, prefix, s.messages())
+	return ""
 }
 
 // A server that boots with mail silently disabled produces customers who
@@ -906,7 +923,7 @@ git commit -m "feat(server): configure the mailer, and refuse to start without o
 
 **Interfaces:**
 - Consumes: `newToken`, `hashToken` (`server/auth.go`); `s.sendMail`, `verifyEmail`, `s.cabinetOrigin` (Task 2); `recordingSender` (Task 2).
-- Produces: `db.CreateEmailToken`, `db.ConsumeEmailToken`, `db.MarkEmailVerified`, `db.DeleteEmailTokensFor`, `db.GetUserByID`, `db.SetPassword`, `db.DeleteSessionsForUser`, `db.DeleteOtherSessionsForUser`, `db.PurgeExpiredEmailTokens`; routes `POST /api/v1/auth/verify` and `POST /api/v1/account/verify/resend`; and, in `verify_test.go`, the helpers `tokenFromLink` and the constant `existingPassword`, both of which Task 4's tests use.
+- Produces: `db.CreateEmailToken`, `db.ConsumeEmailToken`, `db.MarkEmailVerified`, `db.DeleteEmailTokensFor`, `db.GetUserByID`, `db.SetPassword`, `db.DeleteSessionsForUser`, `db.DeleteOtherSessionsForUser`, `db.PurgeExpiredEmailTokens`; routes `POST /api/v1/auth/verify` and `POST /api/v1/account/verify/resend`; and, in `verify_test.go`, the constant `existingPassword`, which Task 4's tests use.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -927,23 +944,6 @@ import (
 // they are replacing, so it is declared here, in the earlier task's file.
 const existingPassword = "a-long-enough-password"
 
-// tokenFromLink pulls the opaque token out of the one link in an email.
-func tokenFromLink(t *testing.T, body, prefix string) string {
-	t.Helper()
-	i := strings.Index(body, prefix)
-	if i < 0 {
-		t.Fatalf("no %q in:\n%s", prefix, body)
-	}
-	rest := body[i+len(prefix):]
-	if j := strings.IndexAny(rest, " \r\n"); j >= 0 {
-		rest = rest[:j]
-	}
-	if rest == "" {
-		t.Fatalf("empty token in:\n%s", body)
-	}
-	return rest
-}
-
 func TestRegistrationSendsAVerificationLinkThatWorks(t *testing.T) {
 	sender := &recordingSender{}
 	s := &Server{pool: testPool(t), mail: sender, cabinetOrigin: "https://guardian.example"}
@@ -951,8 +951,7 @@ func TestRegistrationSendsAVerificationLinkThatWorks(t *testing.T) {
 
 	registerAndLogin(t, s, "parent@example.com")
 
-	msg := sender.lastTo(t, "parent@example.com")
-	token := tokenFromLink(t, msg.Body, "https://guardian.example/#/verify/")
+	token := sender.waitForLink(t, "parent@example.com", "https://guardian.example/#/verify/")
 
 	if rr := doJSON(t, h, "POST", "/api/v1/auth/verify", map[string]string{"token": token}, nil); rr.Code != 204 {
 		t.Fatalf("verify: %d %s", rr.Code, rr.Body.String())
@@ -976,7 +975,7 @@ func TestAVerificationTokenWorksOnlyOnce(t *testing.T) {
 	s := &Server{pool: testPool(t), mail: sender, cabinetOrigin: "https://guardian.example"}
 	h := s.setupRoutes()
 	registerAndLogin(t, s, "parent@example.com")
-	token := tokenFromLink(t, sender.lastTo(t, "parent@example.com").Body, "https://guardian.example/#/verify/")
+	token := sender.waitForLink(t, "parent@example.com", "https://guardian.example/#/verify/")
 
 	doJSON(t, h, "POST", "/api/v1/auth/verify", map[string]string{"token": token}, nil)
 	rr := doJSON(t, h, "POST", "/api/v1/auth/verify", map[string]string{"token": token}, nil)
@@ -1016,7 +1015,7 @@ func TestAnUnverifiedAccountCannotMintABindingToken(t *testing.T) {
 		t.Fatalf("an unverified account could not create a room: %d", rr.Code)
 	}
 
-	token := tokenFromLink(t, sender.lastTo(t, "parent@example.com").Body, "https://guardian.example/#/verify/")
+	token := sender.waitForLink(t, "parent@example.com", "https://guardian.example/#/verify/")
 	doJSON(t, h, "POST", "/api/v1/auth/verify", map[string]string{"token": token}, nil)
 
 	if rr := doJSON(t, h, "POST", "/api/v1/binding-tokens", nil, c); rr.Code != 201 {
@@ -1045,8 +1044,7 @@ func TestVerificationCanBeResent(t *testing.T) {
 
 	// The newest link works, which also proves the old one was replaced rather
 	// than accumulating.
-	msgs := sender.messages()
-	token := tokenFromLink(t, msgs[len(msgs)-1].Body, "https://guardian.example/#/verify/")
+	token := sender.waitForLink(t, "parent@example.com", "https://guardian.example/#/verify/")
 	if rr := doJSON(t, h, "POST", "/api/v1/auth/verify", map[string]string{"token": token}, nil); rr.Code != 204 {
 		t.Fatalf("the resent link did not work: %d", rr.Code)
 	}
@@ -1060,7 +1058,7 @@ func TestVerifyingIsNotDoneWithASession(t *testing.T) {
 	h := s.setupRoutes()
 	registerAndLogin(t, s, "a@example.com")
 	other := registerAndLogin(t, s, "b@example.com")
-	token := tokenFromLink(t, sender.lastTo(t, "a@example.com").Body, "https://guardian.example/#/verify/")
+	token := sender.waitForLink(t, "a@example.com", "https://guardian.example/#/verify/")
 
 	// B's session, A's token: A gets verified, because the token is what
 	// proves the mailbox.
@@ -1409,7 +1407,7 @@ git commit -m "feat(server): confirm email addresses, and gate installers on it"
 - Modify: `server/routes.go`, `server/authz_test.go`
 
 **Interfaces:**
-- Consumes: everything Task 3 produced — including its `tokenFromLink` helper and `existingPassword` constant — plus `hashPassword`, `verifyPassword` (`server/auth.go`) and `resetEmail` (Task 2).
+- Consumes: everything Task 3 produced — including its `existingPassword` constant, and `recordingSender.waitForLink` from Task 2 — plus `hashPassword`, `verifyPassword` (`server/auth.go`) and `resetEmail` (Task 2).
 - Produces: routes `POST /api/v1/auth/password/forgot`, `POST /api/v1/auth/password/reset`, `POST /api/v1/account/password`.
 
 - [ ] **Step 1: Write the failing tests**
@@ -1436,7 +1434,7 @@ func TestForgotSendsALinkThatResetsThePassword(t *testing.T) {
 		map[string]string{"email": "parent@example.com"}, nil); rr.Code != 204 {
 		t.Fatalf("forgot: %d %s", rr.Code, rr.Body.String())
 	}
-	token := tokenFromLink(t, sender.lastTo(t, "parent@example.com").Body, "https://guardian.example/#/reset/")
+	token := sender.waitForLink(t, "parent@example.com", "https://guardian.example/#/reset/")
 
 	if rr := doJSON(t, h, "POST", "/api/v1/auth/password/reset",
 		map[string]string{"token": token, "password": newPassword}, nil); rr.Code != 204 {
@@ -1488,7 +1486,7 @@ func TestACompletedResetEndsEverySession(t *testing.T) {
 	first := registerAndLogin(t, s, "parent@example.com")
 
 	doJSON(t, h, "POST", "/api/v1/auth/password/forgot", map[string]string{"email": "parent@example.com"}, nil)
-	token := tokenFromLink(t, sender.lastTo(t, "parent@example.com").Body, "https://guardian.example/#/reset/")
+	token := sender.waitForLink(t, "parent@example.com", "https://guardian.example/#/reset/")
 	doJSON(t, h, "POST", "/api/v1/auth/password/reset",
 		map[string]string{"token": token, "password": newPassword}, nil)
 
@@ -1503,7 +1501,7 @@ func TestAResetTokenWorksOnlyOnceAndExpires(t *testing.T) {
 	h := s.setupRoutes()
 	registerAndLogin(t, s, "parent@example.com")
 	doJSON(t, h, "POST", "/api/v1/auth/password/forgot", map[string]string{"email": "parent@example.com"}, nil)
-	token := tokenFromLink(t, sender.lastTo(t, "parent@example.com").Body, "https://guardian.example/#/reset/")
+	token := sender.waitForLink(t, "parent@example.com", "https://guardian.example/#/reset/")
 
 	doJSON(t, h, "POST", "/api/v1/auth/password/reset", map[string]string{"token": token, "password": newPassword}, nil)
 	rr := doJSON(t, h, "POST", "/api/v1/auth/password/reset",
@@ -1515,7 +1513,7 @@ func TestAResetTokenWorksOnlyOnceAndExpires(t *testing.T) {
 	// And an expired one is refused. Backdating is done on the pool, which the
 	// handler path never does.
 	doJSON(t, h, "POST", "/api/v1/auth/password/forgot", map[string]string{"email": "parent@example.com"}, nil)
-	fresh := tokenFromLink(t, sender.lastTo(t, "parent@example.com").Body, "https://guardian.example/#/reset/")
+	fresh := sender.waitForLink(t, "parent@example.com", "https://guardian.example/#/reset/")
 	if _, err := s.pool.Exec(context.Background(),
 		`UPDATE email_tokens SET expires_at = now() - interval '1 minute' WHERE purpose = 'reset'`); err != nil {
 		t.Fatalf("backdate: %v", err)

@@ -12,23 +12,6 @@ import (
 // they are replacing, so it is declared here, in the earlier task's file.
 const existingPassword = "a-long-enough-password"
 
-// tokenFromLink pulls the opaque token out of the one link in an email.
-func tokenFromLink(t *testing.T, body, prefix string) string {
-	t.Helper()
-	i := strings.Index(body, prefix)
-	if i < 0 {
-		t.Fatalf("no %q in:\n%s", prefix, body)
-	}
-	rest := body[i+len(prefix):]
-	if j := strings.IndexAny(rest, " \r\n"); j >= 0 {
-		rest = rest[:j]
-	}
-	if rest == "" {
-		t.Fatalf("empty token in:\n%s", body)
-	}
-	return rest
-}
-
 func TestRegistrationSendsAVerificationLinkThatWorks(t *testing.T) {
 	sender := &recordingSender{}
 	s := &Server{pool: testPool(t), mail: sender, cabinetOrigin: "https://guardian.example"}
@@ -36,8 +19,7 @@ func TestRegistrationSendsAVerificationLinkThatWorks(t *testing.T) {
 
 	registerAndLogin(t, s, "parent@example.com")
 
-	msg := sender.lastTo(t, "parent@example.com")
-	token := tokenFromLink(t, msg.Body, "https://guardian.example/#/verify/")
+	token := sender.waitForLink(t, "parent@example.com", "https://guardian.example/#/verify/")
 
 	if rr := doJSON(t, h, "POST", "/api/v1/auth/verify", map[string]string{"token": token}, nil); rr.Code != 204 {
 		t.Fatalf("verify: %d %s", rr.Code, rr.Body.String())
@@ -61,7 +43,7 @@ func TestAVerificationTokenWorksOnlyOnce(t *testing.T) {
 	s := &Server{pool: testPool(t), mail: sender, cabinetOrigin: "https://guardian.example"}
 	h := s.setupRoutes()
 	registerAndLogin(t, s, "parent@example.com")
-	token := tokenFromLink(t, sender.lastTo(t, "parent@example.com").Body, "https://guardian.example/#/verify/")
+	token := sender.waitForLink(t, "parent@example.com", "https://guardian.example/#/verify/")
 
 	doJSON(t, h, "POST", "/api/v1/auth/verify", map[string]string{"token": token}, nil)
 	rr := doJSON(t, h, "POST", "/api/v1/auth/verify", map[string]string{"token": token}, nil)
@@ -101,7 +83,7 @@ func TestAnUnverifiedAccountCannotMintABindingToken(t *testing.T) {
 		t.Fatalf("an unverified account could not create a room: %d", rr.Code)
 	}
 
-	token := tokenFromLink(t, sender.lastTo(t, "parent@example.com").Body, "https://guardian.example/#/verify/")
+	token := sender.waitForLink(t, "parent@example.com", "https://guardian.example/#/verify/")
 	doJSON(t, h, "POST", "/api/v1/auth/verify", map[string]string{"token": token}, nil)
 
 	if rr := doJSON(t, h, "POST", "/api/v1/binding-tokens", nil, c); rr.Code != 201 {
@@ -130,8 +112,7 @@ func TestVerificationCanBeResent(t *testing.T) {
 
 	// The newest link works, which also proves the old one was replaced rather
 	// than accumulating.
-	msgs := sender.messages()
-	token := tokenFromLink(t, msgs[len(msgs)-1].Body, "https://guardian.example/#/verify/")
+	token := sender.waitForLink(t, "parent@example.com", "https://guardian.example/#/verify/")
 	if rr := doJSON(t, h, "POST", "/api/v1/auth/verify", map[string]string{"token": token}, nil); rr.Code != 204 {
 		t.Fatalf("the resent link did not work: %d", rr.Code)
 	}
@@ -145,7 +126,7 @@ func TestVerifyingIsNotDoneWithASession(t *testing.T) {
 	h := s.setupRoutes()
 	registerAndLogin(t, s, "a@example.com")
 	other := registerAndLogin(t, s, "b@example.com")
-	token := tokenFromLink(t, sender.lastTo(t, "a@example.com").Body, "https://guardian.example/#/verify/")
+	token := sender.waitForLink(t, "a@example.com", "https://guardian.example/#/verify/")
 
 	// B's session, A's token: A gets verified, because the token is what
 	// proves the mailbox.

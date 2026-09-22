@@ -396,6 +396,22 @@ Purged by the hourly maintenance loop a day after expiry. No `SECURITY DEFINER`
 function is needed, unlike `events` and `process_events`: with no RLS, the
 application role can delete directly.
 
+### What a password change does to sessions
+
+Two rules, both deliberate, both only possible because sessions are rows rather
+than signed tokens:
+
+- **A completed reset deletes every session of that user.** A reset is the one
+  moment somebody might be taking an account back from whoever has been in it,
+  and leaving the intruder's session alive would make the reset theatre.
+- **A change from inside the cabinet deletes every session except the calling
+  one** (`DeleteOtherSessionsForUser`, keyed on `Tenant.SessionTokenHash`).
+  Signing somebody out of the browser they are standing in front of, as a
+  consequence of their own deliberate act, is a bug that reads as one.
+
+`Tenant` carries `SessionTokenHash` for exactly the second case; it is empty
+for agent requests, which have no session.
+
 ### `rooms`
 `id`, `account_id`, `name`, `mode CHECK (mode IN ('blacklist','whitelist'))`,
 `protection_enabled` (default `false` — a room enforces nothing until this is
