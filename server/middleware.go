@@ -39,7 +39,8 @@ func (s *Server) SessionAuth(next http.Handler) http.Handler {
 		ctx := r.Context()
 		q := db.New(s.pool)
 
-		session, err := q.GetSession(ctx, hashToken(plain))
+		digest := hashToken(plain)
+		session, err := q.GetSession(ctx, digest)
 		if err != nil {
 			// No rows is a genuinely unknown or expired token. Anything else is
 			// a database problem, not a fact about this session — reporting it
@@ -123,9 +124,10 @@ func (s *Server) SessionAuth(next http.Handler) http.Handler {
 		}
 
 		ctx = withTenant(ctx, Tenant{
-			AccountID: selected.AccountID,
-			UserID:    session.UserID,
-			Role:      selected.Role,
+			AccountID:        selected.AccountID,
+			UserID:           session.UserID,
+			Role:             selected.Role,
+			SessionTokenHash: digest,
 		})
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})

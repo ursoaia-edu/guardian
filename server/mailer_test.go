@@ -33,21 +33,38 @@ func (s *recordingSender) messages() []mail.Message {
 	return append([]mail.Message(nil), s.sent...)
 }
 
-// lastTo returns the most recent message to an address, waiting for the
-// send goroutine to run. Handlers send after committing and off the request's
-// goroutine, so a test that reads immediately races them.
-func (s *recordingSender) lastTo(t *testing.T, email string) mail.Message {
+// waitForLink returns the token out of the first link with the given prefix in
+// a message to that address, waiting for the send goroutine to run. Handlers
+// send after committing and off the request's goroutine, so a test that reads
+// immediately races them.
+//
+// It waits for the LINK and not merely for the address, which matters more than
+// it looks: one person gets a verification link when they register and a reset
+// link later, both to the same mailbox. Waiting for "a message to this address"
+// would sometimes find the older one and sometimes the newer, depending on
+// which goroutine won — a test that passes alone and fails in a suite.
+func (s *recordingSender) waitForLink(t *testing.T, email, prefix string) string {
 	t.Helper()
-	for i := 0; i < 200; i++ {
-		for _, m := range s.messages() {
-			if m.To == email {
-				return m
+	for i := 0; i < 400; i++ {
+		msgs := s.messages()
+		for j := len(msgs) - 1; j >= 0; j-- {
+			if msgs[j].To != email {
+				continue
+			}
+			if k := strings.Index(msgs[j].Body, prefix); k >= 0 {
+				token := msgs[j].Body[k+len(prefix):]
+				if end := strings.IndexAny(token, " \r\n"); end >= 0 {
+					token = token[:end]
+				}
+				if token != "" {
+					return token
+				}
 			}
 		}
 		waitABit()
 	}
-	t.Fatalf("no message to %s; got %+v", email, s.messages())
-	return mail.Message{}
+	t.Fatalf("no message to %s containing %q; got %+v", email, prefix, s.messages())
+	return ""
 }
 
 // A server that boots with mail silently disabled produces customers who

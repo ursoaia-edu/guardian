@@ -32,6 +32,23 @@ func registerAndLogin(t *testing.T, s *Server, email string) *http.Cookie {
 	return nil
 }
 
+// loginAs signs an existing user in again, for tests about a second device.
+func loginAs(t *testing.T, s *Server, email, password string) *http.Cookie {
+	t.Helper()
+	rr := doJSON(t, s.setupRoutes(), "POST", "/api/v1/auth/login",
+		map[string]string{"email": email, "password": password}, nil)
+	if rr.Code != 200 {
+		t.Fatalf("login as %s: %d %s", email, rr.Code, rr.Body.String())
+	}
+	for _, c := range rr.Result().Cookies() {
+		if c.Name == sessionCookieName {
+			return c
+		}
+	}
+	t.Fatalf("login as %s set no session cookie", email)
+	return nil
+}
+
 func TestLoginSetsHttpOnlyCookie(t *testing.T) {
 	s := &Server{pool: testPool(t)}
 	c := registerAndLogin(t, s, "parent@example.com")

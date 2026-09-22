@@ -129,6 +129,10 @@ func (s *Server) setupRoutes() *chi.Mux {
 		// token is for enrolment: the link is opened by somebody who is, very
 		// often, not signed in.
 		r.With(perIP(loginRateLimit)).Post("/verify", s.handleVerifyEmail)
+		// Both at the login endpoint's rate: they are the same kind of
+		// unauthenticated, email-shaped guessing surface.
+		r.With(perIP(loginRateLimit)).Post("/password/forgot", s.handleForgotPassword)
+		r.With(perIP(loginRateLimit)).Post("/password/reset", s.handleResetPassword)
 	})
 
 	r.Route("/api/v1", func(r chi.Router) {
@@ -143,6 +147,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 		r.Group(func(r chi.Router) {
 			r.Get("/me", s.handleMe)
 			r.With(perIP(registerRateLimit)).Post("/account/verify/resend", s.handleResendVerification)
+			r.Post("/account/password", s.handleChangePassword)
 
 			r.Get("/rooms", s.handleListRooms)
 			r.Get("/rooms/{roomID}", s.handleGetRoom)
