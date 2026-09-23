@@ -1906,8 +1906,7 @@ Append to `server/maintenance_test.go`:
 func TestPurgeRemovesExpiredEmailTokens(t *testing.T) {
 	s := &Server{pool: testPool(t)}
 	ctx := context.Background()
-	c := registerAndLogin(t, s, "parent@example.com")
-	_ = c
+	registerAndLogin(t, s, "parent@example.com")
 
 	var userID uuid.UUID
 	if err := s.pool.QueryRow(ctx, `SELECT id FROM users WHERE email = 'parent@example.com'`).Scan(&userID); err != nil {
@@ -1924,13 +1923,22 @@ func TestPurgeRemovesExpiredEmailTokens(t *testing.T) {
 
 	s.purgeOnce(ctx)
 
-	var left int
-	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM email_tokens`).Scan(&left); err != nil {
-		t.Fatalf("count: %v", err)
+	// Named rather than counted: registering also mints a verification token,
+	// so a count here would be asserting on a third row this test never wrote.
+	var stale, recent bool
+	if err := s.pool.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM email_tokens WHERE token_hash = 'hash-30 days'),
+		       EXISTS (SELECT 1 FROM email_tokens WHERE token_hash = 'hash-1 minute')`).
+		Scan(&stale, &recent); err != nil {
+		t.Fatalf("read back: %v", err)
 	}
-	// The day of grace keeps the one that expired a minute ago.
-	if left != 1 {
-		t.Fatalf("%d rows left, want 1", left)
+	if stale {
+		t.Error("a token that expired 30 days ago is still there")
+	}
+	// The day of grace keeps the one that expired a minute ago, so "my link
+	// says it is invalid" can still be answered by looking.
+	if !recent {
+		t.Error("a token that expired a minute ago was purged inside its day of grace")
 	}
 }
 ```

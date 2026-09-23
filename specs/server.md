@@ -714,6 +714,63 @@ It runs in-process rather than as a cron job or a database scheduler because
 both are another thing to deploy and another thing to forget; a second server
 running it too would simply find nothing to do.
 
+## Mail
+
+`server/internal/mail` is the whole of it: a `Sender` interface, an SMTP
+implementation and a logging one. **SendGrid over SMTP**, not their Web API —
+no vendor SDK, no vendor types in the handler layer, and the day the provider
+changes it is a URL in a `.env` rather than a package to rewrite. The Web API
+buys per-message tracking and templates, neither of which this product wants: a
+password reset that is tracked is a password reset with a third party's pixel
+in it.
+
+| Key | Value |
+|---|---|
+| `SMTP_URL` | `smtp://apikey:<API-KEY>@smtp.sendgrid.net:587` |
+| `MAIL_FROM` | `Guardian <noreply@<domain>>`, verified in SendGrid |
+| `MAIL_TRANSPORT` | unset in production; `log` prints mail instead of sending |
+
+**The username is the literal string `apikey`.** Not the account's email, not a
+name — a SendGrid-specific detail that costs an hour of "authentication failed"
+to rediscover. Port 587 with STARTTLS; implicit TLS on 465 also works and is
+not used, because 587 is the one SendGrid documents first and the one least
+likely to be blocked outbound by a VPS provider.
+
+**The server refuses to start** when `SMTP_URL` is unset unless
+`MAIL_TRANSPORT=log` says so explicitly — the same shape as `CABINET_ORIGIN`
+and for the same reason. A service that boots happily with mail silently
+disabled produces customers who cannot reset their password and an operator who
+finds out from a support ticket.
+
+Messages are sent **after** the request's transaction commits, on their own
+goroutine with a 20-second deadline, and a failure is logged and never
+returned. An SMTP round trip inside a transaction holds a Postgres connection
+hostage for as long as the provider feels like taking; and the row is already
+written, so failing the request would be a lie. The request's own context is
+deliberately not used — it is cancelled when the response is written, before
+anything has been dialled.
+
+Templates are plain text and Russian (`server/mailtemplates.go`), per
+`specs/2026-09-09-cabinet-v1-design.md` §2. The cabinet's own interface is
+English because it has no i18n yet; one file means one edit when that lands.
+
+**Two operational prerequisites, neither of them code**, both of which decide
+whether mail arrives at all:
+
+1. **Domain authentication** — the CNAME records SendGrid issues for SPF and
+   DKIM. Without them mail from a fresh domain lands in spam, and a reset link
+   in a spam folder is indistinguishable from a broken product. Single Sender
+   Verification is enough to *send* and not enough to be *delivered*.
+2. **A plan that covers the volume.** The free tier is 100 messages a day.
+
+**A known limit, accepted for v1.** SendGrid maintains suppression lists
+(bounces, spam reports, unsubscribes). A suppressed address returns success
+over SMTP and is then silently dropped — this server cannot tell, so "sent" is
+never a delivery guarantee. Nothing here detects it; the operator diagnoses
+"письмо не пришло" in SendGrid's Activity Feed. Closing it properly means the
+Event Webhook and a delivery-status column, which is its own piece of work and
+is not worth it before the first customer complains.
+
 ## Health
 
 `GET /health` pings the pool with a 2-second timeout and answers `200

@@ -67,6 +67,14 @@ func (s *Server) purgeOnce(ctx context.Context) {
 		slog.Info("purged old events", "count", purged, "retention", eventRetention.String())
 	}
 
+	// email_tokens has no RLS (it has no account_id), so this needs no
+	// SECURITY DEFINER function — the application role can delete directly.
+	if n, err := db.New(s.pool).PurgeExpiredEmailTokens(ctx); err != nil {
+		slog.Error("purge expired email tokens", "error", err)
+	} else if n > 0 {
+		slog.Info("purged expired email tokens", "count", n)
+	}
+
 	// Same RLS reasoning as the events purge above; migration 00018 provides
 	// the function.
 	var purgedKills int64
