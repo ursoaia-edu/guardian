@@ -2326,7 +2326,7 @@ export function ChangePasswordCard({ api }) {
     <${Card} title="Password">
       <${ErrorBanner} error=${error} onDismiss=${() => setError(null)} />
       ${done && html`<${Banner} kind="info">Changed. Every other device has been signed out.<//>`}
-      <form class="inline-form" onSubmit=${submit}>
+      <form class="form-column" onSubmit=${submit}>
         <${Field} label="Current password">
           <${TextInput} type="password" value=${current} onChange=${setCurrent} autoComplete="current-password" />
         <//>
@@ -2356,7 +2356,11 @@ In `server/webui/app.js`:
   if (route.name === 'reset') {
     return html`<${ResetScreen} api=${api} token=${route.params.token} />`
   }
-  if (status !== 'ready' && route.name === 'forgot') {
+  if (route.name === 'forgot') {
+    // Unconditional, like the two above. Somebody who is signed in here
+    // followed a "forgot your password" link on a device where a session
+    // happens to exist, and answering "there is no such page" is the worst of
+    // the available replies.
     return html`<${ForgotScreen} api=${api} />`
   }
 ```

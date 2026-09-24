@@ -13,6 +13,7 @@ import {
 } from '../ui.js'
 import { usePoll, useAction } from '../hooks.js'
 import { formatDate } from '../format.js'
+import { ChangePasswordCard } from './password.js'
 
 export function SettingsScreen({ api, me, role, onAccountChange, onSignOut, onAuthError }) {
   const manager = role === 'owner' || role === 'admin'
@@ -25,12 +26,10 @@ export function SettingsScreen({ api, me, role, onAccountChange, onSignOut, onAu
           <dt>Signed in as</dt><dd>${me ? me.user_id : '—'}</dd>
           <dt>Role in this account</dt><dd>${role || '—'}</dd>
         </dl>
-        <p class="hint">
-          Changing a password and email confirmation are not built yet — they arrive with the
-          email provider the invitation flow also needs.
-        </p>
         <${Button} onClick=${onSignOut}>Sign out<//>
       <//>
+
+      <${ChangePasswordCard} api=${api} />
 
       ${accounts.length > 1 &&
       html`<${Card} title="Accounts you can act in">

@@ -78,7 +78,20 @@ reach. Here it needs neither.
 `signin` (doubles as registration) · `welcome` (the first-computer wizard) · `overview` ·
 `rooms` · `room` with five tabs (computers, rules, log, power, members) · `computers` (the
 pool) · `computer` (one machine's passport, with the same log) · `install` · `activity` ·
-`settings`.
+`settings` (which carries the change-password form) · `verify` · `forgot` · `reset`.
+
+Three of those screens are reached from a link in an email — `verify`
+(`#/verify/<token>`), `reset` (`#/reset/<token>`) and `forgot` (`#/forgot`) —
+and `app.js` handles all three **before** the sign-in gate. The person
+following a confirmation link is usually not signed in, and often in a
+different browser from the one they registered in; sending them to the sign-in
+screen would drop the token on the floor, which is the whole failure this
+ordering avoids. `forgot` is handled unconditionally for the same reason: a
+signed-in visitor there followed a link on a device where a session happens to
+exist, and "there is no such page" is the worst of the available replies.
+
+The links carry `#/`, not a bare path, because the cabinet routes on the hash.
+A path-only link would land on the overview with the token gone.
 
 `blocklog.js` is not a screen but the table both the room's **Log** tab and the computer's
 passport render. The caller passes the loader, because the two endpoints are separate: a

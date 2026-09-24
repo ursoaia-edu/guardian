@@ -1,6 +1,7 @@
 const { useState } = window.React
 
 import { html, Button, Field, TextInput, ErrorBanner, BrandMark } from '../ui.js'
+import { href } from '../router.js'
 
 // The sign-in screen doubles as registration, because a brand-new customer
 // arrives here with nothing: registering creates the user AND the account they
@@ -98,6 +99,9 @@ export function SignInScreen({ api, onSignedIn }) {
             ${registering ? 'Sign in' : 'Create one'}
           </button>
         </p>
+
+        ${!registering &&
+        html`<p class="signin-switch"><a href=${href('forgot')}>Forgot your password?</a></p>`}
       </div>
     </div>
   `
