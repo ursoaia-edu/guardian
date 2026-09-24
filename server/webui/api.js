@@ -142,6 +142,17 @@ export function createApi(options = {}) {
     login: (email, password) =>
       request('POST', '/api/v1/auth/login', { body: { email, password } }),
     logout: () => request('POST', '/api/v1/auth/logout'),
+
+    // The account lifecycle. verify and the two password routes are
+    // unauthenticated: the token in the body is what proves the mailbox, and
+    // the link is usually opened in a browser that has never signed in.
+    verifyEmail: (token) => request('POST', '/api/v1/auth/verify', { body: { token } }),
+    resendVerification: () => request('POST', '/api/v1/account/verify/resend'),
+    forgotPassword: (email) => request('POST', '/api/v1/auth/password/forgot', { body: { email } }),
+    resetPassword: (token, password) =>
+      request('POST', '/api/v1/auth/password/reset', { body: { token, password } }),
+    changePassword: (current, next) =>
+      request('POST', '/api/v1/account/password', { body: { current, new: next } }),
     me: (opts) => request('GET', '/api/v1/me', opts),
 
     // Rooms

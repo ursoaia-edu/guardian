@@ -546,6 +546,19 @@ select.input {
   align-items: flex-end;
   flex-wrap: wrap;
 }
+/* A form whose fields carry hints cannot bottom-align: the hint makes one
+   field taller and the inputs stop lining up. Stack it instead. */
+.form-column {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+  align-items: flex-start;
+  max-width: 26rem;
+}
+.form-column .field {
+  width: 100%;
+}
+
 /* An email is about twenty characters. The form stops there and lets the
    button sit beside it rather than a screen-wide runway. */
 .inline-form .field {

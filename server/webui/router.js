@@ -17,6 +17,11 @@ export const ROUTES = [
   { name: 'install', pattern: ['install'] },
   { name: 'activity', pattern: ['activity'] },
   { name: 'settings', pattern: ['settings'] },
+  // Reached from a link in an email, by somebody who is very often not signed
+  // in. See app.js, which handles these before the sign-in gate.
+  { name: 'forgot', pattern: ['forgot'] },
+  { name: 'verify', pattern: ['verify', ':token'] },
+  { name: 'reset', pattern: ['reset', ':token'] },
 ]
 
 // The tabs of the room screen, which is the one screen with any.
@@ -58,6 +63,10 @@ export function href(name, params = {}) {
       return `#/rooms/${encodeURIComponent(params.roomID)}/${params.tab || ROOM_TABS[0]}`
     case 'computer':
       return `#/computers/${encodeURIComponent(params.computerID)}`
+    case 'verify':
+      return `#/verify/${encodeURIComponent(params.token)}`
+    case 'reset':
+      return `#/reset/${encodeURIComponent(params.token)}`
     default:
       return `#/${name}`
   }

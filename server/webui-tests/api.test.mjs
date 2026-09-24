@@ -259,3 +259,24 @@ test('filenameFromDisposition reads the header, or picks a name that is at least
   assert.equal(filenameFromDisposition(null), 'Guardian.zip')
   assert.equal(filenameFromDisposition('attachment'), 'Guardian.zip')
 })
+
+test('the account-lifecycle calls post what the server expects', async () => {
+  const { calls, fetchImpl } = fakeFetch(() => new Response(null, { status: 204 }))
+  const api = createApi({ fetch: fetchImpl })
+
+  await api.verifyEmail('tok')
+  await api.forgotPassword('a@b.example')
+  await api.resetPassword('tok', 'a-new-password')
+  await api.changePassword('old', 'a-new-password')
+  await api.resendVerification()
+
+  assert.equal(calls[0].url, '/api/v1/auth/verify')
+  assert.deepEqual(JSON.parse(calls[0].init.body), { token: 'tok' })
+  assert.equal(calls[1].url, '/api/v1/auth/password/forgot')
+  assert.deepEqual(JSON.parse(calls[1].init.body), { email: 'a@b.example' })
+  assert.equal(calls[2].url, '/api/v1/auth/password/reset')
+  assert.deepEqual(JSON.parse(calls[2].init.body), { token: 'tok', password: 'a-new-password' })
+  assert.equal(calls[3].url, '/api/v1/account/password')
+  assert.deepEqual(JSON.parse(calls[3].init.body), { current: 'old', new: 'a-new-password' })
+  assert.equal(calls[4].url, '/api/v1/account/verify/resend')
+})

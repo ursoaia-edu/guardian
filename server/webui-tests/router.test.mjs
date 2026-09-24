@@ -94,3 +94,19 @@ test('every route in the table is reachable by its own href', () => {
     assert.equal(parsed.name, route.name, `${route.name} did not survive its own href`)
   }
 })
+
+test('the links in an email are routes', () => {
+  assert.deepEqual(parseRoute('#/verify/abc123'), { name: 'verify', params: { token: 'abc123' } })
+  assert.deepEqual(parseRoute('#/reset/abc123'), { name: 'reset', params: { token: 'abc123' } })
+  assert.deepEqual(parseRoute('#/forgot'), { name: 'forgot', params: {} })
+})
+
+test('a token with url-unsafe characters survives the round trip', () => {
+  // The token is hex today, but a route that breaks on one is a trap set for
+  // whoever changes the minting.
+  for (const token of ['a b', 'a/b', 'a+b']) {
+    const route = parseRoute(href('verify', { token }))
+    assert.equal(route.name, 'verify')
+    assert.equal(route.params.token, token)
+  }
+})

@@ -14,6 +14,8 @@ import { html, ErrorBanner, Loading, Banner, BrandMark, PageHeader, ErrorBoundar
 import { parseRoute, href, navigate } from './router.js'
 import { usePoll } from './hooks.js'
 import { SignInScreen } from './screens/signin.js'
+import { VerifyScreen } from './screens/verify.js'
+import { ForgotScreen, ResetScreen } from './screens/password.js'
 import { WelcomeScreen } from './screens/welcome.js'
 import { OverviewScreen } from './screens/overview.js'
 import { RoomsScreen } from './screens/rooms.js'
@@ -130,6 +132,24 @@ function App({ api }) {
     setStatus('signedout')
     navigate('overview')
   }, [api])
+
+  // These three are reached from a link in an email, by somebody who is very
+  // often not signed in. They are checked before the sign-in gate, not after:
+  // sending a confirmation link to the sign-in screen and losing the token is
+  // the whole failure this ordering avoids.
+  if (route.name === 'verify') {
+    return html`<${VerifyScreen} api=${api} token=${route.params.token} signedIn=${status === 'ready'} />`
+  }
+  if (route.name === 'reset') {
+    return html`<${ResetScreen} api=${api} token=${route.params.token} />`
+  }
+  if (route.name === 'forgot') {
+    // Unconditional, like the two above. Somebody who is signed in here
+    // followed a "forgot your password" link on a device where a session
+    // happens to exist, and answering "there is no such page" is the worst of
+    // the available replies.
+    return html`<${ForgotScreen} api=${api} />`
+  }
 
   if (status === 'loading') return html`<div class="boot"><${Loading} what="Opening the cabinet" /></div>`
 
