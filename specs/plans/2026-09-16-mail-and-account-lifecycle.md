@@ -1,6 +1,31 @@
 # Mail and Account Lifecycle Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Status: complete.** All six tasks landed on `dev`: `4253d4b`, `037ab81`,
+> `f254a20`, `de984fd`, `d852808`, `47abd65`. Five corrections were made while
+> executing, each applied to this document as well as to the code, so the plan
+> and the tree agree:
+>
+> 1. **The templates built a `Message` with no `To`.** The transport would have
+>    refused it, but only after the handler had answered `204` — a password
+>    reset nobody receives and no error anywhere. `verifyEmail`/`resetEmail`
+>    take the recipient, and the template test now asserts one.
+> 2. **`recordingSender.lastTo` returned the *first* match**, and even once that
+>    was fixed it waited on the address alone — while one person gets a
+>    verification link at registration and a reset link later, both to the same
+>    mailbox. It is `waitForLink`, which waits for the address *and* the link
+>    prefix; the suite now runs clean twice over.
+> 3. **`existingPassword` was declared in Task 4's file but first used in Task
+>    3's**, so Task 3 would not have compiled on its own.
+> 4. **`#/forgot` answered "there is no such page" to anyone signed in**, because
+>    the guard tested the session. It is unconditional now.
+> 5. **The purge test counted rows** in a table where registering also mints a
+>    verification token. It names the rows it expects instead.
+>
+> The enrolment and installer tests confirm addresses through a helper that
+> writes `email_verified_at` directly, rather than walking the mail flow in
+> fifteen tests that are about something else.
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Guardian can send email, so a person can confirm their address and recover a forgotten password instead of losing their entire fleet to a typo.
 
@@ -75,7 +100,7 @@ Pure Go, no server, no database, no network. It is the piece with the most fiddl
   - `func NewSMTPSender(cfg SMTPConfig, from *netmail.Address) *SMTPSender`
   - `func NewLogSender(w io.Writer, from *netmail.Address) *LogSender`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `server/internal/mail/mail_test.go`:
 
@@ -254,13 +279,13 @@ func headerOf(t *testing.T, raw []byte, name string) string {
 }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cd server && go test ./internal/mail/...`
 
 Expected: FAIL to compile — `undefined: Render`, `undefined: Message`, `undefined: ParseSMTPURL`, `undefined: NewLogSender`.
 
-- [ ] **Step 3: Write the message and its rendering**
+- [x] **Step 3: Write the message and its rendering**
 
 Create `server/internal/mail/mail.go`:
 
@@ -355,7 +380,7 @@ func writeHeader(b *strings.Builder, name, value string) {
 }
 ```
 
-- [ ] **Step 4: Write the two transports**
+- [x] **Step 4: Write the two transports**
 
 Create `server/internal/mail/smtp.go`:
 
@@ -488,13 +513,13 @@ func (s *LogSender) Send(_ context.Context, m Message) error {
 }
 ```
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [x] **Step 5: Run the tests to verify they pass**
 
 Run: `cd server && gofmt -l ./internal/mail && go vet ./internal/mail/... && go test ./internal/mail/... -v`
 
 Expected: PASS, all of them.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add server/internal/mail
@@ -519,7 +544,7 @@ git commit -m "feat(server): add the mail package, SMTP and a log transport"
   - `func resetEmail(cabinetOrigin, to, name, token string) mail.Message`
   - `type recordingSender struct` in `mailer_test.go`, used by Tasks 3 and 4
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `server/mailer_test.go`:
 
@@ -673,13 +698,13 @@ func waitABit() { time.Sleep(5 * time.Millisecond) }
 
 (`testsupport_test.go` already imports `time`; if it does not, add it.)
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cd server && go test . -run 'TestMailer|TestTemplates'`
 
 Expected: FAIL to compile — `undefined: mailerFromEnv`, `undefined: verifyEmail`, `undefined: resetEmail`.
 
-- [ ] **Step 3: Write the mailer**
+- [x] **Step 3: Write the mailer**
 
 Create `server/mailer.go`:
 
@@ -844,7 +869,7 @@ func resetEmail(cabinetOrigin, to, name, token string) mail.Message {
 }
 ```
 
-- [ ] **Step 4: Wire it into the server**
+- [x] **Step 4: Wire it into the server**
 
 In `server/main.go`, add to the `Server` struct:
 
@@ -894,19 +919,19 @@ and in the returned struct literal:
 Add `"strings"` to the imports if it is not already there. A configuration error returns
 from `NewServer` like every other one, so `main()` already reports it and exits.
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [x] **Step 5: Run the tests to verify they pass**
 
 Run: `cd server && gofmt -l . | grep -v webui; go vet ./... && go test . -run 'TestMailer|TestTemplates' -v`
 
 Expected: PASS.
 
-- [ ] **Step 6: Run the whole suite**
+- [x] **Step 6: Run the whole suite**
 
 Run: `cd server && go test ./...`
 
 Expected: green. Existing tests construct `&Server{pool: …}` directly and never call `sendMail`, so a nil mailer bothers nothing yet.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add server/mailer.go server/mailtemplates.go server/mailer_test.go server/main.go
@@ -925,7 +950,7 @@ git commit -m "feat(server): configure the mailer, and refuse to start without o
 - Consumes: `newToken`, `hashToken` (`server/auth.go`); `s.sendMail`, `verifyEmail`, `s.cabinetOrigin` (Task 2); `recordingSender` (Task 2).
 - Produces: `db.CreateEmailToken`, `db.ConsumeEmailToken`, `db.MarkEmailVerified`, `db.DeleteEmailTokensFor`, `db.GetUserByID`, `db.SetPassword`, `db.DeleteSessionsForUser`, `db.DeleteOtherSessionsForUser`, `db.PurgeExpiredEmailTokens`; routes `POST /api/v1/auth/verify` and `POST /api/v1/account/verify/resend`; and, in `verify_test.go`, the constant `existingPassword`, which Task 4's tests use.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `server/verify_test.go`:
 
@@ -1093,13 +1118,13 @@ func TestRegistrationSucceedsWhenMailFails(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cd server && go test . -run 'TestRegistrationSends|TestAVerificationToken|TestAnUnknownVerification|TestAnUnverifiedAccount|TestVerificationCanBeResent|TestVerifyingIsNot|TestRegistrationSucceedsWhenMailFails'`
 
 Expected: FAIL — `unknown field mail in struct literal`, then once that compiles, `404` from the routes that do not exist.
 
-- [ ] **Step 3: Write the migration**
+- [x] **Step 3: Write the migration**
 
 Create `server/db/migrations/00019_email_tokens.sql`:
 
@@ -1133,7 +1158,7 @@ CREATE INDEX idx_email_tokens_user ON email_tokens(user_id, purpose);
 DROP TABLE email_tokens;
 ```
 
-- [ ] **Step 4: Write the queries**
+- [x] **Step 4: Write the queries**
 
 Create `server/db/queries/email_tokens.sql`:
 
@@ -1183,13 +1208,13 @@ DELETE FROM sessions WHERE user_id = $1 AND token_hash <> $2;
 DELETE FROM email_tokens WHERE expires_at < now() - interval '1 day';
 ```
 
-- [ ] **Step 5: Regenerate the sqlc code**
+- [x] **Step 5: Regenerate the sqlc code**
 
 Run: `cd server && go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.27.0 generate`
 
 Expected: a new `internal/db/email_tokens.sql.go` and an `EmailToken` model. CI runs `sqlc diff` and fails when the committed output does not match, so this step is not optional.
 
-- [ ] **Step 6: Write the handlers**
+- [x] **Step 6: Write the handlers**
 
 Create `server/handlers_verify.go`:
 
@@ -1300,7 +1325,7 @@ func (s *Server) handleResendVerification(w http.ResponseWriter, r *http.Request
 
 Add the imports this file needs: `context`, `encoding/json`, `github.com/google/uuid`, `github.com/jackc/pgx/v5/pgtype`.
 
-- [ ] **Step 7: Send on registration, and gate the installer**
+- [x] **Step 7: Send on registration, and gate the installer**
 
 In `server/handlers_auth.go`, at the end of `handleRegister` — **after** `tx.Commit(ctx)` succeeds and before writing the response:
 
@@ -1338,7 +1363,7 @@ In `server/handlers_agent.go`, at the top of `handleCreateBindingToken`, immedia
 
 The same gate belongs on `GET /api/v1/installer` (`server/installer.go`), which mints a binding token of its own — add the identical block after its `mustTenant`.
 
-- [ ] **Step 8: Register and classify the routes**
+- [x] **Step 8: Register and classify the routes**
 
 In `server/routes.go`, in the unauthenticated auth group next to register and login:
 
@@ -1367,7 +1392,7 @@ one test whose whole job is to make sure nobody forgets to classify a route.
 entry; the resend is a signed-in action and belongs with the other thing a
 signed-in person does to their own identity, `POST /api/v1/account/password`.
 
-- [ ] **Step 9: Run the tests to verify they pass**
+- [x] **Step 9: Run the tests to verify they pass**
 
 Run:
 ```sh
@@ -1377,17 +1402,17 @@ go test . -run 'TestRegistrationSends|TestAVerificationToken|TestAnUnknownVerifi
 
 Expected: PASS, all of them.
 
-- [ ] **Step 10: Run the whole suite**
+- [x] **Step 10: Run the whole suite**
 
 Run: `cd server && gofmt -l . | grep -v webui; go vet ./... && go test ./...`
 
 Expected: green. **Watch for enrollment tests that mint a binding token as a freshly registered user** — they now need a verified address. Fix them by verifying in the test helper rather than by loosening the gate: in `server/enroll_test.go`'s `mintBindingToken`, mark the user verified first with a direct `UPDATE users SET email_verified_at = now()` on the pool, and say in a comment why.
 
-- [ ] **Step 11: Update the docs**
+- [x] **Step 11: Update the docs**
 
 In `specs/api.md`: document `POST /api/v1/auth/verify` and `POST /api/v1/account/verify/resend`, and add to `POST /api/v1/binding-tokens` and `GET /api/v1/installer` that both answer `403` until the caller's address is confirmed. In `specs/server.md`: an `### email_tokens` section next to `### sessions`, saying it carries no RLS and why. In `CLAUDE.md`: the two routes in the endpoint list, and `email_tokens` in the table list.
 
-- [ ] **Step 12: Commit**
+- [x] **Step 12: Commit**
 
 ```bash
 git add server/db/migrations/00019_email_tokens.sql server/db/queries/email_tokens.sql \
@@ -1410,7 +1435,7 @@ git commit -m "feat(server): confirm email addresses, and gate installers on it"
 - Consumes: everything Task 3 produced — including its `existingPassword` constant, and `recordingSender.waitForLink` from Task 2 — plus `hashPassword`, `verifyPassword` (`server/auth.go`) and `resetEmail` (Task 2).
 - Produces: routes `POST /api/v1/auth/password/forgot`, `POST /api/v1/auth/password/reset`, `POST /api/v1/account/password`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `server/password_test.go`:
 
@@ -1583,13 +1608,13 @@ func loginAs(t *testing.T, s *Server, email, password string) *http.Cookie {
 
 (`sessionCookieName` is the constant `handleLogin` sets, `handlers_auth.go:144`.)
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cd server && go test . -run 'TestForgot|TestACompletedReset|TestAResetToken|TestChangingThePassword'`
 
 Expected: FAIL with `404` — none of the three routes exist.
 
-- [ ] **Step 3: Write the handlers**
+- [x] **Step 3: Write the handlers**
 
 Create `server/handlers_password.go`:
 
@@ -1837,7 +1862,7 @@ In `server/middleware.go`, `SessionAuth` currently computes the digest inline as
 and set `SessionTokenHash: digest` wherever that function builds the `Tenant` it puts in
 the context.
 
-- [ ] **Step 4: Register and classify the routes**
+- [x] **Step 4: Register and classify the routes**
 
 In `server/routes.go`, with the unauthenticated auth routes:
 
@@ -1860,23 +1885,23 @@ In `server/authz_test.go`, add to `guestReachableRoutes`:
 
 A guest changes their own password like anybody else — the route touches the caller's own user row and no account-wide state, which is why it is not manager-only despite the `/account/` prefix.
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [x] **Step 5: Run the tests to verify they pass**
 
 Run: `cd server && go test . -run 'TestForgot|TestACompletedReset|TestAResetToken|TestChangingThePassword' -v`
 
 Expected: PASS, all six.
 
-- [ ] **Step 6: Run the whole suite**
+- [x] **Step 6: Run the whole suite**
 
 Run: `cd server && gofmt -l . | grep -v webui; go vet ./... && go test ./...`
 
 Expected: green.
 
-- [ ] **Step 7: Update the docs**
+- [x] **Step 7: Update the docs**
 
 In `specs/api.md`, the three endpoints with their exact request bodies, the always-`204` rule for `forgot` and the session consequences of each. In `specs/server.md`, a paragraph under the session section on what a reset and a change do to `sessions`. In `CLAUDE.md`, the three routes.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add server/handlers_password.go server/password_test.go server/routes.go \
@@ -1896,7 +1921,7 @@ git commit -m "feat(server): reset a forgotten password, and change a known one"
 - Consumes: `db.PurgeExpiredEmailTokens` (Task 3), `s.purgeOnce` (existing).
 - Produces: nothing other tasks consume.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `server/maintenance_test.go`:
 
@@ -1943,13 +1968,13 @@ func TestPurgeRemovesExpiredEmailTokens(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `cd server && go test . -run TestPurgeRemovesExpiredEmailTokens`
 
 Expected: FAIL — 2 rows left.
 
-- [ ] **Step 3: Wire the purge in**
+- [x] **Step 3: Wire the purge in**
 
 In `server/maintenance.go`, at the end of `purgeOnce`:
 
@@ -1963,13 +1988,13 @@ In `server/maintenance.go`, at the end of `purgeOnce`:
 	}
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `cd server && go test . -run TestPurgeRemoves -v`
 
 Expected: PASS, together with the two purge tests that already exist.
 
-- [ ] **Step 5: Write the deployment template**
+- [x] **Step 5: Write the deployment template**
 
 In `dist/server/server.env`, add:
 
@@ -1999,11 +2024,11 @@ MAIL_FROM=Guardian <noreply@example.com>
 #  2. A plan that covers the volume. The free tier is 100 messages a day.
 ```
 
-- [ ] **Step 6: Update the docs**
+- [x] **Step 6: Update the docs**
 
 In `specs/server.md`, a **Mail** section: the package, the two transports, the startup refusal, the after-commit rule, and the accepted v1 limit — SendGrid suppresses bounced and complained-about addresses, returns success over SMTP, and silently drops the message, which this server cannot detect; the operator diagnoses it in SendGrid's Activity Feed, and closing it properly means the Event Webhook and a delivery-status column. Add `email_tokens` to the maintenance paragraph. In `CLAUDE.md`, add the three `.env` keys to the deployment paragraph and `server/internal/mail` to the file list.
 
-- [ ] **Step 7: Run the whole suite and commit**
+- [x] **Step 7: Run the whole suite and commit**
 
 Run: `cd server && gofmt -l . | grep -v webui; go vet ./... && go test ./...`
 
@@ -2027,7 +2052,7 @@ Without these the emailed links land on the overview and nothing happens, which 
 - Consumes: the five routes from Tasks 3 and 4.
 - Produces: routes `verify` (`#/verify/<token>`), `reset` (`#/reset/<token>`), `forgot` (`#/forgot`); `api.verifyEmail`, `api.resendVerification`, `api.forgotPassword`, `api.resetPassword`, `api.changePassword`.
 
-- [ ] **Step 1: Write the failing router tests**
+- [x] **Step 1: Write the failing router tests**
 
 Append to `server/webui-tests/router.test.mjs`:
 
@@ -2074,13 +2099,13 @@ test('the account-lifecycle calls post what the server expects', async () => {
 })
 ```
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run: `cd server/webui-tests && node --test`
 
 Expected: FAIL — `notfound` for the three routes, `api.verifyEmail is not a function`.
 
-- [ ] **Step 3: Add the routes and the API calls**
+- [x] **Step 3: Add the routes and the API calls**
 
 In `server/webui/router.js`, add to `ROUTES`:
 
@@ -2111,7 +2136,7 @@ In `server/webui/api.js`, alongside the other auth calls:
       request('POST', '/api/v1/account/password', { body: { current, new: next } }),
 ```
 
-- [ ] **Step 4: Write the screens**
+- [x] **Step 4: Write the screens**
 
 Create `server/webui/screens/verify.js`:
 
@@ -2340,7 +2365,7 @@ export function ChangePasswordCard({ api }) {
 }
 ```
 
-- [ ] **Step 5: Mount them**
+- [x] **Step 5: Mount them**
 
 In `server/webui/app.js`:
 
@@ -2375,17 +2400,17 @@ In `server/webui/screens/signin.js`, under the form:
 
 In `server/webui/screens/settings.js`, import `ChangePasswordCard` from `./password.js`, render `<${ChangePasswordCard} api=${api} />` under the "You" card, and delete the sentence that says changing a password is not built yet.
 
-- [ ] **Step 6: Run the tests to verify they pass**
+- [x] **Step 6: Run the tests to verify they pass**
 
 Run: `cd server/webui-tests && node --test`
 
 Expected: PASS, everything including the new cases.
 
-- [ ] **Step 7: Look at it**
+- [x] **Step 7: Look at it**
 
 With the fixture harness serving `server/webui/`, open `#/forgot`, `#/reset/anything` and `#/verify/anything` and confirm each draws its own page rather than the shell, and that Settings shows the change form.
 
-- [ ] **Step 8: Update the docs and commit**
+- [x] **Step 8: Update the docs and commit**
 
 In `specs/cabinet.md`, add the three screens to the screen list and a line on why they are handled before the sign-in gate. In `CLAUDE.md`, update the cabinet's screen count and mention the three.
 
