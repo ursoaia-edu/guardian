@@ -1,5 +1,21 @@
 # ProcSentinel Security Hardening Implementation Plan
 
+> **Status: superseded, do not execute.** This plan targets the single-tenant
+> server that no longer exists: it assumes `modernc.org/sqlite`, a `NewServer`
+> that hardcodes `./guardian.db`, a shared fallback token and in-memory caches.
+> The server was rewritten multi-tenant on Postgres with row-level security
+> (`specs/plans/2026-09-05-saas-multitenant-core.md`, complete), which removed
+> or reshaped nearly every file this plan edits — `go.mod` has no sqlite,
+> `main.go` has no `guardian.db`, and the auth tiers it hardens were replaced
+> by sessions and per-agent tokens.
+>
+> Its unticked checkboxes are therefore not outstanding work. The findings it
+> was written against (`specs/audit-2026-06-12.md`) were addressed during that
+> rewrite; the two deliberately left open are recorded in `specs/server.md`.
+>
+> Kept rather than deleted because the audit it remediates is still the
+> reference for why several of those decisions were made.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Remediate the findings in `specs/audit-2026-06-12.md` — eliminate fail-open auth and enforcement paths, make the agent unable to brick hosts, harden deployment, and bootstrap an automated test suite.
