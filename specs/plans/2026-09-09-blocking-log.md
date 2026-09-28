@@ -1,8 +1,8 @@
 # Blocking Log Implementation Plan
 
-> **Status: complete.** All six tasks landed on `dev`, commits `8e7353d`,
-> `1a061e9`, `6220a73`, `f044cf7`, `254fcd1`, `0212985`. One departure from the
-> plan, recorded in `1a061e9`: Task 2's `stage()` closed its open entries by
+> **Status: complete.** All six tasks landed on `dev`, commits `a2fd6d3`,
+> `3aa8ab5`, `60b3e26`, `d926c5f`, `07c0b9f`, `3633662`. One departure from the
+> plan, recorded in `3aa8ab5`: Task 2's `stage()` closed its open entries by
 > ranging over a map, so the overflow path dropped whichever entries Go's
 > randomised iteration handed over first rather than the oldest — the plan's
 > own test for "the oldest are dropped" failed on every run. `closeAllOpen`

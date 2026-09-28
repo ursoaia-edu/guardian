@@ -1,7 +1,7 @@
 # Mail and Account Lifecycle Implementation Plan
 
-> **Status: complete.** All six tasks landed on `dev`: `4253d4b`, `037ab81`,
-> `f254a20`, `de984fd`, `d852808`, `47abd65`. Five corrections were made while
+> **Status: complete.** All six tasks landed on `dev`: `1c1d5d4`, `19abd88`,
+> `3e38253`, `cd792e0`, `8cc4bc6`, `e5626e7`. Five corrections were made while
 > executing, each applied to this document as well as to the code, so the plan
 > and the tree agree:
 >

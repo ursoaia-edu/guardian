@@ -3,7 +3,7 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 > **Status: complete.** All 15 tasks are implemented and merged into `dev`
-> (`5d88ec5` merged `saas-multitenant-core`; `638c115`…`2de5959` are the audit and
+> (`31e0eb1`…`b26c2e1` are the `saas-multitenant-core` branch, since flattened onto `dev`; `81c4051`…`831e964` are the audit and
 > hardening pass on top of it). The boxes below were ticked after the fact, from the
 > artefacts and the commit history, not by re-running each step: `server/db.go` is
 > gone, no `AdminAuth`/`ClientAuth`/`appsCache`/shared token remains, `modernc.org/sqlite`

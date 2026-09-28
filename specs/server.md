@@ -714,6 +714,45 @@ It runs in-process rather than as a cron job or a database scheduler because
 both are another thing to deploy and another thing to forget; a second server
 running it too would simply find nothing to do.
 
+## Installer
+
+`installer.go` serves `GET /api/v1/installer` (`specs/api.md`). The design,
+and why it is a ZIP rather than a per-customer executable, is in
+`specs/2026-09-05-saas-design.md`, **Installer**: `Guardian.exe` and the two
+agent binaries stay byte-identical for every customer, so they can be signed
+once, and the only generated file is `agent.env`.
+
+The server never builds the archive. It reads one pre-built **reference
+archive** at `INSTALLER_ARCHIVE` (default `installer/Guardian.zip`, relative to
+the working directory), copies every entry through verbatim — compressed bytes
+and all — and writes a fresh `agent.env` (`SERVER_ADDRESS`, `BINDING_TOKEN`,
+`CHECK_INTERVAL=30`, `\r\n` line endings) in place of the template's. No Go
+toolchain is needed where the server runs.
+
+The reference archive is built once per release from `dist/agent/`:
+
+```sh
+go run ./tools/mkinstaller -in dist/agent -out release/Guardian.zip
+```
+
+`mkinstaller` refuses an archive missing an agent binary or carrying a real
+binding token. The server checks again on every download — at most 256 MiB, at
+least one `procsentinel-agent32.exe`/`procsentinel-agent64.exe` entry — and
+does so **before** minting the token, so a server with a broken or missing
+archive answers `503` without leaving an unused credential behind each attempt.
+
+**Placing the archive is a manual deployment step today.** Neither
+`dist/server/install.sh` nor `dist/server/docker-compose.yml` (whose image
+packages only the binary) puts it anywhere. A server without one starts
+normally, logs `installer download refused: no archive configured` at Warn on
+each attempt, and the cabinet's "Download the installer" shows "No installer
+is available from this server yet". Tokens minted from
+`POST /api/v1/binding-tokens` still work in a hand-written `agent.env`.
+
+`SERVER_ADDRESS` in the generated file is `AGENT_SERVER_ADDRESS` when set,
+otherwise the first `CABINET_ORIGIN`: in every deployment shipped here the
+cabinet and the agent API share one origin behind one proxy.
+
 ## Mail
 
 `server/internal/mail` is the whole of it: a `Sender` interface, an SMTP
@@ -886,6 +925,9 @@ precedence.
 | `CABINET_ORIGIN`          | comma-separated origins allowed to send credentialed requests. **Required** — startup fails without it |
 | `SERVER_ADDRESS`          | listen address (full URL or `host:port`), default `0.0.0.0:8080` |
 | `TRUSTED_PROXIES`         | reverse-proxy hops in front of the server; `0` (default) ignores `X-Forwarded-For`, `1` behind Caddy/nginx. A non-integer or negative value is a startup error |
+| `SMTP_URL`, `MAIL_FROM`, `MAIL_TRANSPORT` | outgoing mail — see **Mail**. Startup fails without `SMTP_URL` unless `MAIL_TRANSPORT=log` |
+| `INSTALLER_ARCHIVE`       | path to the reference installer ZIP, default `installer/Guardian.zip` (relative to the working directory). Optional: without it the server starts and `GET /api/v1/installer` answers `503` — see **Installer** |
+| `AGENT_SERVER_ADDRESS`    | the `SERVER_ADDRESS` written into a downloaded `agent.env`; defaults to the first `CABINET_ORIGIN` |
 
 ## HTTP Server Settings
 

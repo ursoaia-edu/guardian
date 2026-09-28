@@ -12,6 +12,11 @@
 # typical x86-64 host; it copies the binary here) — the Dockerfile packages
 # an already-built binary, it does not compile Go.
 #
+# The agent installer archive is not part of the image or of this file:
+# without it "Install agent" in the cabinet answers 503. Build it with
+# tools/mkinstaller, mount it into "server" and set INSTALLER_ARCHIVE to the
+# mounted path — see INSTALLER_ARCHIVE in server.env.
+#
 # Named explicitly: docker compose otherwise derives the project name from
 # this directory's basename, which is "server" — identical to
 # server/docker-compose.dev.yml's default project name. Without this,

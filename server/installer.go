@@ -58,8 +58,10 @@ func installerArchiveFromEnv() string {
 	return defaultInstallerArchive
 }
 
-// defaultInstallerArchive is where install.sh and the compose deployment put
-// the archive, relative to the server's working directory.
+// defaultInstallerArchive is where the archive is looked for when
+// INSTALLER_ARCHIVE is unset, relative to the server's working directory.
+// Neither install.sh nor the compose deployment puts it there yet: the
+// operator builds it with tools/mkinstaller and places it by hand.
 const defaultInstallerArchive = "installer/Guardian.zip"
 
 // agentServerAddressFromEnv is the SERVER_ADDRESS written into a downloaded

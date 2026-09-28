@@ -380,6 +380,36 @@ those individually is `DELETE /api/v1/computers/{computerID}`.
 
 **Response** `204`.
 
+### `GET /api/v1/installer`
+
+**`403` until the caller's email address is confirmed**, like
+`POST /api/v1/binding-tokens`. `owner`/`admin` only.
+
+Mints a new binding token for this account (valid 1 year, recorded as a
+`binding_token.created` event with `"source": "installer"`) and returns the
+server's reference installer archive with `agent.env` replaced by one carrying
+it:
+
+```
+SERVER_ADDRESS=<AGENT_SERVER_ADDRESS, or the first CABINET_ORIGIN>
+BINDING_TOKEN=<the new token>
+CHECK_INTERVAL=30
+```
+
+Lines end in `\r\n` — the file is read on Windows, and the agent trims them.
+
+**Response** `200`, `Content-Type: application/zip`,
+`Content-Disposition: attachment; filename="Guardian-<account-name>.zip"` (the
+name reduced to ASCII letters, digits and dashes; plain `Guardian.zip` when
+nothing is left, e.g. a Cyrillic account name),
+`Cache-Control: no-store` (the archive carries a live credential).
+
+**`503`** `{"error": "No installer is available from this server yet"}` when
+the server has no usable reference archive (`INSTALLER_ARCHIVE` unset, missing,
+over 256 MiB, or holding no agent executable) or no address to write into
+`agent.env`. The archive is checked **before** a token is minted, so a failed
+download leaves no credential behind. See **Installer** in `specs/server.md`.
+
 ### `GET /api/v1/events`
 
 `owner`/`admin` only. Account activity, most recent first.
